@@ -8,6 +8,7 @@ dependencies {
     api(project(":store"))
     api(project(":net"))
     api(project(":sync"))
+    implementation(libs.json)
     api(project(":state"))
 
     implementation(libs.kotlin.stdlib)

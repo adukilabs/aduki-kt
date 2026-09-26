@@ -1,0 +1,31 @@
+{
+  "mailbox": "M0X1A2B3C4D5E6F",
+  "uidvalidity": 1790413341,
+  "modseq": 11556,
+  "reset": false,
+  "more": false,
+  "created": [
+    {
+      "hex": "M0GDB6EC798DDC2F3460",
+      "uid": 4,
+      "subject": "Lunch on Friday?",
+      "sender": "bob@example.com",
+      "size": 2048,
+      "flags": [],
+      "thread": "T0X9F8E7D6C5B4A",
+      "spam": null,
+      "internaldate": "2026-09-26T09:02:20.658460",
+      "preview": "Are you free for lunch on Friday?",
+      "from": {"name": "Bob Example", "email": "bob@example.com"},
+      "to": [{"name": "Alice", "email": "alice@hermes.test"}],
+      "has_attachment": true,
+      "mailbox": {"hex": "M0X1A2B3C4D5E6F", "name": "INBOX"},
+      "total": 0,
+      "modseq": 11556
+    }
+  ],
+  "updated": [
+    {"hex": "M0GE32946DDC56C14639", "uid": 2, "flags": ["\\Seen", "\\Flagged"], "modseq": 11553}
+  ],
+  "vanished": [3]
+}

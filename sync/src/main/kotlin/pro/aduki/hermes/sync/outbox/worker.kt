@@ -11,12 +11,21 @@ fun interface Dispatcher {
 }
 
 /**
+ * Rejected is thrown by a [Dispatcher] when the server refused an action
+ * for good (for example an invalid recipient): retrying cannot succeed, so
+ * the [Worker] drops it instead of blocking every later action behind it.
+ */
+class Rejected(message: String, val code: Int? = null, cause: Throwable? = null) : Exception(message, cause)
+
+/**
  * Worker sequentially consumes and dispatches pending outbox actions with Decorrelated Jitter backoff.
  */
 class Worker(
     private val manager: Manager,
     private val dispatcher: Dispatcher,
-    private val jitter: Jitter = Jitter()
+    private val jitter: Jitter = Jitter(),
+    /** Told about each action the server rejected for good (e.g. to notify the user). */
+    private val onRejected: (Outbox, Rejected) -> Unit = { _, _ -> }
 ) {
 
     /**
@@ -52,6 +61,12 @@ class Worker(
             val hex = action.hex.ifBlank { extractHex(action) }
             manager.complete(action.id, hex)
             true
+        } catch (e: Rejected) {
+            // Permanent: drop it (and clear the message's dirty mark so the
+            // next sync restores the server's state) and move on.
+            manager.complete(action.id, action.hex.ifBlank { extractHex(action) })
+            onRejected(action, e)
+            true
         } catch (_: Exception) {
             val delay = jitter.next(action.attempts)
             manager.fail(action.id, delay)
@@ -62,6 +77,9 @@ class Worker(
     private fun extractHex(action: Outbox): String? {
         return try {
             val str = String(action.payload, Charsets.UTF_8)
+            if (str.trimStart().startsWith("{")) {
+                return org.json.JSONObject(str).optString("hex").ifBlank { null }
+            }
             when (action.action) {
                 "flag", "move" -> str.substringBefore(":")
                 "delete" -> str

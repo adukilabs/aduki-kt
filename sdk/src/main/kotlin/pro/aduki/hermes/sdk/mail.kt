@@ -1,6 +1,8 @@
 package pro.aduki.hermes.sdk
 
 import kotlinx.coroutines.flow.StateFlow
+import org.json.JSONArray
+import org.json.JSONObject
 import pro.aduki.hermes.store.entities.Mailbox
 import pro.aduki.hermes.store.entities.Message
 import pro.aduki.hermes.sync.outbox.Manager
@@ -27,11 +29,16 @@ class Mail internal constructor(
             mailbox = mailbox,
             to = to.joinToString(", "),
             subject = subject,
-            snippet = body.take(120),
+            preview = body.take(120),
             created = System.currentTimeMillis(),
             dirty = true
         )
-        val raw = body.toByteArray(Charsets.UTF_8)
+        val raw = JSONObject()
+            .put("to", JSONArray(to))
+            .put("subject", subject)
+            .put("text", body)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
         manager?.send(msg, raw)
         worker?.drain()
         return msg

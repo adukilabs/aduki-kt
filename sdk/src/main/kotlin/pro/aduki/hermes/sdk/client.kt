@@ -23,6 +23,7 @@ import pro.aduki.hermes.state.repository.Contact as ContactRepo
 import pro.aduki.hermes.state.repository.Mail as MailRepo
 import pro.aduki.hermes.state.repository.Appointment as AppointmentRepo
 import pro.aduki.hermes.net.http.Scheduling as NetScheduling
+import pro.aduki.hermes.net.http.Mail as NetMail
 
 /**
  * HermesClient is the primary entrypoint for the Android Kotlin SDK.
@@ -44,11 +45,6 @@ class HermesClient internal constructor(
     scheduleEngine: ScheduleEngine? = null,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 ) {
-    val mail = Mail(this, manager, mailRepo, worker)
-    val contacts = Contacts(this, contactRepo, contactEngine)
-    val sync = Sync(this, mailboxEngine, contactEngine, worker, manager)
-    val scheduling = Scheduling(this, appointmentRepo, scheduleEngine, NetScheduling(activeHttpClient(), options.endpoint))
-
     private fun activeAuthString(): String {
         return session.token() ?: if (token.isNotBlank()) token else apiKey
     }
@@ -79,6 +75,20 @@ class HermesClient internal constructor(
     private fun activeHttpClient(): OkHttpClient {
         return httpClient ?: defaultClient
     }
+
+    // Declared after the HTTP client above: property initializers run in
+    // order, and `scheduling` needs the client while the object is built.
+    val mail = Mail(this, manager, mailRepo, worker)
+    val contacts = Contacts(this, contactRepo, contactEngine)
+    val sync = Sync(this, mailboxEngine, contactEngine, worker, manager)
+    val scheduling = Scheduling(this, appointmentRepo, scheduleEngine, NetScheduling(activeHttpClient(), options.endpoint))
+
+    /**
+     * Typed REST mail client on this client's authenticated connection.
+     * Build `HttpMailboxTransport(mailApi)` and `HttpDispatcher(mailApi, …)`
+     * from it for the sync engine and the outbox worker.
+     */
+    val mailApi: NetMail by lazy { NetMail(activeHttpClient(), options.endpoint) }
 
     init {
         lifecycle.listen { active ->

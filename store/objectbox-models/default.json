@@ -1,0 +1,529 @@
+{
+  "_note1": "KEEP THIS FILE! Check it into a version control system (VCS) like git.",
+  "_note2": "ObjectBox manages crucial IDs for your object model. See docs for details.",
+  "_note3": "If you have VCS merge conflicts, you must resolve them according to ObjectBox docs.",
+  "entities": [
+    {
+      "id": "1:3468222025440884881",
+      "lastPropertyId": "17:3615487200095246569",
+      "name": "Appointment",
+      "properties": [
+        {
+          "id": "1:2868386511297211913",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:4977545793954711189",
+          "name": "hex",
+          "indexId": "1:5760956951949848226",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "3:8380335577942844850",
+          "name": "tenant",
+          "indexId": "2:5050350488095189128",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "4:3446893428947841369",
+          "name": "service",
+          "indexId": "3:8365423878805625157",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "5:8693377163819605523",
+          "name": "host",
+          "indexId": "4:6040601367298303821",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "6:162115976394233741",
+          "name": "start",
+          "indexId": "5:2497296990237963400",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "7:6885025340932901553",
+          "name": "end",
+          "type": 6
+        },
+        {
+          "id": "8:12163658499731523",
+          "name": "timezone",
+          "type": 9
+        },
+        {
+          "id": "9:3125038155093396631",
+          "name": "status",
+          "indexId": "6:1618087887244057774",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "10:1282368642494195906",
+          "name": "uid",
+          "type": 9
+        },
+        {
+          "id": "11:8342543639346529594",
+          "name": "sequence",
+          "type": 5
+        },
+        {
+          "id": "12:5451576618730219486",
+          "name": "method",
+          "type": 9
+        },
+        {
+          "id": "13:8451900711805590506",
+          "name": "location",
+          "type": 9
+        },
+        {
+          "id": "14:24155953262189518",
+          "name": "notes",
+          "type": 9
+        },
+        {
+          "id": "15:3923760467832813290",
+          "name": "cancelled",
+          "type": 6
+        },
+        {
+          "id": "16:3114976974065830189",
+          "name": "rescheduled",
+          "type": 9
+        },
+        {
+          "id": "17:3615487200095246569",
+          "name": "updated",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "2:8280994424801829309",
+      "lastPropertyId": "9:6351147272854077307",
+      "name": "Contact",
+      "properties": [
+        {
+          "id": "1:5420224044943231160",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:8955773835983827428",
+          "name": "hex",
+          "indexId": "7:7361974472480689304",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "3:3332701905434976475",
+          "name": "name",
+          "indexId": "8:4029574177425006642",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "4:7672568988570896100",
+          "name": "email",
+          "indexId": "9:5837476069643144096",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "5:1355644239946890606",
+          "name": "phone",
+          "type": 9
+        },
+        {
+          "id": "6:8251706107466418380",
+          "name": "company",
+          "type": 9
+        },
+        {
+          "id": "7:710350077511745653",
+          "name": "vcard",
+          "type": 9
+        },
+        {
+          "id": "8:7230415909952817447",
+          "name": "ctag",
+          "type": 9
+        },
+        {
+          "id": "9:6351147272854077307",
+          "name": "updated",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "3:6186205648655130206",
+      "lastPropertyId": "9:748523929508407749",
+      "name": "Mailbox",
+      "properties": [
+        {
+          "id": "1:3063741108829512468",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:6082449393024114832",
+          "name": "hex",
+          "indexId": "10:1548051849067475584",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "3:5297968971514674628",
+          "name": "name",
+          "type": 9
+        },
+        {
+          "id": "4:3579522391656943502",
+          "name": "role",
+          "type": 9
+        },
+        {
+          "id": "5:3196106766240698757",
+          "name": "uidnext",
+          "type": 6
+        },
+        {
+          "id": "6:6530449266249099954",
+          "name": "uidvalidity",
+          "type": 6
+        },
+        {
+          "id": "7:3448399834922903516",
+          "name": "modseq",
+          "type": 6
+        },
+        {
+          "id": "8:7234484535284235230",
+          "name": "exists",
+          "type": 5
+        },
+        {
+          "id": "9:748523929508407749",
+          "name": "unseen",
+          "type": 5
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "4:1476177012571296099",
+      "lastPropertyId": "20:4397309847049404416",
+      "name": "Message",
+      "properties": [
+        {
+          "id": "1:3591398754489618388",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:6778687867950306162",
+          "name": "hex",
+          "indexId": "11:5394704932279652030",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "3:6406788405748494069",
+          "name": "mailbox",
+          "indexId": "12:2896629792248237663",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "4:3953460033167413357",
+          "name": "uid",
+          "indexId": "13:6494826128743684933",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "5:5418797452777155070",
+          "name": "threadId",
+          "indexId": "14:3964277212011285537",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "6:4584740930819761947",
+          "name": "subject",
+          "type": 9
+        },
+        {
+          "id": "7:2019042359792244815",
+          "name": "fromName",
+          "type": 9
+        },
+        {
+          "id": "8:2271432752649455722",
+          "name": "fromEmail",
+          "type": 9
+        },
+        {
+          "id": "9:2700429024466704784",
+          "name": "to",
+          "type": 9
+        },
+        {
+          "id": "10:8438919231974524175",
+          "name": "preview",
+          "type": 9
+        },
+        {
+          "id": "11:455281325410278220",
+          "name": "blob",
+          "type": 9
+        },
+        {
+          "id": "12:2928116877513015909",
+          "name": "size",
+          "type": 6
+        },
+        {
+          "id": "13:5315808289420449686",
+          "name": "flags",
+          "indexId": "15:6926087853486151862",
+          "type": 5,
+          "flags": 8
+        },
+        {
+          "id": "14:3799010517385515035",
+          "name": "keywords",
+          "type": 9
+        },
+        {
+          "id": "15:697835508155864999",
+          "name": "hasAttachment",
+          "type": 1
+        },
+        {
+          "id": "16:4730871169238548212",
+          "name": "receivedAt",
+          "indexId": "16:8527296524055537900",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "17:6150639150007973220",
+          "name": "sentAt",
+          "type": 6
+        },
+        {
+          "id": "18:347118400097673228",
+          "name": "modseq",
+          "type": 6
+        },
+        {
+          "id": "19:4186371908270894296",
+          "name": "created",
+          "type": 6
+        },
+        {
+          "id": "20:4397309847049404416",
+          "name": "dirty",
+          "type": 1
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "5:941751520504274046",
+      "lastPropertyId": "7:685824924435979634",
+      "name": "Outbox",
+      "properties": [
+        {
+          "id": "1:8253579848125000639",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:3499458167147788281",
+          "name": "hex",
+          "indexId": "17:9029775159111580277",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "3:8317622148194490627",
+          "name": "action",
+          "indexId": "18:8685369620717407418",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "4:8647609477569426867",
+          "name": "payload",
+          "type": 23
+        },
+        {
+          "id": "5:4592241108818152337",
+          "name": "created",
+          "indexId": "19:5822268024844293693",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "6:786679595568360686",
+          "name": "attempts",
+          "type": 5
+        },
+        {
+          "id": "7:685824924435979634",
+          "name": "nextRetry",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "6:1799499899594582348",
+      "lastPropertyId": "14:2455921051647514226",
+      "name": "Service",
+      "properties": [
+        {
+          "id": "1:5809538471180077773",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:4334089737803372077",
+          "name": "hex",
+          "indexId": "20:2163726180687518747",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "3:8150989761624949815",
+          "name": "tenant",
+          "indexId": "21:8259098050950667526",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "4:3675476629566130419",
+          "name": "user",
+          "indexId": "22:1185882549547787665",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "5:8859981274039213066",
+          "name": "slug",
+          "indexId": "23:2968110201392277281",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "6:4364535300481630590",
+          "name": "name",
+          "type": 9
+        },
+        {
+          "id": "7:2181281940405894043",
+          "name": "description",
+          "type": 9
+        },
+        {
+          "id": "8:1924153604172605265",
+          "name": "duration",
+          "type": 5
+        },
+        {
+          "id": "9:8346659940690655726",
+          "name": "buffer",
+          "type": 5
+        },
+        {
+          "id": "10:3019394584115354710",
+          "name": "notice",
+          "type": 5
+        },
+        {
+          "id": "11:5299820815196017405",
+          "name": "horizon",
+          "type": 5
+        },
+        {
+          "id": "12:2063328393281445747",
+          "name": "increment",
+          "type": 5
+        },
+        {
+          "id": "13:5533488547732046998",
+          "name": "active",
+          "type": 1
+        },
+        {
+          "id": "14:2455921051647514226",
+          "name": "updated",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "7:2953707000071179245",
+      "lastPropertyId": "4:2755774766141519013",
+      "name": "Sync",
+      "properties": [
+        {
+          "id": "1:4550773396723279408",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:6177117700872293817",
+          "name": "target",
+          "indexId": "24:4591105093807168692",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "3:1739716017458910930",
+          "name": "token",
+          "type": 9
+        },
+        {
+          "id": "4:2755774766141519013",
+          "name": "timestamp",
+          "type": 6
+        }
+      ],
+      "relations": []
+    }
+  ],
+  "lastEntityId": "7:2953707000071179245",
+  "lastIndexId": "24:4591105093807168692",
+  "lastRelationId": "0:0",
+  "lastSequenceId": "0:0",
+  "modelVersion": 5,
+  "modelVersionParserMinimum": 5,
+  "retiredEntityUids": [],
+  "retiredIndexUids": [],
+  "retiredPropertyUids": [],
+  "retiredRelationUids": [],
+  "version": 1
+}

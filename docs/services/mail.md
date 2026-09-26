@@ -172,21 +172,35 @@ data class Message(
     @Index var hex: String = "",
     @Index var mailbox: String = "",
     @Index var uid: Long = 0,
+    @Index var threadId: String = "",
     var subject: String = "",
-    var from: String = "",
-    var to: String = "",
-    var snippet: String = "",
+    var fromName: String = "",
+    var fromEmail: String = "",
+    var to: String = "",            // comma-separated addresses
+    var preview: String = "",       // was `snippet` before 0.2.0
     var blob: String = "",
     var size: Long = 0,
-    @Index var flags: Int = 0,
-    @Index var date: Long = 0,
+    @Index var flags: Int = 0,      // SEEN=1, ANSWERED=2, FLAGGED=4, DELETED=8, DRAFT=16
+    var keywords: String = "",      // other server flags, space-separated ("$Junk $Forwarded")
+    var hasAttachment: Boolean = false,
+    @Index var receivedAt: Long = 0, // was `date` before 0.2.0; epoch millis UTC
+    var sentAt: Long = 0,
+    var modseq: Long = 0,
     var created: Long = 0,
     var dirty: Boolean = false
 ) {
-    fun seen(): Boolean = (flags and SEEN) != 0
-    fun flagged(): Boolean = (flags and FLAGGED) != 0
-    fun toggle(flag: Int) { flags = flags xor flag; dirty = true }
+    fun seen(): Boolean
+    fun flagged(): Boolean
+    fun deleted(): Boolean           // `\Deleted`: hidden from lists and unread counts
+    fun toggle(flag: Int)
     fun recipients(): List<String>
+    fun sender(): String             // fromName, else fromEmail
+
+    companion object {
+        fun bits(flags: List<String>): Int        // server flags -> bitmask
+        fun keywords(flags: List<String>): String // the non-system flags
+        fun flagName(bit: Int): String?           // SEEN -> "\Seen"
+    }
 }
 ```
 
@@ -208,4 +222,24 @@ data class Mailbox(
     var unseen: Int = 0
 )
 ```
+
+---
+
+## 4. REST Client: `client.mailApi`
+
+`pro.aduki.hermes.net.http.Mail` is the typed client for the Hermes REST mail endpoints, on the client's authenticated connection. Its calls are blocking, so run them off the main thread. The sync engine and the outbox use it through `HttpMailboxTransport` and `HttpDispatcher` (see [Sync Engine](sync.md) and [Offline Outbox](outbox.md)).
+
+| Method | Endpoint | Returns |
+| :--- | :--- | :--- |
+| `inbox(after, limit)` | `GET /v1/user/mail/inbox` | `Listing<MessageRow>` (cursor in `next`) |
+| `folder(mailbox, page, limit)` | `GET /v1/user/mail/folder/{hex}` | `Listing<MessageRow>` |
+| `thread(thread, page, limit)` | `GET /v1/user/mail/thread/{thread}` | `Listing<MessageRow>` |
+| `changes(mailbox, since, uidvalidity, limit)` | `GET /v1/user/mail/changes` | `MailChanges` |
+| `flags(hex, add, remove)` | `PATCH /v1/user/mail/{hex}/flags` | — |
+| `move(hex, mailbox)` | `PATCH /v1/user/mail/{hex}/mailbox` | `Moved` (same id, new UID) |
+| `delete(hex)` | `DELETE /v1/user/mail/{hex}` | — |
+| `send(to, subject, text, cc, from, idempotencyKey)` | `POST /v1/user/mail/send` | server id of the sent copy |
+| `mailboxes(page, limit)` | `GET /v1/user/mailbox` | `Listing<MailboxRow>` |
+
+Errors are `HermesException.Auth` (401/403), `HermesException.Network` (transport failures, and other HTTP errors with `code`), and `HermesException.Protocol` (an unparseable response). The DTOs (`MessageRow`, `MailChanges`, `FlagUpdate`, `MailboxRow`, `Listing`, `Moved`, `Address`) live in `pro.aduki.hermes.core.models`.
 

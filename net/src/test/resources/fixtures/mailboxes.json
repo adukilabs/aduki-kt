@@ -1,0 +1,35 @@
+{
+  "items": [
+    {
+      "hex": "M0X1A2B3C4D5E6F",
+      "name": "INBOX",
+      "delimiter": ".",
+      "flags": [],
+      "uidvalidity": 1790413341,
+      "uidnext": 5,
+      "role": "inbox",
+      "messages": 3,
+      "unread": 1,
+      "created": "2026-09-01T08:00:00",
+      "total": 2
+    },
+    {
+      "hex": "M0X6F5E4D3C2B1A",
+      "name": "Archive",
+      "delimiter": ".",
+      "flags": [
+        "\\Archive"
+      ],
+      "uidvalidity": 1790413342,
+      "uidnext": 1,
+      "role": "archive",
+      "messages": 0,
+      "unread": 0,
+      "created": "2026-09-01T08:00:00",
+      "total": 2
+    }
+  ],
+  "total": 2,
+  "page": 1,
+  "pages": 1
+}

@@ -1,7 +1,7 @@
 # Hermes Android Kotlin SDK
 
 [![Documentation](https://img.shields.io/badge/docs-mdBook-blue.svg)](https://adukilabs.github.io/hermers-kt/)
-[![Maven Central](https://img.shields.io/badge/Maven%20Central-0.1.2-blue.svg)](https://central.sonatype.com/artifact/io.github.adukilabs/sdk)
+[![Maven Central](https://img.shields.io/badge/Maven%20Central-0.2.0-blue.svg)](https://central.sonatype.com/artifact/io.github.adukilabs/sdk)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-purple.svg)](https://kotlinlang.org)
 [![ObjectBox](https://img.shields.io/badge/ObjectBox-4.0.3-green.svg)](https://objectbox.io)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
@@ -16,8 +16,9 @@ An ultra-low latency, battery-efficient, offline-first Android Kotlin SDK engine
 - **Hardware-Isolated Device Security**: AES-256-GCM envelope encryption anchored directly in the **Android KeyStore** (StrongBox Keymaster with TEE fallback). In-memory buffer zeroization via `Guard` and `wipe()`.
 - **Interactive Login & 2FA / TOTP**: Human user authentication via `POST /v1/auth/login`, 6-digit TOTP confirmation via `PATCH /v1/user/totp`, session refresh, and revocation.
 - **Dual Transport Flexibility**: Multiplexed HTTP/2 OkHttp 4 for REST and `grpc-okhttp` for high-throughput binary sync streaming.
-- **Resilient Offline Outbox**: Every mutation (email sent, flag toggled, message moved) journals atomically to an offline queue before wire dispatch, retrying automatically with Amazon-style Decorrelated Jitter.
-- **RFC 7162 CONDSTORE / MODSEQ Sync**: Incremental mailbox synchronizer transferring only modified message sequence numbers.
+- **Resilient Offline Outbox**: Every mutation (email sent, flag toggled, message moved) journals atomically to an offline queue before wire dispatch, retrying automatically with Amazon-style Decorrelated Jitter. Sends carry a stable `Idempotency-Key`, so a retry never sends twice.
+- **RFC 7162 CONDSTORE / MODSEQ Sync**: Incremental mailbox synchronizer over `GET /v1/user/mail/changes`, transferring only what changed (new, re-flagged, expunged or moved messages), paged and resumable.
+- **Typed REST Mail Client**: `client.mailApi` covers inbox, folders, threads, changes, flags, move, delete, send and mailboxes, contract-tested against the server's own response fixtures.
 - **Reactive Unidirectional Data Flow (UDF)**: Binds directly to Kotlin `StateFlow` streams for flicker-free Jetpack Compose rendering.
 
 ---
@@ -31,7 +32,7 @@ Because `mavenCentral()` is enabled by default in Android projects, include the 
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("io.github.adukilabs:sdk:0.1.2")
+    implementation("io.github.adukilabs:sdk:0.2.0")
     implementation("io.objectbox:objectbox-android:4.0.3")
 }
 ```
@@ -50,7 +51,7 @@ dependencyResolutionManagement {
 
 // app/build.gradle.kts
 dependencies {
-    implementation("com.github.adukilabs.hermers-kt:sdk:v0.1.2")
+    implementation("com.github.adukilabs.hermers-kt:sdk:v0.2.0")
     implementation("io.objectbox:objectbox-android:4.0.3")
 }
 ```

@@ -93,6 +93,7 @@ To enable fast feedback loops and CI/CD reliability, **all tests are strictly or
   - `MailboxSynchronizer`: RFC 7162 CONDSTORE / MODSEQ incremental sync.
   - Conflict resolution: Local dirty preservation and server flag merge.
   - `MailRepository` and `ContactRepository` exposing hot `StateFlow` instances.
+  - **Network transport (0.2.0):** `net.http.Mail` (typed REST client), `HttpMailboxTransport` over `GET /v1/user/mail/changes` (paging with `more`, `reset` on a stale UIDVALIDITY, moved-in messages adopted), and `HttpDispatcher` for the outbox (a stable `Idempotency-Key` per send, placeholder ids replaced by server ids, permanent 4xx dropped via `Rejected`). Contract-tested against the server's own fixtures (`guide/fixtures/sdk` in the Hermes repo).
 - **Success Criteria**: Simulated network drops cause no data loss; outbox automatically flushes on simulated reconnection.
 
 ### Phase 7: Public Facade SDK (`HermesClient`)
