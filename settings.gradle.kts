@@ -1,8 +1,16 @@
 pluginManagement {
     repositories {
-        google()
         mavenCentral()
         gradlePluginPortal()
+        google {
+            // Only Android/Google artifacts come from Google's Maven, so a
+            // JVM build never contacts it (some networks block it).
+            content {
+                includeGroupByRegex("com\\.android.*")
+                includeGroupByRegex("androidx.*")
+                includeGroupByRegex("com\\.google\\.android.*")
+            }
+        }
     }
     resolutionStrategy {
         eachPlugin {
@@ -17,8 +25,16 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        google()
         mavenCentral()
+        google {
+            // Only Android/Google artifacts come from Google's Maven, so a
+            // JVM build never contacts it (some networks block it).
+            content {
+                includeGroupByRegex("com\\.android.*")
+                includeGroupByRegex("androidx.*")
+                includeGroupByRegex("com\\.google\\.android.*")
+            }
+        }
     }
 }
 

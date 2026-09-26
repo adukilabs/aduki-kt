@@ -154,6 +154,31 @@ Benchmarked on Android 14 (ARM64, Google Pixel 8):
 
 ---
 
+## Testing
+
+The build is plain JVM: it needs Maven Central and the Gradle plugin portal
+only. Google's Maven is consulted for Android and Google groups alone, so the
+build works on networks that block `dl.google.com`.
+
+```bash
+./gradlew test          # every module; contract tests replay the server's fixtures
+./gradlew :net:liveTest # the live tier, against a running Hermes server
+```
+
+The live tier (`net/src/test/.../live.test.kt`) logs in, sends a message to
+itself, follows `/user/mail/changes` until it arrives, flags it, deletes it,
+and checks that an idempotent retry doesn't send twice. It runs only when
+these are set (otherwise it is skipped, in `test` too):
+
+| Variable | Value |
+|---|---|
+| `HERMES_LIVE_URL` | the REST base, e.g. `https://mail.example.com/v1` |
+| `HERMES_LIVE_EMAIL` | a test account's address |
+| `HERMES_LIVE_PASSWORD` | its password |
+
+Point it at a test account: it sends and deletes real mail. For a server
+with a self-signed certificate, add the certificate to the JVM's truststore.
+
 ## Project Structure
 
 ```text
