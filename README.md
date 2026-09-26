@@ -1,4 +1,4 @@
-# Aduki Kotlin SDK
+# aduki Kotlin SDK
 
 > Formerly the Hermes Android Kotlin SDK (`adukilabs/hermers-kt`). The
 > repository is now `adukilabs/aduki-kt`. Package names move from
