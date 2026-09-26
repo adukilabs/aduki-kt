@@ -108,6 +108,7 @@ class MailTest {
         assertEquals(1, page.pages)
         assertEquals(listOf("\\Archive"), page.items[1].flags)
         assertEquals(1L, page.items[0].unread)
+        assertEquals(listOf("inbox", "archive"), page.items.map { it.role })
     }
 
     @Test

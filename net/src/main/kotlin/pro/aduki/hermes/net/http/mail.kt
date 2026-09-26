@@ -154,6 +154,7 @@ class Mail(
                     flags = strings(item.optJSONArray("flags")),
                     uidvalidity = item.optLong("uidvalidity"),
                     uidnext = item.optLong("uidnext"),
+                    role = text(item, "role").ifEmpty { null },
                     messages = item.optLong("messages"),
                     unread = item.optLong("unread")
                 )

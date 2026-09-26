@@ -72,6 +72,8 @@ data class MailboxRow(
     val flags: List<String> = emptyList(),
     val uidvalidity: Long = 0,
     val uidnext: Long = 0,
+    /** RFC 6154 special use (`inbox`, `sent`, `drafts`, `trash`, `junk`, `archive`), or null. */
+    val role: String? = null,
     val messages: Long = 0,
     val unread: Long = 0
 )
