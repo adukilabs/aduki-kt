@@ -46,4 +46,21 @@ class MessageTest {
         assertEquals("alice@example.com", recipients[0])
         assertEquals("bob@example.com", recipients[1])
     }
+
+    @Test
+    fun serverFlagsMapToTheBitmaskAndKeywords() {
+        val flags = listOf("\\Seen", "\\flagged", "\\Draft", "\$Junk", "\$Forwarded")
+        assertEquals(Message.SEEN or Message.FLAGGED or Message.DRAFT, Message.bits(flags))
+        assertEquals("\$Junk \$Forwarded", Message.keywords(flags))
+        assertEquals("\\Answered", Message.flagName(Message.ANSWERED))
+        assertEquals(null, Message.flagName(3))
+    }
+
+    @Test
+    fun deletedAndSender() {
+        val msg = Message(flags = Message.DELETED, fromEmail = "bob@x.test")
+        assertTrue(msg.deleted())
+        assertEquals("bob@x.test", msg.sender())
+        assertEquals("Bob", msg.copy(fromName = "Bob").sender())
+    }
 }

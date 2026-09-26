@@ -1,6 +1,7 @@
 package pro.aduki.hermes.sync.outbox
 
 import io.objectbox.BoxStore
+import org.json.JSONObject
 import pro.aduki.hermes.store.entities.Message
 import pro.aduki.hermes.store.entities.Outbox
 
@@ -15,6 +16,13 @@ interface Storage {
     fun removeOutbox(id: Long)
     fun pending(): List<Outbox>
     fun <T> tx(block: () -> T): T
+
+    /** Gives the local message [old] the server's id [new] (after a send). */
+    fun renameMessage(old: String, new: String) {
+        val msg = getMessage(old) ?: return
+        msg.hex = new
+        putMessage(msg)
+    }
 }
 
 /**
@@ -48,7 +56,14 @@ class Manager(private val storage: Storage) {
             msg.dirty = true
             storage.putMessage(msg)
 
-            val payload = "$hex:$flag".toByteArray(Charsets.UTF_8)
+            // The resulting state, not the toggle: a retried or reordered
+            // dispatch then converges instead of flipping the flag back.
+            val payload = JSONObject()
+                .put("hex", hex)
+                .put("flag", flag)
+                .put("set", (msg.flags and flag) != 0)
+                .toString()
+                .toByteArray(Charsets.UTF_8)
             val entry = Outbox(
                 hex = hex,
                 action = "flag",
@@ -72,7 +87,7 @@ class Manager(private val storage: Storage) {
             msg.dirty = true
             storage.putMessage(msg)
 
-            val payload = "$hex:$dest".toByteArray(Charsets.UTF_8)
+            val payload = JSONObject().put("hex", hex).put("mailbox", dest).toString().toByteArray(Charsets.UTF_8)
             val entry = Outbox(
                 hex = hex,
                 action = "move",
@@ -86,6 +101,9 @@ class Manager(private val storage: Storage) {
 
     /**
      * Optimistically commits an outbound message and journals a send action.
+     * [raw] is the JSON request for `POST /user/mail/send`
+     * (`{to, cc, subject, text, from?}`); a non-JSON payload (0.1.x) is
+     * sent as the text with the message's own recipients and subject.
      */
     fun send(msg: Message, raw: ByteArray): Outbox {
         return storage.tx {
@@ -115,7 +133,7 @@ class Manager(private val storage: Storage) {
                 storage.putMessage(msg)
             }
 
-            val payload = hex.toByteArray(Charsets.UTF_8)
+            val payload = JSONObject().put("hex", hex).toString().toByteArray(Charsets.UTF_8)
             val entry = Outbox(
                 hex = hex,
                 action = "delete",
@@ -161,6 +179,23 @@ class Manager(private val storage: Storage) {
                     storage.putMessage(msg)
                 }
             }
+        }
+    }
+
+    /**
+     * Replaces a sent message's local placeholder id with the server's. It
+     * is called only after the send succeeded, so the message is no longer
+     * dirty (completion clears by the old id, which no longer exists).
+     */
+    fun rename(old: String, new: String) {
+        if (new.isBlank()) return
+        storage.tx {
+            if (old != new) {
+                storage.renameMessage(old, new)
+            }
+            val msg = storage.getMessage(new) ?: return@tx
+            msg.dirty = false
+            storage.putMessage(msg)
         }
     }
 

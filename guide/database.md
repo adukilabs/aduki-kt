@@ -26,46 +26,44 @@ All entities are marked with `@Entity` and follow the project's **One-Word First
 Stores full email headers, metadata, and local status flags.
 
 ```kotlin
-package pro.aduki.hermes.store.entities
-
-import io.objectbox.annotation.Entity
-import io.objectbox.annotation.Id
-import io.objectbox.annotation.Index
-import io.objectbox.relation.ToOne
-
 @Entity
 data class Message(
     @Id var id: Long = 0,
-
-    @Index
-    var hex: String = "",
-
-    @Index
-    var mailbox: String = "",
-
-    @Index
-    var uid: Long = 0,
-
+    @Index var hex: String = "",
+    @Index var mailbox: String = "",
+    @Index var uid: Long = 0,
+    @Index var threadId: String = "",
     var subject: String = "",
-    var from: String = "",
-    var to: List<String> = emptyList(),
-    var snippet: String = "",
+    var fromName: String = "",
+    var fromEmail: String = "",
+    var to: String = "",
+    var preview: String = "",
     var blob: String = "",
     var size: Long = 0,
-
-    // Bitmask for flags: SEEN (1), ANSWERED (2), FLAGGED (4), DELETED (8), DRAFT (16)
-    @Index
-    var flags: Int = 0,
-
-    @Index
-    var date: Long = 0,
-
+    @Index var flags: Int = 0,       // SEEN (1), ANSWERED (2), FLAGGED (4), DELETED (8), DRAFT (16)
+    var keywords: String = "",       // other server flags, space-separated
+    var hasAttachment: Boolean = false,
+    @Index var receivedAt: Long = 0,
+    var sentAt: Long = 0,
+    var modseq: Long = 0,
     var created: Long = 0,
-
-    // Local sync metadata
     var dirty: Boolean = false
 )
 ```
+
+#### Model migration: 0.1.x → 0.2.0
+
+0.2.0 reshapes `Message` to hold what the server returns:
+
+- `snippet` is renamed to `preview`, and `date` to `receivedAt`.
+- `from` is split into `fromName` and `fromEmail`.
+- New fields: `threadId`, `keywords`, `hasAttachment`, `sentAt`, `modseq`.
+
+0.1.x builds did not commit `store/objectbox-models/default.json`, so the property UIDs they shipped are unknown. The renames therefore can't be mapped in place: renamed fields start empty.
+
+Treat the store as the cache it is. On upgrade, clear each mailbox's `uidvalidity` and `modseq`, or delete the store, and the next sync refills it from the server. Pending outbox entries survive, and 0.1.x payloads are still dispatched.
+
+From 0.2.0 on, `default.json` is committed. Keep it under version control so later changes can use `@Uid` renames.
 
 ### 2.2. `Mailbox` Entity
 
@@ -164,7 +162,7 @@ data class Outbox(
 ObjectBox uses native B-Trees directly integrated with the memory-mapped storage layer.
 
 - **Equality Lookups**: The `@Index` annotation on `hex`, `mailbox`, and `uid` delivers $O(\log N)$ search latency with zero SQL parsing overhead.
-- **Range Queries**: Dates (`date` column) use numeric indexes to power rapid chronological sorting (`orderDesc(Message_.date)`).
+- **Range Queries**: Dates (`receivedAt`) use numeric indexes to power rapid chronological sorting (`orderDesc(Message_.receivedAt)`).
 - **Bitmask Filtering**: Message flags (e.g. unread, starred) are stored as an integer bitmask (`flags`). This allows filtering using native bitwise operations, dramatically faster than multiple boolean columns in SQLite.
 
 ---
@@ -187,7 +185,7 @@ class MessageQueries(private val box: Box<Message>) {
     fun observeInbox(mailboxHex: String, limit: Long = 50): Flow<List<Message>> {
         return box.query()
             .equal(Message_.mailbox, mailboxHex)
-            .orderDesc(Message_.date)
+            .orderDesc(Message_.receivedAt)
             .build()
             .flow() // ObjectBox native Flow adapter
     }

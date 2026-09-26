@@ -6,14 +6,8 @@ All data models in the Hermes Android SDK are compiled as **ObjectBox FlatBuffer
 
 ## 1. `Message` Entity
 
-Represents an email message stored in native FlatBuffers binary format.
-
 ```kotlin
 package pro.aduki.hermes.store.entities
-
-import io.objectbox.annotation.Entity
-import io.objectbox.annotation.Id
-import io.objectbox.annotation.Index
 
 @Entity
 data class Message(
@@ -21,52 +15,53 @@ data class Message(
     @Index var hex: String = "",
     @Index var mailbox: String = "",
     @Index var uid: Long = 0,
+    @Index var threadId: String = "",
     var subject: String = "",
-    var from: String = "",
-    var to: String = "",
-    var snippet: String = "",
+    var fromName: String = "",
+    var fromEmail: String = "",
+    var to: String = "",            // comma-separated addresses
+    var preview: String = "",       // was `snippet` before 0.2.0
     var blob: String = "",
     var size: Long = 0,
-    @Index var flags: Int = 0,
-    @Index var date: Long = 0,
+    @Index var flags: Int = 0,      // SEEN=1, ANSWERED=2, FLAGGED=4, DELETED=8, DRAFT=16
+    var keywords: String = "",      // other server flags, space-separated ("$Junk $Forwarded")
+    var hasAttachment: Boolean = false,
+    @Index var receivedAt: Long = 0, // was `date` before 0.2.0; epoch millis UTC
+    var sentAt: Long = 0,
+    var modseq: Long = 0,
     var created: Long = 0,
     var dirty: Boolean = false
 ) {
-    companion object {
-        const val SEEN = 1
-        const val ANSWERED = 2
-        const val FLAGGED = 4
-        const val DELETED = 8
-        const val DRAFT = 16
-    }
-
-    fun seen(): Boolean = (flags and SEEN) != 0
-    fun flagged(): Boolean = (flags and FLAGGED) != 0
-    fun toggle(flag: Int) { flags = flags xor flag; dirty = true }
+    fun seen(): Boolean
+    fun flagged(): Boolean
+    fun deleted(): Boolean           // `\Deleted`: hidden from lists and unread counts
+    fun toggle(flag: Int)
     fun recipients(): List<String>
+    fun sender(): String             // fromName, else fromEmail
+
+    companion object {
+        fun bits(flags: List<String>): Int        // server flags -> bitmask
+        fun keywords(flags: List<String>): String // the non-system flags
+        fun flagName(bit: Int): String?           // SEEN -> "\Seen"
+    }
 }
 ```
 
 ### Field Definitions
 
-| Field | Type | ObjectBox Annotation | Description |
-| :--- | :--- | :--- | :--- |
-| `id` | `Long` | `@Id` | 64-bit local ObjectBox primary key (auto-incrementing). |
-| `hex` | `String` | `@Index` | Globally unique 64-character hexadecimal message ID. |
-| `mailbox` | `String` | `@Index` | Mailbox folder identifier (e.g., `"inbox"`, `"archive"`). |
-| `uid` | `Long` | `@Index` | Monotonic 64-bit server IMAP UID within the folder. |
-| `subject` | `String` | — | Decoded email subject line. |
-| `from` | `String` | — | Sender display string (e.g., `Alice <alice@aduki.pro>`). |
-| `to` | `String` | — | Comma-delimited recipient list for FlatBuffers array efficiency. |
-| `snippet` | `String` | — | First 120 characters of plain text body for inbox previews. |
-| `blob` | `String` | — | Relative path or Content-Addressable Storage hash of full raw RFC 822 MIME body. |
-| `size` | `Long` | — | Total raw message byte length. |
-| `flags` | `Int` | `@Index` | 32-bit integer bitmask of IMAP message flags. |
-| `date` | `Long` | `@Index` | Milliseconds timestamp of RFC 2822 date header for list ordering. |
-| `created` | `Long` | — | Local insertion milliseconds timestamp. |
-| `dirty` | `Boolean` | — | `true` if local modifications have not yet reached upstream server. |
-
----
+| Field | Meaning |
+| :--- | :--- |
+| `hex` | Server id; a `msg_<millis>` placeholder until an outbox send completes. |
+| `mailbox`, `uid` | Mailbox hex and the message's UID in it (changes on a move). |
+| `threadId` | Conversation id (the message's own id when it has no thread). |
+| `fromName`, `fromEmail`, `to` | Parsed sender and recipients. |
+| `preview` | Start of the body text, from the server. |
+| `flags` | Bitmask of `\\Seen`, `\\Answered`, `\\Flagged`, `\\Deleted`, `\\Draft`. |
+| `keywords` | Every other server flag or keyword, space-separated. |
+| `hasAttachment` | The message has attachments. |
+| `receivedAt`, `sentAt` | Arrival time and `Date:` header, epoch millis (UTC). |
+| `modseq` | The server MODSEQ of the last change applied. |
+| `dirty` | A local change is waiting in the outbox; sync keeps local flags and mailbox. |
 
 ## 2. `Mailbox` Entity
 

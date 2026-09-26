@@ -72,10 +72,10 @@ Add the Hermes SDK to `app/build.gradle.kts`:
 ```kotlin
 dependencies {
     // Hermes Android SDK Facade (Maven Central)
-    implementation("io.github.adukilabs:sdk:0.1.2")
+    implementation("io.github.adukilabs:sdk:0.2.0")
 
     // Or via JitPack mirror:
-    // implementation("com.github.adukilabs.hermers-kt:sdk:v0.1.2")
+    // implementation("com.github.adukilabs.hermers-kt:sdk:v0.2.0")
 
     // ObjectBox Zero-Copy Persistent Engine
     implementation("io.objectbox:objectbox-kotlin:4.0.3")
@@ -97,17 +97,26 @@ If your application only needs specific subsystems, you can import individual mo
 
 | Module | Maven Coordinate | Purpose |
 | :--- | :--- | :--- |
-| **SDK Facade** | `io.github.adukilabs:sdk:0.1.2` | Unified Hermes client entrypoint |
-| **State** | `io.github.adukilabs:state:0.1.2` | Live query observers & StateFlow feeds |
-| **Sync** | `io.github.adukilabs:sync:0.1.2` | RFC 7162 CONDSTORE synchronizer & Outbox |
-| **Store** | `io.github.adukilabs:store:0.1.2` | ObjectBox FlatBuffers models |
-| **Net** | `io.github.adukilabs:net:0.1.2` | HTTP/2 REST client & Auth tokens |
-| **Crypto** | `io.github.adukilabs:crypto:0.1.2` | Android KeyStore & AES-256-GCM cipher |
-| **Core** | `io.github.adukilabs:core:0.1.2` | RingBuffer, Jitter, Memory safety |
+| **SDK Facade** | `io.github.adukilabs:sdk:0.2.0` | Unified Hermes client entrypoint |
+| **State** | `io.github.adukilabs:state:0.2.0` | Live query observers & StateFlow feeds |
+| **Sync** | `io.github.adukilabs:sync:0.2.0` | RFC 7162 CONDSTORE synchronizer & Outbox |
+| **Store** | `io.github.adukilabs:store:0.2.0` | ObjectBox FlatBuffers models |
+| **Net** | `io.github.adukilabs:net:0.2.0` | HTTP/2 REST client & Auth tokens |
+| **Crypto** | `io.github.adukilabs:crypto:0.2.0` | Android KeyStore & AES-256-GCM cipher |
+| **Core** | `io.github.adukilabs:core:0.2.0` | RingBuffer, Jitter, Memory safety |
 
 ---
 
-## 5. ProGuard / R8 Rules
+## 5. Upgrading from 0.1.x
+
+0.2.0 is a breaking release:
+
+- **`Message` fields changed.** `snippet` is now `preview`, `date` is now `receivedAt`, and `from` is split into `fromName` and `fromEmail`. The new fields are `threadId`, `keywords`, `hasAttachment`, `sentAt` and `modseq`. The local store refills from the server on the next sync; see the migration note in `guide/database.md`.
+- **Outbox payloads are JSON.** `Manager.send(msg, raw)` expects `raw` to be the JSON send request. `client.mail.send` builds it for you. Entries queued by 0.1.x are still dispatched.
+- **`Worker` rejects permanent failures.** It now accepts an `onRejected` callback for actions the server refused for good.
+- **New HTTP layer.** Wire `HttpMailboxTransport(client.mailApi)` and `HttpDispatcher(client.mailApi, …)` into the sync engine and the outbox worker.
+
+## 6. ProGuard / R8 Rules
 
 ObjectBox and OkHttp require minimal ProGuard configuration. Add the following to `app/proguard-rules.pro`:
 

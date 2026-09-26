@@ -6,6 +6,7 @@ import pro.aduki.hermes.core.models.AppointmentRecord
 import pro.aduki.hermes.net.http.Scheduling
 import pro.aduki.hermes.store.entities.Appointment
 import pro.aduki.hermes.store.entities.Outbox
+import org.json.JSONObject
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 
@@ -71,8 +72,8 @@ class Schedule(
 
         outbox.put(
             Outbox(
-                type = "appointment_cancel",
-                payload = """{"hex":"$hex","reason":"$reason"}""",
+                action = "appointment_cancel",
+                payload = JSONObject().put("hex", hex).put("reason", reason).toString().toByteArray(),
                 hex = hex,
                 created = System.currentTimeMillis()
             )

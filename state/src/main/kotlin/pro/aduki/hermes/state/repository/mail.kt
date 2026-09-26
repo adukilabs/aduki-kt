@@ -49,7 +49,7 @@ class Mail(
 
             override fun messages(mailboxHex: String): Flow<List<Message>> = callbackFlow {
                 val query = messageBox.query(Message_.mailbox.equal(mailboxHex))
-                    .orderDesc(Message_.date)
+                    .orderDesc(Message_.receivedAt)
                     .build()
                 val sub = query.subscribe().observer { data -> trySend(data) }
                 awaitClose { sub.cancel() }
@@ -95,7 +95,8 @@ class Mail(
      */
     fun messages(mailboxHex: String): StateFlow<List<Message>> {
         return messagesCache.getOrPut(mailboxHex) {
-            source.messages(mailboxHex).stateIn(
+            // `\Deleted` messages await expunge; they never show in a list.
+            source.messages(mailboxHex).map { list -> list.filterNot { it.deleted() } }.stateIn(
                 scope = scope,
                 started = SharingStarted.Eagerly,
                 initialValue = emptyList()
@@ -122,7 +123,7 @@ class Mail(
     fun unread(mailboxHex: String): StateFlow<Int> {
         return unreadCache.getOrPut(mailboxHex) {
             source.messages(mailboxHex)
-                .map { list -> list.count { !it.seen() } }
+                .map { list -> list.count { !it.seen() && !it.deleted() } }
                 .stateIn(
                     scope = scope,
                     started = SharingStarted.Eagerly,

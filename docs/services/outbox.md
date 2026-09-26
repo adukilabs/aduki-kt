@@ -9,25 +9,25 @@ The Hermes Android SDK guarantees zero data loss across network drops, crashes, 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant App as Client Call (e.g. send, flag, move)
+    participant App as Client Call (send, flag, move, remove)
     participant Store as ObjectBox Store
     participant Worker as Outbox Worker
-    participant Server as Hermes REST / gRPC
+    participant Server as Hermes REST API
 
-    App->>Store: Atomic Tx: Write Message + Insert Outbox Journal
+    App->>Store: Atomic Tx: Write Message (dirty) + Insert Outbox entry
     Store-->>App: Return optimistic Message
-    App->>Worker: Signal drain()
+    App->>Worker: drain()
     activate Worker
-    Worker->>Store: Query next pending Outbox action
-    Worker->>Server: HTTP POST /v1/messages (X-Hermes-Idempotency-Key: UUID)
-    alt Network Failure
-        Server-->>Worker: Connection Timeout / 5xx
-        Worker->>Store: Increment attempts, calculate Decorrelated Jitter nextRetry
-        Worker->>Worker: Suspend until nextRetry
-    else Network Success
-        Server-->>Worker: 200 OK
-        Worker->>Store: Atomic Tx: Delete Outbox record + Clear dirty=false
-        Worker->>Store: Query next pending Outbox action
+    Worker->>Store: Next pending entry (oldest first)
+    Worker->>Server: HttpDispatcher: REST call (send carries Idempotency-Key)
+    alt Transient failure (network, 5xx, 408, 409, 429)
+        Worker->>Store: attempts++, nextRetry = now + jitter
+        Worker->>Worker: Stop: later entries wait (order is preserved)
+    else Rejected for good (other 4xx)
+        Worker->>Store: Drop entry, clear dirty (next sync restores server state)
+        Worker->>App: onRejected(entry, error)
+    else Success
+        Worker->>Store: Delete entry, clear dirty (send: adopt the server id)
     end
     deactivate Worker
 ```
@@ -41,29 +41,53 @@ sequenceDiagram
 ```kotlin
 package pro.aduki.hermes.sync.outbox
 
-class Manager(private val box: Box<Outbox>) {
-    fun send(msg: Message, raw: ByteArray): Outbox
-    fun flag(hex: String, flag: Int): Outbox
+class Manager(storage: Storage) {
+    constructor(store: BoxStore)
+
+    fun send(msg: Message, raw: ByteArray): Outbox   // raw = JSON send request
+    fun flag(hex: String, flag: Int): Outbox          // toggles locally, journals the result
     fun move(hex: String, dest: String): Outbox
     fun remove(hex: String): Outbox
+    fun enqueue(action: String, payload: ByteArray, hex: String = ""): Outbox
     fun pending(): List<Outbox>
-    fun remove(id: Long)
+    fun complete(id: Long, hex: String? = null)
+    fun rename(old: String, new: String)              // placeholder id -> server id
+    fun fail(id: Long, delay: Long)
 }
 ```
 
-### `Worker`
+### `Worker` and `Dispatcher`
 
 ```kotlin
-package pro.aduki.hermes.sync.outbox
+fun interface Dispatcher {
+    suspend fun dispatch(action: Outbox)
+}
+
+class Rejected(message: String, val code: Int? = null, cause: Throwable? = null) : Exception(message, cause)
 
 class Worker(
-    private val manager: Manager,
-    private val client: OkHttpClient,
-    private val endpoint: String,
-    private val circuit: Circuit
+    manager: Manager,
+    dispatcher: Dispatcher,
+    jitter: Jitter = Jitter(),
+    onRejected: (Outbox, Rejected) -> Unit = { _, _ -> }
 ) {
     suspend fun drain(): Int
 }
+```
+
+### `HttpDispatcher`
+
+The REST implementation (`pro.aduki.hermes.sync.http`):
+
+```kotlin
+val manager = Manager(boxStore)
+val dispatcher = HttpDispatcher(
+    api = client.mailApi,
+    lookup = { hex -> messageBox.query(Message_.hex.equal(hex)).build().use { it.findFirst() } },
+    rename = manager::rename,
+    fallback = null // or a Dispatcher for non-mail actions such as "appointment_cancel"
+)
+val worker = Worker(manager, dispatcher, onRejected = { entry, e -> /* tell the user */ })
 ```
 
 ---
@@ -71,16 +95,11 @@ class Worker(
 ## 3. Data Model: `Outbox` Entity
 
 ```kotlin
-package pro.aduki.hermes.store.entities
-
-import io.objectbox.annotation.Entity
-import io.objectbox.annotation.Id
-import io.objectbox.annotation.Index
-
 @Entity
 data class Outbox(
     @Id var id: Long = 0,
-    @Index var action: String = "", // "send", "flag", "move", "remove"
+    @Index var hex: String = "",
+    @Index var action: String = "", // "send", "flag", "move", "delete", ...
     var payload: ByteArray = byteArrayOf(),
     @Index var created: Long = System.currentTimeMillis(),
     var attempts: Int = 0,
@@ -88,30 +107,35 @@ data class Outbox(
 )
 ```
 
-### Action Types & Binary Payloads
+### Actions, Payloads and Endpoints
 
-| `action` | Target Entity | Binary Payload Format | Wire Endpoint |
-| :--- | :--- | :--- | :--- |
-| `"send"` | `Message` | Raw RFC 822 MIME byte array (`message/rfc822`) | `POST /v1/messages` |
-| `"flag"` | `Message` | UTF-8 JSON: `{"hex": "...", "flag": 4}` | `POST /v1/messages/:hex/flags` |
-| `"move"` | `Message` | UTF-8 JSON: `{"hex": "...", "dest": "archive"}` | `POST /v1/messages/:hex/move` |
-| `"remove"`| `Message` | UTF-8 JSON: `{"hex": "..."}` | `DELETE /v1/messages/:hex` |
+| `action` | Payload (UTF-8 JSON) | Endpoint |
+| :--- | :--- | :--- |
+| `send` | `{"to": [...], "cc": [...], "subject": "...", "text": "...", "from"?: "..."}` | `POST /v1/user/mail/send` |
+| `flag` | `{"hex": "...", "flag": 4, "set": true}` — the resulting state, not a toggle | `PATCH /v1/user/mail/{hex}/flags` (`add` or `remove`) |
+| `move` | `{"hex": "...", "mailbox": "<mailbox hex>"}` | `PATCH /v1/user/mail/{hex}/mailbox` |
+| `delete` | `{"hex": "..."}` | `DELETE /v1/user/mail/{hex}` |
+
+Entries journaled by 0.1.x (`"hex:flag"`, `"hex:dest"`, a bare hex, or the raw body for `send`) are still dispatched.
+
+A `flag`, `move` or `delete` of a message the server no longer has (404) completes: there is nothing left to do.
 
 ---
 
 ## 4. Idempotency & Replay Protection
 
-To prevent duplicate message dispatches during transient network reconnections, every request carries a deterministic idempotency header derived from the outbox record ID and creation timestamp:
+A send whose response is lost (timeout, dropped connection) is retried with the same key, and the server replays the first result instead of sending again:
 
 ```http
-POST /v1/messages HTTP/1.1
-Host: hermers.aduki.pro
+POST /v1/user/mail/send HTTP/1.1
 Authorization: Bearer eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9...
-X-Hermes-Idempotency-Key: 7b9f8a02-1c3d-4e5f-8a9b-0c1d2e3f4a5b
-Content-Type: message/rfc822
+Idempotency-Key: outbox-42-1790413340658
+Content-Type: application/json
 
-<raw binary email blob>
+{"to":["bob@example.com"],"cc":[],"subject":"Lunch","text":"Friday?"}
 ```
+
+The key is `outbox-<entry id>-<created>`, stable across retries and app restarts. While the first attempt is still running, a retry gets `409` and is retried later. After the send, the local placeholder message (`msg_<millis>`) takes the server's id from the response.
 
 ---
 
