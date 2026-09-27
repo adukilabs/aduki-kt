@@ -6,6 +6,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import okhttp3.Authenticator
 import okhttp3.OkHttpClient
+import org.json.JSONObject
 import pro.aduki.hermes.core.config.Endpoints
 import pro.aduki.hermes.core.config.Options
 import pro.aduki.hermes.net.http.Client as HttpClient
@@ -193,6 +194,20 @@ class HermesClient internal constructor(
      */
     suspend fun refresh(): Boolean {
         return renew(null) != null
+    }
+
+    /**
+     * Handles a `rights` push (ADK-AUTH-003 §7.4): an `event: rights` from the
+     * JMAP EventSource, or a web-push or FCM payload. [payload] is its JSON
+     * body. For `{"@type": "Rights", ...}` the access token is renewed now,
+     * before the next request would be refused with `auth.stale`; anything
+     * else is ignored. Returns whether a token was renewed.
+     */
+    suspend fun rights(payload: String): Boolean {
+        val type = runCatching { JSONObject(payload).optString("@type") }.getOrNull()
+        if (type != "Rights") return false
+        val stale = session.tokens.value?.token ?: return false
+        return renew(stale) != null
     }
 
     /**

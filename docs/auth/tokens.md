@@ -67,3 +67,19 @@ client.session.refresh()   // current refresh token
 ```
 
 `Tokens.session` is kept across renewals.
+
+## Rights push
+
+When an account's rights change (a role edit, a revoked grant, an unlink),
+the server pushes `{"@type": "Rights", "epoch": N}`: an `event: rights` on
+the JMAP EventSource, or a web-push payload. A key rotation sends
+`{"@type": "Rights", "keys": true}`. Pass the body to `client.rights(payload)`
+to renew the access token at once, before the next request is refused with
+`auth.stale`:
+
+```kotlin
+eventSource.on("rights") { data -> scope.launch { client.rights(data) } }
+```
+
+The push only saves a round trip. A stale token is still refused and then
+renewed automatically.
