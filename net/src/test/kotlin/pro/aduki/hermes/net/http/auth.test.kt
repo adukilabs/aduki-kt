@@ -34,7 +34,7 @@ class AuthTest {
             .build()
 
         val request = Request.Builder()
-            .url(server.url("/auth/whoami"))
+            .url(server.url("/user"))
             .build()
 
         client.newCall(request).execute().use { response ->

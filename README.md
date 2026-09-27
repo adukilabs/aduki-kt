@@ -7,7 +7,7 @@
 > `aduki/Next/PLAN.md`. The Maven coordinates are unchanged until then.
 
 [![Documentation](https://img.shields.io/badge/docs-mdBook-blue.svg)](https://adukilabs.github.io/aduki-kt/)
-[![Maven Central](https://img.shields.io/badge/Maven%20Central-0.2.0-blue.svg)](https://central.sonatype.com/artifact/io.github.adukilabs/sdk)
+[![Maven Central](https://img.shields.io/badge/Maven%20Central-0.3.0-blue.svg)](https://central.sonatype.com/artifact/io.github.adukilabs/sdk)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-purple.svg)](https://kotlinlang.org)
 [![ObjectBox](https://img.shields.io/badge/ObjectBox-4.0.3-green.svg)](https://objectbox.io)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
@@ -20,7 +20,7 @@ An ultra-low latency, battery-efficient, offline-first Android Kotlin SDK engine
 
 - **Pure ObjectBox FlatBuffers Persistence**: Completely eliminates Room and SQLite overhead. Memory-mapped (`mmap`) reads execute in sub-millisecond timeframes with zero GC allocation.
 - **Hardware-Isolated Device Security**: AES-256-GCM envelope encryption anchored directly in the **Android KeyStore** (StrongBox Keymaster with TEE fallback). In-memory buffer zeroization via `Guard` and `wipe()`.
-- **Interactive Login & 2FA / TOTP**: Human user authentication via `POST /v1/auth/login`, 6-digit TOTP confirmation via `PATCH /v1/user/totp`, session refresh, and revocation.
+- **Aduki ID sign-in**: People sign in at Aduki ID (`POST /v1/sessions`, audience `mail`); the SDK renews the 10-minute token on `401` and signs out by revoking the session.
 - **Dual Transport Flexibility**: Multiplexed HTTP/2 OkHttp 4 for REST and `grpc-okhttp` for high-throughput binary sync streaming.
 - **Resilient Offline Outbox**: Every mutation (email sent, flag toggled, message moved) journals atomically to an offline queue before wire dispatch, retrying automatically with Amazon-style Decorrelated Jitter. Sends carry a stable `Idempotency-Key`, so a retry never sends twice.
 - **RFC 7162 CONDSTORE / MODSEQ Sync**: Incremental mailbox synchronizer over `GET /v1/user/mail/changes`, transferring only what changed (new, re-flagged, expunged or moved messages), paged and resumable.
@@ -38,7 +38,7 @@ Because `mavenCentral()` is enabled by default in Android projects, include the 
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("io.github.adukilabs:sdk:0.2.0")
+    implementation("io.github.adukilabs:sdk:0.3.0")
     implementation("io.objectbox:objectbox-android:4.0.3")
 }
 ```
@@ -57,7 +57,7 @@ dependencyResolutionManagement {
 
 // app/build.gradle.kts
 dependencies {
-    implementation("com.github.adukilabs.hermers-kt:sdk:v0.2.0")
+    implementation("com.github.adukilabs.hermers-kt:sdk:v0.3.0")
     implementation("io.objectbox:objectbox-android:4.0.3")
 }
 ```
@@ -70,10 +70,11 @@ dependencies {
 
 ```kotlin
 // In your Login ViewModel or CoroutineScope
+// Signs in at Aduki ID (id.aduki.pro) for a mail token; renewed automatically
 val client = HermesClient.login(
-    email = "user@aduki.pro",
+    handle = "ada@aduki.me",
     password = "CorrectHorseBatteryStaple123!",
-    totp = "123456" // Optional 6-digit TOTP code if 2FA is active
+    code = "123456" // authenticator code (or backup = "...")
 )
 
 // Identity is eagerly cached
@@ -137,7 +138,7 @@ The compiled output will be written to `KOTLIN/docs/book/` (gitignored).
 | Section | Topics |
 | :--- | :--- |
 | **[Getting Started](docs/README.md)** | [Installation & Gradle DSL](docs/start/install.md), [Configuration & Options](docs/start/config.md) |
-| **[Authentication](docs/auth/index.md)** | [Interactive Login](docs/auth/login.md), [TOTP 2FA](docs/auth/totp.md), [API Keys](docs/auth/keys.md), [Token Lifecycle](docs/auth/tokens.md) |
+| **[Authentication](docs/auth/index.md)** | [Sign-in](docs/auth/login.md), [TOTP 2FA (deprecated)](docs/auth/totp.md), [API Keys](docs/auth/keys.md), [Token Lifecycle](docs/auth/tokens.md) |
 | **[Hardware Security](docs/security/index.md)** | [Android KeyStore](docs/security/keystore.md), [Envelope Cipher](docs/security/cipher.md), [Memory Sanitization](docs/security/sanitizer.md), [TLS & Pinning](docs/security/tls.md) |
 | **[ObjectBox Persistence](docs/store/index.md)** | [FlatBuffers Entities](docs/store/entities.md), [B-Tree Indexes](docs/store/indexes.md), [ACID Batch Transactions](docs/store/transactions.md) |
 | **[High-Level Services](docs/services/mail.md)** | [Mail Service](docs/services/mail.md), [Contacts Service](docs/services/contacts.md), [Sync Engine](docs/services/sync.md), [Offline Outbox](docs/services/outbox.md), [Lifecycle](docs/services/lifecycle.md) |

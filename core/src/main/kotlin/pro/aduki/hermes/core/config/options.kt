@@ -5,6 +5,7 @@ package pro.aduki.hermes.core.config
  */
 data class Options(
     val endpoint: String = Endpoints.REST,
+    val identity: String = Endpoints.ID,
     val grpcHost: String = Endpoints.GRPC_HOST,
     val grpcPort: Int = Endpoints.GRPC_PORT,
     val timeoutSeconds: Long = 15,

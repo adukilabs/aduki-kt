@@ -7,7 +7,11 @@ import pro.aduki.hermes.core.errors.HermesException
 import pro.aduki.hermes.core.models.Identity
 
 /**
- * Whoami resolves and caches authenticated session identity via GET /auth/whoami.
+ * Whoami resolves the signed-in account via GET /user.
+ *
+ * `/user` accepts Aduki ID tokens as well as API keys (`/auth/whoami` does
+ * not). It carries the account and its tenant; scopes and tier are not part
+ * of it and stay empty.
  */
 class Whoami(
     private val client: OkHttpClient,
@@ -18,7 +22,7 @@ class Whoami(
      * Resolves authenticated identity from the Hermes server.
      */
     fun resolve(): Identity {
-        val url = if (endpoint.endsWith("/")) "${endpoint}auth/whoami" else "$endpoint/auth/whoami"
+        val url = "${endpoint.trimEnd('/')}/user"
         val request = Request.Builder()
             .url(url)
             .get()
@@ -45,7 +49,7 @@ class Whoami(
 
     private fun parse(json: String): Identity {
         val obj = JSONObject(json)
-        val user = obj.optString("user", "")
+        val user = obj.optString("hex", "").ifBlank { obj.optString("user", "") }
         val tenant = obj.optString("tenant", "")
         val tier = obj.optString("tier", "")
         val owner = obj.optBoolean("owner", false)

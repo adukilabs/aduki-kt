@@ -10,7 +10,7 @@
 # Authentication
 
 - [Overview](auth/index.md)
-- [Interactive Login](auth/login.md)
+- [Sign-in](auth/login.md)
 - [Two-Factor TOTP](auth/totp.md)
 - [API Keys](auth/keys.md)
 - [Token Lifecycle](auth/tokens.md)

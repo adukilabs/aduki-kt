@@ -60,7 +60,7 @@ fun HermesClient.Builder.key(key: String): HermesClient.Builder
 On all outbound HTTP requests, the SDK interceptor inspects the credential and attaches the `Key` scheme header:
 
 ```http
-GET /v1/auth/whoami HTTP/1.1
+GET /v1/user HTTP/1.1
 Host: hermers.aduki.pro
 Authorization: Key hm_live_7f9b8c2d1e0a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a
 Accept: application/json
@@ -81,7 +81,7 @@ val metadata = Metadata().apply {
 
 ## 4. Scope Resolution
 
-When initialized with an API key, calling `client.me()` contacts `GET /v1/auth/whoami` to verify the key and retrieve its assigned tenant and permissions:
+When initialized with an API key, calling `client.me()` contacts `GET /v1/user` to verify the key and retrieve its account and tenant:
 
 ```kotlin
 val identity: Identity? = client.me()

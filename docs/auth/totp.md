@@ -1,5 +1,10 @@
 # Two-Factor Authentication (TOTP) Reference
 
+> **Deprecated.** Sign-in moved to Aduki ID, which owns second factors: set up
+> an authenticator in the Account Center and pass its code to
+> `HermesClient.login(code = …)`. `HermesClient.totp` calls mail's
+> `/v1/user/totp`, which is going away.
+
 Hermes implements RFC 6238 Time-based One-Time Passwords (TOTP) (SHA-1 / SHA-256 with 30-second time drift windows).
 
 ---

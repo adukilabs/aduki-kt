@@ -77,7 +77,7 @@ object HermesDispatchers {
 Most SDKs initialize heavy dependencies on the main thread during `Application.onCreate()`, delaying app launch. Hermes achieves a cold start under 20 milliseconds through:
 
 1. **Deferred gRPC Connection**: Network channels and TLS handshakes are established lazily on the first background network request, not during client creation.
-2. **Asynchronous Identity Resolution**: `GET /auth/whoami` runs asynchronously in the background. The SDK serves cached user/tenant metadata from ObjectBox immediately.
+2. **Asynchronous Identity Resolution**: `GET /user` runs asynchronously in the background. The SDK serves cached user/tenant metadata from ObjectBox immediately.
 3. **Native FlatBuffers Schema**: ObjectBox schema metadata is embedded at compile time via the Gradle plugin; there is zero runtime reflection or annotation processing during startup.
 
 ```text

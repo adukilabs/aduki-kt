@@ -30,8 +30,9 @@ class WhoamiTest {
     fun testSuccessfulResolution() {
         val json = """
             {
-                "user": "usr_abc123",
+                "hex": "usr_abc123",
                 "tenant": "ten_xyz789",
+                "email": "ada@aduki.me",
                 "owner": true,
                 "tier": "enterprise"
             }
@@ -46,6 +47,7 @@ class WhoamiTest {
         assertEquals("ten_xyz789", identity.tenant)
         assertTrue(identity.owner)
         assertEquals("enterprise", identity.tier)
+        assertEquals("/user", server.takeRequest().path)
     }
 
     @Test

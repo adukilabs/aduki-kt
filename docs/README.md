@@ -32,7 +32,7 @@ Traditional mobile database ORMs like Android Room and SQLite suffer from substa
 ## Quick Navigation
 
 - [Installation & Setup](start/install.md)
-- [Interactive Login & TOTP](auth/login.md)
+- [Sign-in (Aduki ID)](auth/login.md)
 - [Hardware Security Model](security/index.md)
 - [ObjectBox FlatBuffers Storage](store/index.md)
 - [Mail & Contacts API](services/mail.md)

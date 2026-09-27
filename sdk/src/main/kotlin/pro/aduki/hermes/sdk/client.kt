@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import okhttp3.Authenticator
 import okhttp3.OkHttpClient
 import pro.aduki.hermes.core.config.Endpoints
 import pro.aduki.hermes.core.config.Options
@@ -69,11 +70,70 @@ class HermesClient internal constructor(
                 }
                 chain.proceed(request)
             }
+            .authenticator(renewer)
             .build()
     }
 
+    // Aduki ID access tokens live ten minutes: on a 401 renew once with the
+    // refresh token and retry. API keys are not renewed.
+    private val renewer = Authenticator { _, response ->
+        val sent = response.request.header("Authorization").orEmpty()
+        if (response.priorResponse != null || !sent.startsWith("Bearer ")) {
+            null
+        } else {
+            renew(sent.removePrefix("Bearer "))?.let { fresh ->
+                response.request.newBuilder().header("Authorization", "Bearer $fresh").build()
+            }
+        }
+    }
+
+    // A client from `Builder.http` gets the same renewal unless it brings
+    // its own authenticator.
+    private val customClient: OkHttpClient? by lazy {
+        httpClient?.let { custom ->
+            if (custom.authenticator == Authenticator.NONE) custom.newBuilder().authenticator(renewer).build() else custom
+        }
+    }
+
+    private val renewal = Any()
+
+    /**
+     * Renews the access token unless another caller already replaced [stale].
+     * Serialized: refresh tokens rotate, and presenting a spent one twice
+     * makes Aduki ID revoke the whole session.
+     */
+    private fun renew(stale: String?): String? = synchronized(renewal) {
+        val current = session.tokens.value ?: return null
+        if (stale != null && current.token != stale) return current.token
+        if (current.refresh.isBlank()) return null
+        try {
+            val fresh = Login.refresh(identityClient, options.identity, current.refresh)
+            session.update(fresh.copy(session = current.session))
+            fresh.token
+        } catch (e: pro.aduki.hermes.core.errors.HermesException.Auth) {
+            // A 2xx that failed validation spent the refresh token: keep the
+            // rotated one if it came back, else drop it (reuse revokes the session).
+            session.update(current.copy(refresh = e.refresh))
+            null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun activeHttpClient(): OkHttpClient {
-        return httpClient ?: defaultClient
+        return customClient ?: defaultClient
+    }
+
+    // Aduki ID calls carry their own credentials (a refresh token, or an `id`
+    // audience token for sign-out), never mail's. A custom client keeps its
+    // connection settings but loses its interceptors and authenticator here,
+    // so nothing can swap in the mail token.
+    private val identityClient: OkHttpClient by lazy {
+        httpClient?.newBuilder()?.apply {
+            interceptors().clear()
+            networkInterceptors().clear()
+            authenticator(Authenticator.NONE)
+        }?.build() ?: HttpClient.create("", options.timeoutSeconds)
     }
 
     // Declared after the HTTP client above: property initializers run in
@@ -119,33 +179,45 @@ class HermesClient internal constructor(
     /**
      * Confirms or configures 6-digit TOTP secret for the active account.
      */
+    @Deprecated("Second factors are managed in Aduki ID's Account Center; mail's /user/totp is going away.")
+    @Suppress("DEPRECATION")
     suspend fun totp(code: String): Boolean {
         val currentToken = activeAuthString()
         return Login.totp(activeHttpClient(), options.endpoint, currentToken, code)
     }
 
     /**
-     * Rotates session tokens using the active refresh token.
+     * Renews the access token at Aduki ID with the active refresh token. The
+     * refresh token rotates, so the new pair replaces the old one; the
+     * session hex is kept for sign-out.
      */
     suspend fun refresh(): Boolean {
-        val currentRefresh = session.refresh() ?: return false
-        return try {
-            val newTokens = Login.refresh(activeHttpClient(), options.endpoint, currentRefresh)
-            session.update(newTokens)
-            true
-        } catch (_: Exception) {
-            false
-        }
+        return renew(null) != null
     }
 
     /**
-     * Revokes active session on server and wipes local tokens.
+     * Signs out at Aduki ID (revoking the session and every token issued from
+     * it) and wipes local tokens. Clients built from an API key or a bare
+     * token have no session to revoke and return `false`.
+     *
+     * If Aduki ID could not be reached or refused the revocation, this returns
+     * `false` and keeps the session (with the rotated refresh token) so a
+     * later call can retry; `session.clear()` forgets it locally instead.
      */
-    suspend fun logout(): Boolean {
-        val currentToken = activeAuthString()
-        val ok = Login.logout(activeHttpClient(), options.endpoint, currentToken)
-        session.clear()
-        return ok
+    suspend fun logout(): Boolean = synchronized(renewal) {
+        val current = session.tokens.value
+        if (current == null) {
+            session.clear()
+            return false
+        }
+        val outcome = Login.logout(identityClient, options.identity, current.session, current.refresh)
+        if (outcome.revoked || outcome.refresh.isBlank()) {
+            session.clear()
+        } else {
+            // Still signed in remotely: keep the retry credential.
+            session.update(current.copy(refresh = outcome.refresh))
+        }
+        outcome.revoked
     }
 
     /**
@@ -166,6 +238,7 @@ class HermesClient internal constructor(
         private var apiKey: String = ""
         private var token: String = ""
         private var endpoint: String = Endpoints.REST
+        private var identity: String = Endpoints.ID
         private var grpcHost: String = Endpoints.GRPC_HOST
         private var grpcPort: Int = Endpoints.GRPC_PORT
         private var secure: Boolean = true
@@ -183,6 +256,8 @@ class HermesClient internal constructor(
         fun key(key: String) = apply { this.apiKey = key }
         fun token(token: String) = apply { this.token = token }
         fun endpoint(endpoint: String) = apply { this.endpoint = endpoint }
+        /** The Aduki ID base used to renew and revoke sign-ins, e.g. `https://id.aduki.pro/v1`. */
+        fun identity(identity: String) = apply { this.identity = identity }
         fun grpc(host: String, port: Int = Endpoints.GRPC_PORT) = apply {
             this.grpcHost = host
             this.grpcPort = port
@@ -209,6 +284,7 @@ class HermesClient internal constructor(
             }
             val options = Options(
                 endpoint = endpoint,
+                identity = identity,
                 grpcHost = grpcHost,
                 grpcPort = grpcPort,
                 timeoutSeconds = timeoutSeconds,
@@ -235,18 +311,23 @@ class HermesClient internal constructor(
         fun builder() = Builder()
 
         /**
-         * Interactively logs in with email, password, and optional 6-digit TOTP.
+         * Signs in at Aduki ID with a full address, password and second factor
+         * (an authenticator [code] or a [backup] code) and returns a client
+         * that sends the resulting mail token.
          */
         suspend fun login(
-            email: String,
+            handle: String,
             password: String,
-            totp: String? = null,
-            endpoint: String = Endpoints.REST
+            code: String? = null,
+            endpoint: String = Endpoints.REST,
+            identity: String = Endpoints.ID,
+            backup: String? = null
         ): HermesClient {
             val tempClient = HttpClient.create("", 15)
-            val tokens = Login.submit(tempClient, endpoint, email, password, totp)
+            val tokens = Login.submit(tempClient, identity, handle, password, code, backup)
             val client = builder()
                 .endpoint(endpoint)
+                .identity(identity)
                 .token(tokens.token)
                 .build()
 

@@ -6,7 +6,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -30,110 +30,177 @@ class LoginTest {
         server.shutdown()
     }
 
+    private fun identity() = server.url("/v1").toString()
+
     @Test
-    fun testSubmitPasswordOnly() {
-        val jsonResponse = """
-            {
-                "token": "jwt_access_123",
-                "refresh": "rt_refresh_456",
-                "expires": "2026-09-08T22:00:00Z"
-            }
-        """.trimIndent()
-        server.enqueue(MockResponse().setResponseCode(200).setBody(jsonResponse))
+    fun testSubmitSignsInAtAdukiIdForMail() {
+        server.enqueue(
+            MockResponse().setResponseCode(201).setBody(
+                """{"success":true,"data":{"session":"00000000000000ab","access":"eyJ.mail","refresh":"rt_1","expires":600}}"""
+            )
+        )
 
-        val endpoint = server.url("/v1").toString()
-        val tokens = Login.submit(client, endpoint, "user@aduki.pro", "password123")
+        val tokens = Login.submit(client, identity(), "ada@aduki.me", "password123", code = "123456")
 
-        assertEquals("jwt_access_123", tokens.token)
-        assertEquals("rt_refresh_456", tokens.refresh)
-        assertEquals("2026-09-08T22:00:00Z", tokens.expires)
+        assertEquals("eyJ.mail", tokens.token)
+        assertEquals("rt_1", tokens.refresh)
+        assertEquals("600", tokens.expires)
+        assertEquals("00000000000000ab", tokens.session)
 
         val recorded = server.takeRequest()
-        assertEquals("/v1/auth/login", recorded.path)
+        assertEquals("POST", recorded.method)
+        assertEquals("/v1/sessions", recorded.path)
         val body = JSONObject(recorded.body.readUtf8())
-        assertEquals("user@aduki.pro", body.getString("email"))
+        assertEquals("ada@aduki.me", body.getString("handle"))
         assertEquals("password123", body.getString("password"))
-        assertTrue(!body.has("totp"))
+        assertEquals("123456", body.getString("code"))
+        assertEquals("mail", body.getString("audience"))
+        assertFalse(body.has("backup"))
     }
 
     @Test
-    fun testSubmitWithTotp() {
-        val jsonResponse = """
-            {
-                "token": "jwt_totp_verified",
-                "refresh": "rt_totp_refresh",
-                "expires": "2026-09-08T23:00:00Z"
-            }
-        """.trimIndent()
-        server.enqueue(MockResponse().setResponseCode(200).setBody(jsonResponse))
+    fun testSubmitWithBackupCode() {
+        server.enqueue(
+            MockResponse().setResponseCode(201).setBody(
+                """{"success":true,"data":{"session":"01","access":"a","refresh":"r","expires":600}}"""
+            )
+        )
 
-        val endpoint = server.url("/v1").toString()
-        val tokens = Login.submit(client, endpoint, "user@aduki.pro", "password123", "654321")
+        Login.submit(client, identity(), "ada@aduki.me", "pw", backup = "abcd-efgh")
 
-        assertEquals("jwt_totp_verified", tokens.token)
+        val body = JSONObject(server.takeRequest().body.readUtf8())
+        assertEquals("abcd-efgh", body.getString("backup"))
+        assertFalse(body.has("code"))
+    }
+
+    @Test
+    fun testSubmitUnauthorizedCarriesKind() {
+        server.enqueue(
+            MockResponse().setResponseCode(401).setBody(
+                """{"success":false,"error":{"status":401,"kind":"auth.factor","message":"second factor required"}}"""
+            )
+        )
+
+        val error = assertThrows(HermesException.Unauthorized::class.java) {
+            Login.submit(client, identity(), "ada@aduki.me", "pw")
+        }
+        assertTrue(error.message!!.contains("auth.factor"))
+    }
+
+    @Test
+    fun testSubmitRateLimitedIsNetworkError() {
+        server.enqueue(MockResponse().setResponseCode(429).setBody("""{"success":false,"error":{"status":429,"kind":"rate.limited","message":"slow down"}}"""))
+
+        val error = assertThrows(HermesException.Network::class.java) {
+            Login.submit(client, identity(), "ada@aduki.me", "pw", code = "123456")
+        }
+        assertEquals(429, error.code)
+    }
+
+    @Test
+    fun testRefreshRotates() {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"success":true,"data":{"access":"eyJ.new","refresh":"rt_2","expires":600}}"""
+            )
+        )
+
+        val tokens = Login.refresh(client, identity(), "rt_1")
+
+        assertEquals("eyJ.new", tokens.token)
+        assertEquals("rt_2", tokens.refresh)
+
         val recorded = server.takeRequest()
+        assertEquals("/v1/tokens", recorded.path)
         val body = JSONObject(recorded.body.readUtf8())
-        assertEquals("654321", body.getString("totp"))
+        assertEquals("rt_1", body.getString("refresh"))
+        assertEquals("mail", body.getString("audience"))
     }
 
     @Test
-    fun testSubmitUnauthorized() {
-        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"error": "unauthorized"}"""))
+    fun testLogoutRevokesTheSessionWithAnIdToken() {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"success":true,"data":{"access":"eyJ.id","refresh":"rt_3","expires":600}}"""
+            )
+        )
+        server.enqueue(MockResponse().setResponseCode(204))
 
-        val endpoint = server.url("/v1").toString()
-        assertThrows(HermesException.Unauthorized::class.java) {
-            Login.submit(client, endpoint, "bad@aduki.pro", "wrong_pass")
+        assertEquals(Signout(true, ""), Login.logout(client, identity(), "00000000000000ab", "rt_2"))
+
+        val swap = server.takeRequest()
+        assertEquals("/v1/tokens", swap.path)
+        val body = JSONObject(swap.body.readUtf8())
+        assertEquals("rt_2", body.getString("refresh"))
+        assertEquals("id", body.getString("audience"))
+
+        val revoke = server.takeRequest()
+        assertEquals("DELETE", revoke.method)
+        assertEquals("/v1/sessions/00000000000000ab", revoke.path)
+        assertEquals("Bearer eyJ.id", revoke.getHeader("Authorization"))
+    }
+
+    @Test
+    fun testLogoutWithoutSessionIsFalse() {
+        assertFalse(Login.logout(client, identity(), "", "rt").revoked)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun testLogoutWithSpentRefreshIsFalse() {
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"success":false,"error":{"status":401,"kind":"auth.invalid","message":"invalid"}}"""))
+
+        assertEquals(Signout(false, ""), Login.logout(client, identity(), "01", "rt_spent"))
+    }
+
+    @Test
+    fun testFailedRevocationHandsBackTheRotatedRefresh() {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"success":true,"data":{"access":"eyJ.id","refresh":"rt_3","expires":600}}"""
+            )
+        )
+        server.enqueue(MockResponse().setResponseCode(503))
+
+        assertEquals(Signout(false, "rt_3"), Login.logout(client, identity(), "01", "rt_2"))
+    }
+
+    @Test
+    fun testRefreshWithoutNewRefreshTokenIsRefused() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"success":true,"data":{"access":"a","expires":600}}"""))
+
+        assertThrows(HermesException.Auth::class.java) {
+            Login.refresh(client, identity(), "rt_1")
         }
     }
 
     @Test
-    fun testRefreshToken() {
-        val jsonResponse = """
-            {
-                "token": "jwt_rotated_789",
-                "refresh": "rt_new_000",
-                "expires": "2026-09-09T00:00:00Z"
-            }
-        """.trimIndent()
-        server.enqueue(MockResponse().setResponseCode(200).setBody(jsonResponse))
+    fun testSignInWithoutSessionIsRefused() {
+        server.enqueue(MockResponse().setResponseCode(201).setBody("""{"success":true,"data":{"access":"a","refresh":"r","expires":600}}"""))
 
-        val endpoint = server.url("/v1").toString()
-        val tokens = Login.refresh(client, endpoint, "rt_old_111")
-
-        assertEquals("jwt_rotated_789", tokens.token)
-        assertEquals("rt_new_000", tokens.refresh)
-
-        val recorded = server.takeRequest()
-        assertEquals("/v1/auth/refresh", recorded.path)
-        val body = JSONObject(recorded.body.readUtf8())
-        assertEquals("rt_old_111", body.getString("token"))
+        assertThrows(HermesException.Auth::class.java) {
+            Login.submit(client, identity(), "ada@aduki.me", "pw", code = "123456")
+        }
     }
 
     @Test
-    fun testLogout() {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok": true}"""))
+    fun testMalformedSwapDropsTheSpentRefresh() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"success":true,"data":{"access":"a","expires":600}}"""))
 
-        val endpoint = server.url("/v1").toString()
-        val ok = Login.logout(client, endpoint, "jwt_to_revoke")
-
-        assertTrue(ok)
-        val recorded = server.takeRequest()
-        assertEquals("/v1/auth/logout", recorded.path)
-        assertEquals("Bearer jwt_to_revoke", recorded.getHeader("Authorization"))
+        assertEquals(Signout(false, ""), Login.logout(client, identity(), "01", "rt_2"))
     }
 
     @Test
-    fun testTotpConfirmation() {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"totp": true}"""))
+    fun testRateLimitedSwapKeepsTheUnusedRefresh() {
+        server.enqueue(MockResponse().setResponseCode(429).setBody("""{"success":false,"error":{"status":429,"kind":"rate.limited","message":"slow"}}"""))
 
-        val endpoint = server.url("/v1").toString()
-        val ok = Login.totp(client, endpoint, "jwt_user_token", "123456")
+        assertEquals(Signout(false, "rt_2"), Login.logout(client, identity(), "01", "rt_2"))
+    }
 
-        assertTrue(ok)
-        val recorded = server.takeRequest()
-        assertEquals("/v1/user/totp", recorded.path)
-        assertEquals("Bearer jwt_user_token", recorded.getHeader("Authorization"))
-        assertEquals("\"123456\"", recorded.body.readUtf8())
+    @Test
+    fun testSwapWithoutAccessKeepsTheRotatedRefresh() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"success":true,"data":{"refresh":"rt_3","expires":600}}"""))
+
+        assertEquals(Signout(false, "rt_3"), Login.logout(client, identity(), "01", "rt_2"))
     }
 }
-
