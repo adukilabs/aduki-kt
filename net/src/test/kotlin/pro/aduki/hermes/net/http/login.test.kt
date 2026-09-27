@@ -196,4 +196,11 @@ class LoginTest {
 
         assertEquals(Signout(false, "rt_2"), Login.logout(client, identity(), "01", "rt_2"))
     }
+
+    @Test
+    fun testSwapWithoutAccessKeepsTheRotatedRefresh() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"success":true,"data":{"refresh":"rt_3","expires":600}}"""))
+
+        assertEquals(Signout(false, "rt_3"), Login.logout(client, identity(), "01", "rt_2"))
+    }
 }

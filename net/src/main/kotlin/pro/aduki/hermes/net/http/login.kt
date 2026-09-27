@@ -95,9 +95,16 @@ object Login {
 
         client.newCall(request).execute().use { response ->
             val data = data(response, "Token refresh")
+            // Read the rotated token first: the old one is spent once Aduki ID
+            // answered 2xx, so a missing access token must not lose it.
+            val rotated = required(data, "refresh", "refresh")
+            val token = data.optString("access", "")
+            if (token.isBlank()) {
+                throw HermesException.Auth("Missing access token in refresh response", refresh = rotated)
+            }
             return Tokens(
-                token = access(data, "refresh"),
-                refresh = required(data, "refresh", "refresh"),
+                token = token,
+                refresh = rotated,
                 expires = data.optLong("expires", 0).toString()
             )
         }
@@ -123,10 +130,10 @@ object Login {
         } catch (_: HermesException.Unauthorized) {
             // Spent, expired or revoked: the session is already unusable.
             return Signout(false, "")
-        } catch (_: HermesException.Auth) {
+        } catch (e: HermesException.Auth) {
             // A 2xx that failed validation: Aduki ID rotated the token, so the
-            // old one is spent and must not be presented again.
-            return Signout(false, "")
+            // old one is spent. Keep the new one if the answer carried it.
+            return Signout(false, e.refresh)
         } catch (_: IOException) {
             return Signout(false, refreshToken)
         } catch (_: HermesException) {
