@@ -49,8 +49,14 @@ POST /v1/tokens            { "refresh": "…", "audience": "id" }
 DELETE /v1/sessions/{hex}  Authorization: Bearer <id token>
 ```
 
-Returns `false` if the session could not be revoked (local state is cleared
-either way). Clients built from an API key have no session and return `false`.
+Returns `false` if the session could not be revoked. The swap spent the old
+refresh token, so the SDK then keeps the session with the rotated one: call
+`logout()` again to retry, or `session.clear()` to forget it locally. Clients
+built from an API key have no session and return `false`.
+
+A client passed to `Builder.http(...)` gets the same renewal unless it has its
+own authenticator. Aduki ID calls use its connection settings without its
+interceptors, so they never carry the mail token.
 
 ## Session state
 

@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import okhttp3.Authenticator
 import okhttp3.OkHttpClient
 import pro.aduki.hermes.core.config.Endpoints
 import pro.aduki.hermes.core.config.Options
@@ -69,19 +70,29 @@ class HermesClient internal constructor(
                 }
                 chain.proceed(request)
             }
-            .authenticator { _, response ->
-                // Aduki ID access tokens live ten minutes: on a 401 renew once
-                // with the refresh token and retry. API keys are not renewed.
-                val sent = response.request.header("Authorization").orEmpty()
-                if (response.priorResponse != null || !sent.startsWith("Bearer ")) {
-                    null
-                } else {
-                    renew(sent.removePrefix("Bearer "))?.let { fresh ->
-                        response.request.newBuilder().header("Authorization", "Bearer $fresh").build()
-                    }
-                }
-            }
+            .authenticator(renewer)
             .build()
+    }
+
+    // Aduki ID access tokens live ten minutes: on a 401 renew once with the
+    // refresh token and retry. API keys are not renewed.
+    private val renewer = Authenticator { _, response ->
+        val sent = response.request.header("Authorization").orEmpty()
+        if (response.priorResponse != null || !sent.startsWith("Bearer ")) {
+            null
+        } else {
+            renew(sent.removePrefix("Bearer "))?.let { fresh ->
+                response.request.newBuilder().header("Authorization", "Bearer $fresh").build()
+            }
+        }
+    }
+
+    // A client from `Builder.http` gets the same renewal unless it brings
+    // its own authenticator.
+    private val customClient: OkHttpClient? by lazy {
+        httpClient?.let { custom ->
+            if (custom.authenticator == Authenticator.NONE) custom.newBuilder().authenticator(renewer).build() else custom
+        }
     }
 
     private val renewal = Any()
@@ -105,13 +116,19 @@ class HermesClient internal constructor(
     }
 
     private fun activeHttpClient(): OkHttpClient {
-        return httpClient ?: defaultClient
+        return customClient ?: defaultClient
     }
 
     // Aduki ID calls carry their own credentials (a refresh token, or an `id`
-    // audience token for sign-out), never the mail token the default client adds.
+    // audience token for sign-out), never mail's. A custom client keeps its
+    // connection settings but loses its interceptors and authenticator here,
+    // so nothing can swap in the mail token.
     private val identityClient: OkHttpClient by lazy {
-        httpClient ?: HttpClient.create("", options.timeoutSeconds)
+        httpClient?.newBuilder()?.apply {
+            interceptors().clear()
+            networkInterceptors().clear()
+            authenticator(Authenticator.NONE)
+        }?.build() ?: HttpClient.create("", options.timeoutSeconds)
     }
 
     // Declared after the HTTP client above: property initializers run in
@@ -177,14 +194,25 @@ class HermesClient internal constructor(
      * Signs out at Aduki ID (revoking the session and every token issued from
      * it) and wipes local tokens. Clients built from an API key or a bare
      * token have no session to revoke and return `false`.
+     *
+     * If Aduki ID could not be reached or refused the revocation, this returns
+     * `false` and keeps the session (with the rotated refresh token) so a
+     * later call can retry; `session.clear()` forgets it locally instead.
      */
-    suspend fun logout(): Boolean {
-        val ok = synchronized(renewal) {
-            val current = session.tokens.value
-            current != null && Login.logout(identityClient, options.identity, current.session, current.refresh)
+    suspend fun logout(): Boolean = synchronized(renewal) {
+        val current = session.tokens.value
+        if (current == null) {
+            session.clear()
+            return false
         }
-        session.clear()
-        return ok
+        val outcome = Login.logout(identityClient, options.identity, current.session, current.refresh)
+        if (outcome.revoked || outcome.refresh.isBlank()) {
+            session.clear()
+        } else {
+            // Still signed in remotely: keep the retry credential.
+            session.update(current.copy(refresh = outcome.refresh))
+        }
+        outcome.revoked
     }
 
     /**

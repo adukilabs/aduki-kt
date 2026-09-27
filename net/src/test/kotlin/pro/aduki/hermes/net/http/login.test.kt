@@ -126,7 +126,7 @@ class LoginTest {
         )
         server.enqueue(MockResponse().setResponseCode(204))
 
-        assertTrue(Login.logout(client, identity(), "00000000000000ab", "rt_2"))
+        assertEquals(Signout(true, ""), Login.logout(client, identity(), "00000000000000ab", "rt_2"))
 
         val swap = server.takeRequest()
         assertEquals("/v1/tokens", swap.path)
@@ -142,7 +142,7 @@ class LoginTest {
 
     @Test
     fun testLogoutWithoutSessionIsFalse() {
-        assertFalse(Login.logout(client, identity(), "", "rt"))
+        assertFalse(Login.logout(client, identity(), "", "rt").revoked)
         assertEquals(0, server.requestCount)
     }
 
@@ -150,6 +150,36 @@ class LoginTest {
     fun testLogoutWithSpentRefreshIsFalse() {
         server.enqueue(MockResponse().setResponseCode(401).setBody("""{"success":false,"error":{"status":401,"kind":"auth.invalid","message":"invalid"}}"""))
 
-        assertFalse(Login.logout(client, identity(), "01", "rt_spent"))
+        assertEquals(Signout(false, ""), Login.logout(client, identity(), "01", "rt_spent"))
+    }
+
+    @Test
+    fun testFailedRevocationHandsBackTheRotatedRefresh() {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"success":true,"data":{"access":"eyJ.id","refresh":"rt_3","expires":600}}"""
+            )
+        )
+        server.enqueue(MockResponse().setResponseCode(503))
+
+        assertEquals(Signout(false, "rt_3"), Login.logout(client, identity(), "01", "rt_2"))
+    }
+
+    @Test
+    fun testRefreshWithoutNewRefreshTokenIsRefused() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"success":true,"data":{"access":"a","expires":600}}"""))
+
+        assertThrows(HermesException.Auth::class.java) {
+            Login.refresh(client, identity(), "rt_1")
+        }
+    }
+
+    @Test
+    fun testSignInWithoutSessionIsRefused() {
+        server.enqueue(MockResponse().setResponseCode(201).setBody("""{"success":true,"data":{"access":"a","refresh":"r","expires":600}}"""))
+
+        assertThrows(HermesException.Auth::class.java) {
+            Login.submit(client, identity(), "ada@aduki.me", "pw", code = "123456")
+        }
     }
 }

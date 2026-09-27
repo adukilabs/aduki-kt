@@ -16,6 +16,13 @@ import java.io.IOException
 typealias Tokens = pro.aduki.hermes.core.models.Tokens
 
 /**
+ * The outcome of [Login.logout]. When [revoked] is false, [refresh] is the
+ * refresh token that is still good for a retry (the rotated one if the swap
+ * went through), or blank when there is nothing left to retry with.
+ */
+data class Signout(val revoked: Boolean, val refresh: String)
+
+/**
  * Login signs in at Aduki ID and keeps that sign-in fresh.
  *
  * Mail no longer runs its own sign-in: the SDK signs in at Aduki ID
@@ -60,9 +67,9 @@ object Login {
             val data = data(response, "Sign-in")
             return Tokens(
                 token = access(data, "sign-in"),
-                refresh = data.optString("refresh", ""),
+                refresh = required(data, "refresh", "sign-in"),
                 expires = data.optLong("expires", 0).toString(),
-                session = data.optString("session", "")
+                session = required(data, "session", "sign-in")
             )
         }
     }
@@ -90,7 +97,7 @@ object Login {
             val data = data(response, "Token refresh")
             return Tokens(
                 token = access(data, "refresh"),
-                refresh = data.optString("refresh", ""),
+                refresh = required(data, "refresh", "refresh"),
                 expires = data.optLong("expires", 0).toString()
             )
         }
@@ -101,28 +108,37 @@ object Login {
      * from it, mail's included.
      *
      * Aduki ID only accepts its own (`id` audience) tokens here, so this first
-     * swaps the refresh token for one. Returns `false` when the session could
-     * not be revoked.
+     * swaps the refresh token for one. That swap spends [refreshToken], so a
+     * failed revocation hands back the rotated token for a retry.
      */
     fun logout(
         client: OkHttpClient,
         identity: String,
         session: String,
         refreshToken: String
-    ): Boolean {
-        if (session.isBlank() || refreshToken.isBlank()) return false
-        return try {
-            val own = refresh(client, identity, refreshToken, "id")
-            val request = Request.Builder()
-                .url(url(identity, "sessions/$session"))
-                .header("Authorization", "Bearer ${own.token}")
-                .delete()
-                .build()
-            client.newCall(request).execute().use { it.isSuccessful }
+    ): Signout {
+        if (session.isBlank() || refreshToken.isBlank()) return Signout(false, refreshToken)
+        val own = try {
+            refresh(client, identity, refreshToken, "id")
+        } catch (_: HermesException.Unauthorized) {
+            // Spent, expired or revoked: the session is already unusable.
+            return Signout(false, "")
         } catch (_: IOException) {
-            false
+            return Signout(false, refreshToken)
         } catch (_: HermesException) {
-            false
+            return Signout(false, refreshToken)
+        }
+        val request = Request.Builder()
+            .url(url(identity, "sessions/$session"))
+            .header("Authorization", "Bearer ${own.token}")
+            .delete()
+            .build()
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) Signout(true, "") else Signout(false, own.refresh)
+            }
+        } catch (_: IOException) {
+            Signout(false, own.refresh)
         }
     }
 
@@ -171,6 +187,12 @@ object Login {
             throw HermesException.Network("$what failed: $message", code = response.code)
         }
         return json?.optJSONObject("data") ?: throw HermesException.Network("Empty response from $what")
+    }
+
+    private fun required(data: JSONObject, field: String, what: String): String {
+        val value = data.optString(field, "")
+        if (value.isBlank()) throw HermesException.Auth("Missing $field in $what response")
+        return value
     }
 
     private fun access(data: JSONObject, what: String): String {
