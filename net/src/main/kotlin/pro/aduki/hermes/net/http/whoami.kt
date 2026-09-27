@@ -35,14 +35,17 @@ class Whoami(
         }
 
         response.use { resp ->
+            val raw = resp.body?.string()
             if (resp.code == 401 || resp.code == 403) {
-                throw HermesException.Auth("Invalid or expired API key (HTTP ${resp.code})")
+                val why = raw?.let(Envelope::failure) ?: "HTTP ${resp.code}"
+                throw HermesException.Auth("Invalid or expired API key ($why)")
             }
             if (!resp.isSuccessful) {
                 throw HermesException.Network("Whoami request failed with HTTP ${resp.code}", code = resp.code)
             }
 
-            val body = resp.body?.string() ?: throw HermesException.Network("Empty response from whoami")
+            val body = raw?.let(Envelope::data)?.ifBlank { null }
+                ?: throw HermesException.Network("Empty response from whoami")
             return parse(body)
         }
     }

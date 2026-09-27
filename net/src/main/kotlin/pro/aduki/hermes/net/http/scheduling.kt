@@ -234,13 +234,16 @@ class Scheduling(
         }
 
         response.use { resp ->
+            val raw = resp.body?.string() ?: ""
             if (resp.code == 401 || resp.code == 403) {
-                throw HermesException.Auth("Unauthorized access (HTTP ${resp.code})")
+                val why = Envelope.failure(raw) ?: "HTTP ${resp.code}"
+                throw HermesException.Auth("Unauthorized access ($why)")
             }
             if (!resp.isSuccessful) {
-                throw HermesException.Network("HTTP error ${resp.code}: ${resp.message}", code = resp.code)
+                val why = Envelope.failure(raw) ?: resp.message
+                throw HermesException.Network("HTTP error ${resp.code}: $why", code = resp.code)
             }
-            val body = resp.body?.string() ?: ""
+            val body = Envelope.data(raw)
             return transform(body)
         }
     }
