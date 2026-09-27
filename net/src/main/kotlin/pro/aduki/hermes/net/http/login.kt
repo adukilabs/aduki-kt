@@ -123,9 +123,14 @@ object Login {
         } catch (_: HermesException.Unauthorized) {
             // Spent, expired or revoked: the session is already unusable.
             return Signout(false, "")
+        } catch (_: HermesException.Auth) {
+            // A 2xx that failed validation: Aduki ID rotated the token, so the
+            // old one is spent and must not be presented again.
+            return Signout(false, "")
         } catch (_: IOException) {
             return Signout(false, refreshToken)
         } catch (_: HermesException) {
+            // A non-2xx answer (429, 5xx): the token was not used up.
             return Signout(false, refreshToken)
         }
         val request = Request.Builder()

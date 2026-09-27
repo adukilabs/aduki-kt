@@ -182,4 +182,18 @@ class LoginTest {
             Login.submit(client, identity(), "ada@aduki.me", "pw", code = "123456")
         }
     }
+
+    @Test
+    fun testMalformedSwapDropsTheSpentRefresh() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"success":true,"data":{"access":"a","expires":600}}"""))
+
+        assertEquals(Signout(false, ""), Login.logout(client, identity(), "01", "rt_2"))
+    }
+
+    @Test
+    fun testRateLimitedSwapKeepsTheUnusedRefresh() {
+        server.enqueue(MockResponse().setResponseCode(429).setBody("""{"success":false,"error":{"status":429,"kind":"rate.limited","message":"slow"}}"""))
+
+        assertEquals(Signout(false, "rt_2"), Login.logout(client, identity(), "01", "rt_2"))
+    }
 }

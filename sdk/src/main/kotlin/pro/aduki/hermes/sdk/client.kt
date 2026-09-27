@@ -110,6 +110,11 @@ class HermesClient internal constructor(
             val fresh = Login.refresh(identityClient, options.identity, current.refresh)
             session.update(fresh.copy(session = current.session))
             fresh.token
+        } catch (_: pro.aduki.hermes.core.errors.HermesException.Auth) {
+            // A 2xx that failed validation spent the refresh token; drop it so
+            // it is never presented again (reuse revokes the session).
+            session.update(current.copy(refresh = ""))
+            null
         } catch (_: Exception) {
             null
         }
