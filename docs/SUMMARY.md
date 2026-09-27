@@ -14,6 +14,7 @@
 - [Two-Factor TOTP](auth/totp.md)
 - [API Keys](auth/keys.md)
 - [Token Lifecycle](auth/tokens.md)
+- [Account Center & Unlock](auth/center.md)
 
 # Device Security
 
