@@ -113,7 +113,7 @@ net/src/main/kotlin/pro/aduki/hermes/net/
 ├── http/
 │   ├── client.kt             # OkHttp client builder with HTTP/2, pooling, and Brotli
 │   ├── auth.kt               # Key interceptor inserting "Authorization: Key hm_live_..."
-│   └── whoami.kt             # Fast session identity resolver (GET /auth/whoami)
+│   └── whoami.kt             # Fast session identity resolver (GET /user)
 ├── grpc/
 │   ├── channel.kt            # OkHttpChannelBuilder setup for mobile TLS gRPC
 │   ├── metadata.kt           # CallCredentials interceptor for gRPC authorization

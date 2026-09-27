@@ -11,13 +11,13 @@ The SDK strictly enforces separation between user identity sessions and service 
 | Property | Interactive User Session | Static Service API Key |
 | :--- | :--- | :--- |
 | **Primary Use Case** | Mobile Android applications with human users | Embedded kiosks, testing suites, CI automation |
-| **Credentials** | Email + Password + optional 6-digit TOTP | Cryptographic API key (`hm_live_...` / `hm_test_...`) |
+| **Credentials** | Address + password + second factor, at Aduki ID | Cryptographic API key (`hm_live_...` / `hm_test_...`) |
 | **HTTP Authorization** | `Authorization: Bearer <jwt>` | `Authorization: Key <apiKey>` |
 | **gRPC Metadata** | `authorization: Bearer <jwt>` | `authorization: Key <apiKey>` |
-| **Token Lifetime** | 1 hour access token (JWT), 30-day refresh token | Indefinite until server revocation |
-| **Rotation Strategy** | Silent background refresh via `POST /v1/auth/refresh` | Manual key replacement via client re-instantiation |
+| **Token Lifetime** | 10-minute access token (EdDSA JWT, audience `mail`), 30-day single-use refresh token | Indefinite until server revocation |
+| **Rotation Strategy** | Automatic on `401` via Aduki ID `POST /v1/tokens` | Manual key replacement via client re-instantiation |
 | **Local Persistence** | Android KeyStore envelope cipher (`AES-256-GCM`) | StrongBox / TEE sealed storage |
-| **Revocation** | Remote server invalidation via `POST /v1/auth/logout` | Hermes Admin Console key deletion |
+| **Revocation** | Aduki ID `DELETE /v1/sessions/{hex}` | Hermes Admin Console key deletion |
 
 ---
 
@@ -26,14 +26,13 @@ The SDK strictly enforces separation between user identity sessions and service 
 ```mermaid
 stateDiagram-v2
     [*] --> Unauthenticated
-    Unauthenticated --> LoggingIn: HermesClient.login(email, pass, totp)
+    Unauthenticated --> LoggingIn: HermesClient.login(handle, pass, code)
     LoggingIn --> ActiveSession: 200 OK (Tokens received)
     LoggingIn --> Unauthenticated: 401 Unauthorized / Error
-    ActiveSession --> ActiveSession: HermesClient.totp(code)
-    ActiveSession --> Refreshing: Token expiry / HermesClient.refresh()
+    ActiveSession --> Refreshing: 401 / HermesClient.refresh()
     Refreshing --> ActiveSession: 200 OK (Tokens rotated)
     Refreshing --> Unauthenticated: 401 Unauthorized (Refresh expired)
-    ActiveSession --> Unauthenticated: HermesClient.logout() (POST /v1/auth/logout)
+    ActiveSession --> Unauthenticated: HermesClient.logout() (DELETE /v1/sessions/{hex})
 ```
 
 ---
@@ -44,21 +43,23 @@ stateDiagram-v2
 Container for active access and refresh credentials returned from authentication endpoints:
 
 ```kotlin
-package pro.aduki.hermes.net.http
+package pro.aduki.hermes.core.models
 
 data class Tokens(
     val token: String = "",
     val refresh: String = "",
-    val expires: String = ""
+    val expires: String = "",
+    val session: String = ""
 )
 ```
 
 - `token: String`: Short-lived JSON Web Token (JWT) passed in `Authorization: Bearer <jwt>`.
-- `refresh: String`: Cryptographically random refresh token passed to `POST /v1/auth/refresh`.
-- `expires: String`: ISO-8601 UTC timestamp indicating when `token` becomes invalid.
+- `refresh: String`: Single-use refresh token for Aduki ID `POST /v1/tokens`.
+- `expires: String`: Access-token lifetime in seconds.
+- `session: String`: Aduki ID session hex, used to sign out.
 
 ### `Identity`
-Resolved tenant and user profile retrieved via `GET /v1/auth/whoami`:
+Resolved account retrieved via `GET /v1/user` (`scopes` and `tier` stay empty):
 
 ```kotlin
 package pro.aduki.hermes.state.repository
@@ -86,5 +87,5 @@ All authentication tokens and credentials adhere to the following zero-exposure 
 
 1. **Envelope Encryption**: Tokens stored locally are encrypted with an AES-256-GCM data encryption key sealed by the Android KeyStore hardware root of trust (StrongBox or TEE).
 2. **In-Memory Zeroization**: Plaintext passwords, TOTP codes, and sensitive buffers are allocated in guarded memory segments and wiped immediately after transmission (`wipe(ByteArray)`).
-3. **Automatic Cache Clear**: Invoking `logout()` terminates the remote session on Hermes REST, wipes local KeyStore entries, and transitions reactive `Session` state flows to `null`.
+3. **Automatic Cache Clear**: Invoking `logout()` revokes the Aduki ID session, wipes local KeyStore entries, and transitions reactive `Session` state flows to `null`.
 

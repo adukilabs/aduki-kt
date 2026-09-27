@@ -1,149 +1,97 @@
-# Interactive Login Reference
+# Sign-in
 
-Interactive login enables human users to authenticate against Hermes using their email credentials and an optional 6-digit Time-based One-Time Password (TOTP).
+People sign in at **Aduki ID**, not at mail. The SDK posts the address,
+password and second factor to Aduki ID, asks for an access token with audience
+`mail`, and sends that token to the mail API as `Authorization: Bearer <token>`.
 
----
-
-## 1. Method Specification
+## `HermesClient.login`
 
 ```kotlin
-package pro.aduki.hermes.sdk
-
 suspend fun HermesClient.Companion.login(
-    email: String,
+    handle: String,
     password: String,
-    totp: String? = null,
-    endpoint: String = Endpoints.REST
+    code: String? = null,
+    endpoint: String = Endpoints.REST,
+    identity: String = Endpoints.ID,
+    backup: String? = null
 ): HermesClient
 ```
 
-### Parameters
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `handle` | `String` | — | Full address, e.g. `ada@aduki.me`. |
+| `password` | `String` | — | Account password. |
+| `code` | `String?` | `null` | Current authenticator code. |
+| `endpoint` | `String` | `Endpoints.REST` | Mail REST base. |
+| `identity` | `String` | `Endpoints.ID` | Aduki ID base, `https://id.aduki.pro/v1`. |
+| `backup` | `String?` | `null` | A backup code, instead of `code`. |
 
-| Parameter | Type | Required | Default | Description |
-| :--- | :--- | :--- | :--- | :--- |
-| `email` | `String` | Yes | — | User's primary email address (e.g., `user@aduki.pro`). |
-| `password` | `String` | Yes | — | User account password in cleartext (zeroized from memory immediately after network dispatch). |
-| `totp` | `String?` | No | `null` | Optional 6-digit numeric TOTP confirmation code if 2FA is active on the account. |
-| `endpoint` | `String` | No | `Endpoints.REST` | Base URL of the Hermes REST API (e.g., `https://hermers.aduki.pro/v1`). |
+Returns a client holding the access token, the refresh token and the session,
+with the account (`me()`) already resolved.
 
-### Return Value
+**Throws**
 
-- **Type**: `HermesClient`
-- **Description**: Fully initialized and configured client instance holding the active JWT access token, refresh token, and pre-cached `Identity`.
+- `HermesException.Unauthorized`: wrong password, inactive account, or a
+  missing or wrong second factor. The message starts with Aduki ID's error
+  kind, e.g. `auth.factor: ...` when no second factor was given.
+- `HermesException.Network`: anything else, e.g. `429` while rate-limited
+  (`code` holds the status).
 
-### Throws
-
-| Exception | Cause / Condition |
-| :--- | :--- |
-| `HermesException.Unauthorized` | HTTP `401 Unauthorized` — Invalid password, non-existent email, or incorrect/missing TOTP code. |
-| `HermesException.Network` | Non-200 HTTP status (e.g., 500, 502, 503) or underlying TCP/TLS transport failures. |
-
----
-
-## 2. Network Protocol Specification
-
-### HTTP Request
+## Wire format
 
 ```http
-POST /v1/auth/login HTTP/1.1
-Host: hermers.aduki.pro
-Content-Type: application/json; charset=utf-8
-Accept: application/json
-User-Agent: Hermes-Android-SDK/1.0.0
+POST /v1/sessions HTTP/1.1
+Host: id.aduki.pro
+Content-Type: application/json
 
+{ "handle": "ada@aduki.me", "password": "…", "code": "123456", "audience": "mail" }
+```
+
+```json
 {
-  "email": "user@aduki.pro",
-  "password": "CorrectHorseBatteryStaple123!",
-  "totp": "123456"
+  "success": true,
+  "data": {
+    "session": "00000000000000ab",
+    "access": "eyJhbGciOiJFZERTQSIs…",
+    "refresh": "…",
+    "expires": 600
+  }
 }
 ```
 
-- **JSON Payload Fields**:
-  - `email` (`String`, required): RFC 5322 compliant address.
-  - `password` (`String`, required): User secret.
-  - `totp` (`String`, optional): Exactly 6 numeric digits (`^[0-9]{6}$`). Omitted from JSON when `null`.
+- `access`: EdDSA JWT for mail, valid `expires` seconds (10 minutes).
+- `refresh`: single-use; every renewal returns a new one.
+- `session`: the session hex, used to sign out.
 
-### HTTP Response (200 OK)
+These land in `Tokens(token, refresh, expires, session)` on
+`client.session.tokens`.
 
-```http
-HTTP/1.1 200 OK
-Content-Type: application/json; charset=utf-8
-
-{
-  "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refresh": "rt_8f3a02c91b4e5d6f7a8b9c0d1e2f3a4b",
-  "expires": "2026-09-08T23:15:00Z"
-}
-```
-
-- **JSON Response Fields**:
-  - `token` (`String`): Active Ed25519-signed or ES256-signed JWT access token.
-  - `refresh` (`String`): Opaque 32-byte hexadecimal refresh token.
-  - `expires` (`String`): ISO-8601 UTC timestamp of token expiry.
-
----
-
-## 3. Execution Sequence
+## Flow
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    participant App as Android UI / ViewModel
-    participant SDK as HermesClient
-    participant Server as Hermes API (REST)
-    participant Store as AndroidKeyStore
+    participant App
+    participant SDK
+    participant ID as Aduki ID
+    participant Mail
 
-    App->>SDK: HermesClient.login(email, pass, totp)
-    SDK->>Server: POST /v1/auth/login { email, password, totp }
-    alt HTTP 401 Unauthorized
-        Server-->>SDK: 401 Unauthorized
-        SDK-->>App: throws HermesException.Unauthorized
-    else HTTP 200 OK
-        Server-->>SDK: 200 OK { token, refresh, expires }
-        SDK->>Store: Encrypt & persist tokens via AES-256-GCM
-        SDK->>Server: GET /v1/auth/whoami (Bearer <token>)
-        Server-->>SDK: 200 OK { user, tenant, owner, scopes, tier }
-        SDK-->>App: returns configured HermesClient
-    end
+    App->>SDK: HermesClient.login(handle, password, code)
+    SDK->>ID: POST /v1/sessions {…, audience: mail}
+    ID-->>SDK: {session, access, refresh, expires}
+    SDK->>Mail: GET /v1/user (Bearer access)
+    Mail-->>SDK: account
+    SDK-->>App: HermesClient
 ```
 
----
-
-## 4. Production ViewModel Integration
+## Example
 
 ```kotlin
-class LoginViewModel : ViewModel() {
-
-    private val _state = MutableStateFlow<LoginState>(LoginState.Idle)
-    val state: StateFlow<LoginState> = _state.asStateFlow()
-
-    fun login(email: String, pass: String, totp: String? = null) {
-        viewModelScope.launch(Dispatchers.IO) {
-            _state.value = LoginState.Loading
-            try {
-                val client = HermesClient.login(
-                    email = email.trim(),
-                    password = pass,
-                    totp = totp?.trim()?.ifBlank { null }
-                )
-                
-                // Identity is eagerly cached
-                val identity = client.me()
-                _state.value = LoginState.Success(client, identity)
-            } catch (e: HermesException.Unauthorized) {
-                _state.value = LoginState.Error("Invalid credentials or 2FA code")
-            } catch (e: HermesException.Network) {
-                _state.value = LoginState.Error("Network error: ${e.message}")
-            }
-        }
-    }
-}
-
-sealed interface LoginState {
-    data object Idle : LoginState
-    data object Loading : LoginState
-    data class Success(val client: HermesClient, val identity: Identity?) : LoginState
-    data class Error(val message: String) : LoginState
-}
+val client = HermesClient.login(
+    handle = "ada@aduki.me",
+    password = password,
+    code = "123456"
+)
 ```
 
+Accounts without an authenticator are refused with `auth.factor`; set one up
+in Aduki ID's Account Center first.

@@ -44,24 +44,27 @@ class HermesClient internal constructor(
 ## 2. Factory & Builder Methods
 
 ### `HermesClient.Companion.login`
-Interactively authenticates against the Hermes REST API with email, password, and optional 6-digit TOTP code.
+Signs in at Aduki ID for a mail token. See [Sign-in](../auth/login.md).
 
 ```kotlin
 suspend fun HermesClient.Companion.login(
-    email: String,
+    handle: String,
     password: String,
-    totp: String? = null,
-    endpoint: String = Endpoints.REST
+    code: String? = null,
+    endpoint: String = Endpoints.REST,
+    identity: String = Endpoints.ID,
+    backup: String? = null
 ): HermesClient
 ```
 
 - **Parameters**:
-  - `email`: RFC 5322 user email address.
-  - `password`: Cleartext password (zeroized after dispatch).
-  - `totp`: Optional 6-digit numeric verification code.
-  - `endpoint`: Base REST API URL (defaults to `https://hermers.aduki.pro/v1`).
-- **Return Type**: `HermesClient` — Initialized with returned JWT token pair and eagerly resolved user `Identity`.
-- **Throws**: `HermesException.Unauthorized` on invalid credentials/TOTP; `HermesException.Network` on connection error.
+  - `handle`: Full address, e.g. `ada@aduki.me`.
+  - `password`: Account password.
+  - `code` / `backup`: Authenticator code or backup code.
+  - `endpoint`: Mail REST base (defaults to `https://hermers.aduki.pro/v1`).
+  - `identity`: Aduki ID base (defaults to `https://id.aduki.pro/v1`).
+- **Return Type**: `HermesClient` — holding the access token, refresh token and session, with `Identity` resolved.
+- **Throws**: `HermesException.Unauthorized` on a wrong password or second factor; `HermesException.Network` otherwise.
 
 ---
 
@@ -79,6 +82,7 @@ class Builder {
     fun key(key: String): Builder
     fun token(token: String): Builder
     fun endpoint(endpoint: String): Builder
+    fun identity(identity: String): Builder
     fun grpc(host: String, port: Int = Endpoints.GRPC_PORT): Builder
     fun secure(enabled: Boolean): Builder
     fun timeout(seconds: Long): Builder
@@ -105,10 +109,10 @@ Resolves and returns the authenticated user and tenant identity profile.
 suspend fun me(): Identity?
 ```
 
-- **Return Type**: `Identity?` — User ID hex, tenant hex, owner status, scopes, and tier. Returns cached instance from `session.identity.value` if already resolved; otherwise queries `GET /v1/auth/whoami`.
+- **Return Type**: `Identity?` — User ID hex, tenant hex, owner status, scopes, and tier. Returns cached instance from `session.identity.value` if already resolved; otherwise queries `GET /v1/user`. Scopes and tier are not part of that response and stay empty.
 
 ### `totp`
-Confirms or configures two-factor authentication on the active user account.
+**Deprecated.** Second factors are managed in Aduki ID's Account Center; mail's `/v1/user/totp` is going away.
 
 ```kotlin
 suspend fun totp(code: String): Boolean
@@ -119,7 +123,7 @@ suspend fun totp(code: String): Boolean
 - **Throws**: `IllegalArgumentException` if code is not 6 digits; `HermesException.Unauthorized` if session expired.
 
 ### `refresh`
-Rotates the active session tokens using the stored refresh token.
+Renews the access token at Aduki ID (`POST /v1/tokens`) ahead of time. The SDK also does this by itself on a `401`.
 
 ```kotlin
 suspend fun refresh(): Boolean
@@ -134,7 +138,7 @@ Terminates the session remotely and wipes local credentials.
 suspend fun logout(): Boolean
 ```
 
-- **Return Type**: `Boolean` — `true` if server acknowledged revocation (`POST /v1/auth/logout`). Guarantees `session.clear()` executes locally.
+- **Return Type**: `Boolean` — `true` if Aduki ID revoked the session (`DELETE /v1/sessions/{hex}`). Guarantees `session.clear()` executes locally.
 
 ### `pause`
 Notifies the SDK that the host application entered the background. Suspends background polling.

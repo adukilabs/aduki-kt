@@ -4,131 +4,124 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONObject
+import pro.aduki.hermes.core.config.Endpoints
 import pro.aduki.hermes.core.errors.HermesException
 import java.io.IOException
-import pro.aduki.hermes.core.models.Tokens
 
 /**
  * Type alias for Tokens.
  */
 typealias Tokens = pro.aduki.hermes.core.models.Tokens
 
-
 /**
- * Login handles interactive credential authentication, TOTP 2FA, session refresh, and logout.
+ * Login signs in at Aduki ID and keeps that sign-in fresh.
+ *
+ * Mail no longer runs its own sign-in: the SDK signs in at Aduki ID
+ * (`POST /v1/sessions`) for an access token with audience `mail`, renews it
+ * with the refresh token (`POST /v1/tokens`) and signs out by revoking the
+ * session (`DELETE /v1/sessions/{hex}`). The `identity` argument is the Aduki
+ * ID base, e.g. `https://id.aduki.pro/v1`.
  */
 object Login {
 
     private val JSON = "application/json; charset=utf-8".toMediaType()
 
     /**
-     * Submits email, password, and optional 6-digit TOTP confirmation to POST /auth/login.
+     * Signs in with a full address ([handle], e.g. `ada@aduki.me`), password
+     * and a second factor: an authenticator [code] or a [backup] code.
+     *
+     * @throws HermesException.Unauthorized on a wrong password, a missing or
+     * wrong second factor, or an inactive account.
      */
     fun submit(
         client: OkHttpClient,
-        endpoint: String,
-        email: String,
+        identity: String,
+        handle: String,
         password: String,
-        totp: String? = null
+        code: String? = null,
+        backup: String? = null,
+        audience: String = Endpoints.AUDIENCE
     ): Tokens {
         val root = JSONObject().apply {
-            put("email", email)
+            put("handle", handle)
             put("password", password)
-            if (!totp.isNullOrBlank()) {
-                put("totp", totp.trim())
-            }
+            if (!code.isNullOrBlank()) put("code", code.trim())
+            if (!backup.isNullOrBlank()) put("backup", backup.trim())
+            put("audience", audience)
         }
-
-        val url = "${endpoint.trimEnd('/')}/auth/login"
         val request = Request.Builder()
-            .url(url)
+            .url(url(identity, "sessions"))
             .post(root.toString().toRequestBody(JSON))
             .build()
 
         client.newCall(request).execute().use { response ->
-            if (response.code == 401) {
-                throw HermesException.Unauthorized("Invalid credentials or invalid TOTP code")
-            }
-            if (!response.isSuccessful) {
-                throw HermesException.Network("Login failed with HTTP ${response.code}")
-            }
-
-            val body = response.body?.string() ?: throw HermesException.Network("Empty response from login")
-            val json = JSONObject(body)
-            val token = json.optString("token", "")
-            if (token.isBlank()) {
-                throw HermesException.Auth("Missing access token in login response")
-            }
+            val data = data(response, "Sign-in")
             return Tokens(
-                token = token,
-                refresh = json.optString("refresh", ""),
-                expires = json.optString("expires", "")
+                token = access(data, "sign-in"),
+                refresh = data.optString("refresh", ""),
+                expires = data.optLong("expires", 0).toString(),
+                session = data.optString("session", "")
             )
         }
     }
 
     /**
-     * Exchanges a refresh token for a new token pair via POST /auth/refresh.
+     * Exchanges a refresh token for a new access token and a rotated refresh
+     * token. The old refresh token must not be used again.
      */
     fun refresh(
         client: OkHttpClient,
-        endpoint: String,
-        refreshToken: String
+        identity: String,
+        refreshToken: String,
+        audience: String = Endpoints.AUDIENCE
     ): Tokens {
         val root = JSONObject().apply {
-            put("token", refreshToken)
+            put("refresh", refreshToken)
+            put("audience", audience)
         }
-
-        val url = "${endpoint.trimEnd('/')}/auth/refresh"
         val request = Request.Builder()
-            .url(url)
+            .url(url(identity, "tokens"))
             .post(root.toString().toRequestBody(JSON))
             .build()
 
         client.newCall(request).execute().use { response ->
-            if (response.code == 401) {
-                throw HermesException.Unauthorized("Refresh token expired or revoked")
-            }
-            if (!response.isSuccessful) {
-                throw HermesException.Network("Token refresh failed with HTTP ${response.code}")
-            }
-
-            val body = response.body?.string() ?: throw HermesException.Network("Empty response from refresh")
-            val json = JSONObject(body)
-            val token = json.optString("token", "")
-            if (token.isBlank()) {
-                throw HermesException.Auth("Missing access token in refresh response")
-            }
+            val data = data(response, "Token refresh")
             return Tokens(
-                token = token,
-                refresh = json.optString("refresh", ""),
-                expires = json.optString("expires", "")
+                token = access(data, "refresh"),
+                refresh = data.optString("refresh", ""),
+                expires = data.optLong("expires", 0).toString()
             )
         }
     }
 
     /**
-     * Revokes active session on server via POST /auth/logout.
+     * Signs out: revokes [session] at Aduki ID, which ends every token issued
+     * from it, mail's included.
+     *
+     * Aduki ID only accepts its own (`id` audience) tokens here, so this first
+     * swaps the refresh token for one. Returns `false` when the session could
+     * not be revoked.
      */
     fun logout(
         client: OkHttpClient,
-        endpoint: String,
-        token: String
+        identity: String,
+        session: String,
+        refreshToken: String
     ): Boolean {
-        val url = "${endpoint.trimEnd('/')}/auth/logout"
-        val authHeader = if (token.startsWith("hm_") || token.startsWith("key_")) "Key $token" else "Bearer $token"
-        val request = Request.Builder()
-            .url(url)
-            .header("Authorization", authHeader)
-            .post("{}".toRequestBody(JSON))
-            .build()
-
+        if (session.isBlank() || refreshToken.isBlank()) return false
         return try {
-            client.newCall(request).execute().use { response ->
-                response.isSuccessful
-            }
+            val own = refresh(client, identity, refreshToken, "id")
+            val request = Request.Builder()
+                .url(url(identity, "sessions/$session"))
+                .header("Authorization", "Bearer ${own.token}")
+                .delete()
+                .build()
+            client.newCall(request).execute().use { it.isSuccessful }
         } catch (_: IOException) {
+            false
+        } catch (_: HermesException) {
             false
         }
     }
@@ -136,6 +129,7 @@ object Login {
     /**
      * Configures or confirms 6-digit TOTP secret via PATCH /user/totp.
      */
+    @Deprecated("Second factors are managed in Aduki ID's Account Center; mail's /user/totp is going away.")
     fun totp(
         client: OkHttpClient,
         endpoint: String,
@@ -160,5 +154,28 @@ object Login {
             return response.isSuccessful
         }
     }
-}
 
+    private fun url(identity: String, path: String) = "${identity.trimEnd('/')}/$path"
+
+    /** The `data` object of an Aduki ID envelope, or the matching exception. */
+    private fun data(response: Response, what: String): JSONObject {
+        val body = response.body?.string().orEmpty()
+        val json = runCatching { JSONObject(body) }.getOrNull()
+        if (!response.isSuccessful) {
+            val error = json?.optJSONObject("error")
+            val kind = error?.optString("kind").orEmpty()
+            val message = error?.optString("message").orEmpty().ifBlank { "HTTP ${response.code}" }
+            if (response.code == 401) {
+                throw HermesException.Unauthorized(if (kind.isBlank()) message else "$kind: $message")
+            }
+            throw HermesException.Network("$what failed: $message", code = response.code)
+        }
+        return json?.optJSONObject("data") ?: throw HermesException.Network("Empty response from $what")
+    }
+
+    private fun access(data: JSONObject, what: String): String {
+        val token = data.optString("access", "")
+        if (token.isBlank()) throw HermesException.Auth("Missing access token in $what response")
+        return token
+    }
+}

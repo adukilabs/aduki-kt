@@ -5,7 +5,7 @@ plugins {
     signing
 }
 
-val release = "0.2.0"
+val release = "0.3.0"
 val domain = "io.github.adukilabs"
 
 subprojects {

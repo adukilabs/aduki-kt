@@ -7,6 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
+import pro.aduki.hermes.core.config.Endpoints
 import pro.aduki.hermes.core.models.MailChanges
 import pro.aduki.hermes.core.models.MessageRow
 import java.util.UUID
@@ -20,8 +21,12 @@ import java.util.concurrent.TimeUnit
  * - `HERMES_LIVE_URL`: the REST base, e.g. `https://mail.example.com/v1`
  * - `HERMES_LIVE_EMAIL`, `HERMES_LIVE_PASSWORD`: a test account (mail is
  *   sent to it and deleted again)
+ * - `HERMES_LIVE_ID`: the Aduki ID base it signs in at (default
+ *   `https://id.aduki.pro/v1`)
+ * - `HERMES_LIVE_CODE` or `HERMES_LIVE_BACKUP`: the account's second factor, a
+ *   current authenticator code or an unused backup code
  *
- * It logs in, sends a message to itself, follows `/user/mail/changes` until
+ * It signs in at Aduki ID, sends a message to itself, follows `/user/mail/changes` until
  * the message arrives, flags it, deletes it, and checks that an idempotent
  * retry of the send doesn't send twice.
  */
@@ -30,6 +35,9 @@ class LiveTest {
     private val url = System.getenv("HERMES_LIVE_URL").orEmpty()
     private val email = System.getenv("HERMES_LIVE_EMAIL").orEmpty()
     private val password = System.getenv("HERMES_LIVE_PASSWORD").orEmpty()
+    private val identity = System.getenv("HERMES_LIVE_ID") ?: Endpoints.ID
+    private val code = System.getenv("HERMES_LIVE_CODE")
+    private val backup = System.getenv("HERMES_LIVE_BACKUP")
 
     private lateinit var mail: Mail
 
@@ -40,7 +48,7 @@ class LiveTest {
             url.isNotBlank() && email.isNotBlank() && password.isNotBlank()
         )
         val plain = OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).build()
-        val tokens = Login.submit(plain, url, email, password)
+        val tokens = Login.submit(plain, identity, email, password, code = code, backup = backup)
         val http = plain.newBuilder().addInterceptor(Auth { tokens.token }).build()
         mail = Mail(http, url)
     }

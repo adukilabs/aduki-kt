@@ -70,6 +70,7 @@ class Builder {
 | `secure` | `enabled` | `Boolean` | `true` | Enables hardware KeyStore StrongBox envelope encryption for local databases. |
 | `timeout` | `seconds` | `Long` | `15` | OkHttp socket connect, read, and write timeout in seconds. |
 | `http` | `client` | `OkHttpClient` | `null` | Optional custom OkHttpClient instance. |
+| `identity` | `identity` | `String` | `https://id.aduki.pro/v1` | Aduki ID base used to renew and revoke sign-ins. |
 
 ---
 
@@ -78,9 +79,9 @@ class Builder {
 ### Interactive Human Login
 ```kotlin
 val client = HermesClient.login(
-    email = "alice@aduki.pro",
+    handle = "alice@aduki.me",
     password = "CorrectHorseBatteryStaple123!",
-    totp = "482019" // 6 digits, or null if 2FA is disabled
+    code = "482019" // authenticator code; Aduki ID requires a second factor
 )
 ```
 
