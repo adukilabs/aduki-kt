@@ -1,10 +1,12 @@
 # aduki Kotlin SDK
 
+> Plans and progress: [`Next/README.md`](Next/README.md).
+
 > Formerly the Hermes Android Kotlin SDK (`adukilabs/hermers-kt`). The
 > repository is now `adukilabs/aduki-kt`. Package names move from
 > `hermes.*` to `pro.aduki.*`, and the SDK gains the Aduki ID client and the
 > Account Center authenticator, in phases P2 and P4 of
-> `aduki/Next/PLAN.md`. The Maven coordinates are unchanged until then.
+> `aduki/Next/plan.md`. The Maven coordinates are unchanged until then.
 
 [![Documentation](https://img.shields.io/badge/docs-mdBook-blue.svg)](https://adukilabs.github.io/aduki-kt/)
 [![Maven Central](https://img.shields.io/badge/Maven%20Central-0.3.0-blue.svg)](https://central.sonatype.com/artifact/io.github.adukilabs/sdk)
