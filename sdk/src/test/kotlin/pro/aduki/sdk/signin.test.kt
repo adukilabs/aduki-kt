@@ -188,4 +188,40 @@ class SigninTest {
         assertEquals("eyJ.new", client.session.token())
         client.unwatchRights()
     }
+
+    private fun boundToken(key: pro.aduki.crypto.dpop.Key, tag: String): String {
+        val body = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("""{"tag":"$tag","cnf":{"jkt":"${key.thumbprint()}"}}""".toByteArray())
+        return "h.$body.s"
+    }
+
+    @Test
+    fun dpopBoundClientSendsProofsAndResignsTheRenewedRequest() = runBlocking {
+        val key = pro.aduki.crypto.dpop.Software.p256()
+        val old = boundToken(key, "old")
+        val fresh = boundToken(key, "new")
+        val client = Aduki.builder().dpop(key).token(old)
+            .endpoint(server.url("/v1").toString()).identity(server.url("/id").toString()).build()
+        client.session.update(Tokens(token = old, refresh = "rt_1", expires = "600", session = "00000000000000ab"))
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"success":true,"data":{"access":"$fresh","refresh":"rt_2","expires":600}}"""
+            )
+        )
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"hex":"u1","tenant":"t1"}"""))
+
+        assertNotNull(client.me())
+
+        val first = server.takeRequest()
+        assertEquals("DPoP $old", first.getHeader("Authorization"))
+        assertNotNull(first.getHeader("DPoP"))
+        val renew = server.takeRequest()
+        assertNotNull("the refresh carries a proof", renew.getHeader("DPoP"))
+        assertNull(renew.getHeader("Authorization"))
+        val retry = server.takeRequest()
+        assertEquals("DPoP $fresh", retry.getHeader("Authorization"))
+        assertNotNull(retry.getHeader("DPoP"))
+        assertTrue(retry.getHeader("DPoP") != first.getHeader("DPoP"))
+    }
 }

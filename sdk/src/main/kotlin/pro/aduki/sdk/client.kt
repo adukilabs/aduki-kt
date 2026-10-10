@@ -10,6 +10,7 @@ import org.json.JSONObject
 import pro.aduki.core.config.Endpoints
 import pro.aduki.core.config.Options
 import pro.aduki.net.http.Client as HttpClient
+import pro.aduki.net.http.Dpop
 import pro.aduki.net.http.Events
 import pro.aduki.net.http.Id
 import pro.aduki.net.http.Login
@@ -47,7 +48,8 @@ class Aduki internal constructor(
     mailboxEngine: MailboxEngine? = null,
     contactEngine: ContactEngine? = null,
     scheduleEngine: ScheduleEngine? = null,
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    private val dpop: Dpop? = null
 ) {
     private fun activeAuthString(): String {
         return session.token() ?: if (token.isNotBlank()) token else apiKey
@@ -74,6 +76,7 @@ class Aduki internal constructor(
                 chain.proceed(request)
             }
             .authenticator(renewer)
+            .apply { dpop?.let(::addInterceptor) }
             .build()
     }
 
@@ -81,11 +84,13 @@ class Aduki internal constructor(
     // refresh token and retry. API keys are not renewed.
     private val renewer = Authenticator { _, response ->
         val sent = response.request.header("Authorization").orEmpty()
-        if (response.priorResponse != null || !sent.startsWith("Bearer ")) {
+        val scheme = listOf("Bearer ", "DPoP ").firstOrNull { sent.startsWith(it) }
+        if (response.priorResponse != null || scheme == null) {
             null
         } else {
-            renew(sent.removePrefix("Bearer "))?.let { fresh ->
-                response.request.newBuilder().header("Authorization", "Bearer $fresh").build()
+            renew(sent.removePrefix(scheme))?.let { fresh ->
+                val next = response.request.newBuilder().header("Authorization", "Bearer $fresh").build()
+                dpop?.apply(next) ?: next // a rebuilt request needs its own proof
             }
         }
     }
@@ -94,7 +99,9 @@ class Aduki internal constructor(
     // its own authenticator.
     private val customClient: OkHttpClient? by lazy {
         httpClient?.let { custom ->
-            if (custom.authenticator == Authenticator.NONE) custom.newBuilder().authenticator(renewer).build() else custom
+            if (custom.authenticator == Authenticator.NONE) {
+                custom.newBuilder().authenticator(renewer).apply { dpop?.let(::addInterceptor) }.build()
+            } else custom
         }
     }
 
@@ -150,7 +157,10 @@ class Aduki internal constructor(
             interceptors().clear()
             networkInterceptors().clear()
             authenticator(Authenticator.NONE)
-        }?.build() ?: HttpClient.create("", options.timeoutSeconds)
+            dpop?.let(::addInterceptor)
+        }?.build() ?: HttpClient.create("", options.timeoutSeconds).let { base ->
+            if (dpop == null) base else base.newBuilder().addInterceptor(dpop).build()
+        }
     }
 
     // Declared after the HTTP client above: property initializers run in
@@ -315,6 +325,7 @@ class Aduki internal constructor(
         private var contactEngine: ContactEngine? = null
         private var appointmentRepo: AppointmentRepo? = null
         private var scheduleEngine: ScheduleEngine? = null
+        private var dpop: Dpop? = null
 
         fun key(key: String) = apply { this.apiKey = key }
         fun token(token: String) = apply { this.token = token }
@@ -325,6 +336,12 @@ class Aduki internal constructor(
             this.grpcHost = host
             this.grpcPort = port
         }
+        /**
+         * Binds sign-ins to a device key (DPoP, RFC 9449): Aduki ID and mail
+         * calls carry a proof, and tokens bound to the key are sent as
+         * `Authorization: DPoP`. Hardware keys must be P-256 (`ES256`).
+         */
+        fun dpop(key: pro.aduki.crypto.dpop.Key) = apply { this.dpop = Dpop(key) }
         fun secure(enabled: Boolean) = apply { this.secure = enabled }
         fun timeout(seconds: Long) = apply { this.timeoutSeconds = seconds }
         fun http(client: OkHttpClient) = apply { this.httpClient = client }
@@ -365,7 +382,8 @@ class Aduki internal constructor(
                 appointmentRepo = appointmentRepo,
                 mailboxEngine = mailboxEngine,
                 contactEngine = contactEngine,
-                scheduleEngine = scheduleEngine
+                scheduleEngine = scheduleEngine,
+                dpop = dpop
             )
         }
     }
@@ -384,11 +402,15 @@ class Aduki internal constructor(
             code: String? = null,
             endpoint: String = Endpoints.REST,
             identity: String = Endpoints.ID,
-            backup: String? = null
+            backup: String? = null,
+            dpop: pro.aduki.crypto.dpop.Key? = null
         ): Aduki {
-            val tempClient = HttpClient.create("", 15)
+            val tempClient = HttpClient.create("", 15).let { base ->
+                if (dpop == null) base else base.newBuilder().addInterceptor(Dpop(dpop)).build()
+            }
             val tokens = Login.submit(tempClient, identity, handle, password, code, backup)
             val client = builder()
+                .apply { if (dpop != null) dpop(dpop) }
                 .endpoint(endpoint)
                 .identity(identity)
                 .token(tokens.token)
