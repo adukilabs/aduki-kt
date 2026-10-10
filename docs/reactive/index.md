@@ -1,6 +1,6 @@
 # Unidirectional Data Flow (UDF)
 
-The Aduki Android SDK enforces strict Unidirectional Data Flow (UDF) to prevent UI race conditions and stale state bugs:
+The SDK is built around unidirectional data flow: the UI observes state, and changes go through the local store:
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
@@ -18,7 +18,7 @@ The Aduki Android SDK enforces strict Unidirectional Data Flow (UDF) to prevent 
                ▼                              │
 ┌─────────────────────────────────────────────┴───────────────┐
 │                 ObjectBox Local Database                    │
-│      (Single source of truth via memory-mapped FlatBuffers) │
+│      (Single source of truth) │
 └──────────────┬──────────────────────────────▲───────────────┘
                │ Background Dispatch          │ Reconcile Sync
                ▼                              │

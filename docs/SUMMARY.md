@@ -11,25 +11,28 @@
 
 - [Overview](auth/index.md)
 - [Sign-in](auth/login.md)
-- [Two-Factor TOTP](auth/totp.md)
-- [API Keys](auth/keys.md)
-- [Token Lifecycle](auth/tokens.md)
+- [Aduki ID Client](auth/id.md)
+- [Token Lifecycle & Rights](auth/tokens.md)
+- [DPoP](auth/dpop.md)
+- [OIDC Client](auth/oidc.md)
 - [Account Center & Unlock](auth/center.md)
+- [API Keys](auth/keys.md)
+- [Two-Factor TOTP (deprecated)](auth/totp.md)
 
-# Device Security
+# Security Building Blocks
 
 - [Overview](security/index.md)
-- [Android KeyStore](security/keystore.md)
+- [Keystore](security/keystore.md)
 - [Envelope Cipher](security/cipher.md)
 - [Memory Sanitization](security/sanitizer.md)
 - [TLS & Pinning](security/tls.md)
 
-# Zero-Copy Persistence
+# Local Storage
 
-- [Storage Architecture](store/index.md)
-- [FlatBuffers Entities](store/entities.md)
-- [B-Tree Indexes](store/indexes.md)
-- [ACID Transactions](store/transactions.md)
+- [Overview](store/index.md)
+- [Entities](store/entities.md)
+- [Indexes & Queries](store/indexes.md)
+- [Transactions](store/transactions.md)
 
 # Core Services
 
@@ -47,7 +50,7 @@
 
 # Network & Resilience
 
-- [Dual Transport](network/transports.md)
+- [Transports](network/transports.md)
 - [Circuit Breaker](network/circuit.md)
 
 # API Reference

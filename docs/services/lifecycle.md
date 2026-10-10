@@ -1,6 +1,6 @@
 # Lifecycle Management Reference
 
-The `Lifecycle` coordinator bridges Android system lifecycle states to Aduki SDK network polling, socket keepalives, and outbox synchronization.
+The `Lifecycle` object tracks whether the app is in the foreground and tells interested parties when that changes. The one thing the SDK does itself on a change is to flush the outbox when the app resumes.
 
 ---
 
@@ -14,6 +14,7 @@ class Lifecycle {
     fun pause()
     fun resume()
     fun listen(listener: (Boolean) -> Unit)
+    fun remove(listener: (Boolean) -> Unit)
 }
 ```
 
@@ -41,19 +42,18 @@ fun active(): Boolean
 ---
 
 ### `pause`
-Transitions SDK state to background. Immediately halts continuous polling, suspends gRPC streaming channels, and conserves device battery.
+Marks the SDK as backgrounded and calls the listeners with `false`. The SDK does not stop any task by itself; use a listener to pause your own work.
 
 ```kotlin
 fun pause()
 ```
 
-- **Concurrency**: Thread-safe (backed by internal state synchronization).
 - **Listeners**: Fires all callbacks registered via `listen` with `false`.
 
 ---
 
 ### `resume`
-Transitions SDK state to foreground. Reactivates network polling and triggers an immediate asynchronous flush of all queued outbox mutations.
+Marks the SDK as foregrounded and calls the listeners with `true`; `Aduki` has a listener that launches `sync.flush()` on resume.
 
 ```kotlin
 fun resume()
@@ -109,7 +109,7 @@ class App : Application(), DefaultLifecycleObserver {
     }
 
     override fun onStop(owner: LifecycleOwner) {
-        // App enters background — suspend polling to conserve radio and battery
+        // App enters background
         client.pause()
     }
 }

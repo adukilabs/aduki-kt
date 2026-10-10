@@ -1,6 +1,6 @@
 # Aduki API Reference
 
-`Aduki` is the central facade entry point for all mobile operations in the Aduki Android Kotlin SDK.
+`Aduki` is the entry point of the SDK (`pro.aduki.sdk.Aduki`).
 
 ---
 
@@ -20,9 +20,12 @@ class Aduki internal constructor(
     worker: Worker? = null,
     mailRepo: MailRepo? = null,
     contactRepo: ContactRepo? = null,
+    appointmentRepo: AppointmentRepo? = null,
     mailboxEngine: MailboxEngine? = null,
     contactEngine: ContactEngine? = null,
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    scheduleEngine: ScheduleEngine? = null,
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    private val dpop: Dpop? = null
 )
 ```
 
@@ -38,6 +41,8 @@ class Aduki internal constructor(
 | `mail` | `Mail` | `val` | Sub-service for message sending, flag updates, moves, and mailbox observations. |
 | `contacts` | `Contacts` | `val` | Sub-service for address book synchronization, contact retrieval, and substring search. |
 | `sync` | `Sync` | `val` | Sub-service for CONDSTORE/MODSEQ folder delta sync and outbox flushing. |
+| `scheduling` | `Scheduling` | `val` | Appointments, services, slots and booking ([Scheduling](../services/scheduling.md)). |
+| `mailApi` | `Mail` (net) | `val` | Typed REST mail client on the authenticated connection. |
 
 ---
 
@@ -53,7 +58,8 @@ suspend fun Aduki.Companion.login(
     code: String? = null,
     endpoint: String = Endpoints.REST,
     identity: String = Endpoints.ID,
-    backup: String? = null
+    backup: String? = null,
+    dpop: Key? = null
 ): Aduki
 ```
 
@@ -61,6 +67,7 @@ suspend fun Aduki.Companion.login(
   - `handle`: Full address, e.g. `ada@aduki.me`.
   - `password`: Account password.
   - `code` / `backup`: Authenticator code or backup code.
+  - `dpop`: optional device key to bind the session to ([DPoP](../auth/dpop.md)).
   - `endpoint`: Mail REST base (defaults to `https://mail.aduki.pro/v1`).
   - `identity`: Aduki ID base (defaults to `https://id.aduki.pro/v1`).
 - **Return Type**: `Aduki` — holding the access token, refresh token and session, with `Identity` resolved.
@@ -83,6 +90,7 @@ class Builder {
     fun token(token: String): Builder
     fun endpoint(endpoint: String): Builder
     fun identity(identity: String): Builder
+    fun dpop(key: Key): Builder
     fun grpc(host: String, port: Int = Endpoints.GRPC_PORT): Builder
     fun secure(enabled: Boolean): Builder
     fun timeout(seconds: Long): Builder
@@ -91,6 +99,7 @@ class Builder {
     fun worker(worker: Worker): Builder
     fun mail(repo: MailRepo): Builder
     fun contacts(repo: ContactRepo): Builder
+    fun scheduling(repo: AppointmentRepo, engine: ScheduleEngine? = null): Builder
     fun engines(mailbox: MailboxEngine, contact: ContactEngine): Builder
     fun build(): Aduki
 }
@@ -118,9 +127,8 @@ suspend fun me(): Identity?
 suspend fun totp(code: String): Boolean
 ```
 
-- **Parameters**: `code: String` — Exactly 6 numeric digits.
-- **Return Type**: `Boolean` — `true` if server confirms verification.
-- **Throws**: `IllegalArgumentException` if code is not 6 digits; `AdukiException.Unauthorized` if session expired.
+- **Parameters**: `code: String` — the 6-digit code.
+- **Return Type**: `Boolean` — `true` if the server confirms it.
 
 ### `refresh`
 Renews the access token at Aduki ID (`POST /v1/tokens`) ahead of time. The SDK also does this by itself on a `401`.
@@ -138,17 +146,26 @@ Terminates the session remotely and wipes local credentials.
 suspend fun logout(): Boolean
 ```
 
-- **Return Type**: `Boolean` — `true` if Aduki ID revoked the session (`DELETE /v1/sessions/{hex}`). Guarantees `session.clear()` executes locally.
+- **Return Type**: `Boolean` — `true` if Aduki ID revoked the session (`DELETE /v1/sessions/{hex}`); the local session is then cleared. When revocation fails the session is kept with the rotated refresh token so `logout()` can be retried (or call `session.clear()`). Also stops `watchRights`.
+
+### `rights`, `watchRights`, `unwatchRights`
+Renew the access token on a rights push, or subscribe to the mail event stream that sends them. See [Token lifecycle](../auth/tokens.md).
+
+```kotlin
+suspend fun rights(payload: String): Boolean
+fun watchRights(host: String = <REST endpoint without /v1>)
+fun unwatchRights()
+```
 
 ### `pause`
-Notifies the SDK that the host application entered the background. Suspends background polling.
+Notifies the SDK that the host application entered the background (see [Lifecycle](../services/lifecycle.md)).
 
 ```kotlin
 fun pause()
 ```
 
 ### `resume`
-Notifies the SDK that the host application entered the foreground. Resumes background polling and flushes pending outbox mutations.
+Notifies the SDK that the host application entered the foreground and flushes pending outbox mutations.
 
 ```kotlin
 fun resume()

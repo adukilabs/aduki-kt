@@ -1,91 +1,63 @@
-# Authentication & Session Architecture
+# Authentication Overview
 
-The Aduki Android SDK provides a defense-in-depth authentication layer supporting interactive multi-factor sessions and headless machine API keys.
+The SDK supports two kinds of credential: a person's sign-in at Aduki ID, and
+a static API key for headless clients.
 
----
+## Credentials
 
-## 1. Authentication Schemes Matrix
-
-The SDK strictly enforces separation between user identity sessions and service credentials:
-
-| Property | Interactive User Session | Static Service API Key |
+| Property | Interactive sign-in | API key |
 | :--- | :--- | :--- |
-| **Primary Use Case** | Mobile Android applications with human users | Embedded kiosks, testing suites, CI automation |
-| **Credentials** | Address + password + second factor, at Aduki ID | Cryptographic API key (`hm_live_...` / `hm_test_...`) |
-| **HTTP Authorization** | `Authorization: Bearer <jwt>` | `Authorization: Key <apiKey>` |
-| **gRPC Metadata** | `authorization: Bearer <jwt>` | `authorization: Key <apiKey>` |
-| **Token Lifetime** | 10-minute access token (EdDSA JWT, audience `mail`), 30-day single-use refresh token | Indefinite until server revocation |
-| **Rotation Strategy** | Automatic on `401` via Aduki ID `POST /v1/tokens` | Manual key replacement via client re-instantiation |
-| **Local Persistence** | Android KeyStore envelope cipher (`AES-256-GCM`) | StrongBox / TEE sealed storage |
-| **Revocation** | Aduki ID `DELETE /v1/sessions/{hex}` | Aduki Admin Console key deletion |
+| Use | apps with human users | workers, tests, daemons |
+| Credentials | address + password + second factor, at Aduki ID | a key starting `hm_` or `key_` |
+| HTTP header | `Authorization: Bearer <access token>` (`DPoP <token>` when bound) | `Authorization: Key <key>` |
+| Lifetime | 10-minute access token (EdDSA JWT per audience), single-use rotating refresh token | until revoked at the server |
+| Renewal | automatic on `401` | none |
+| Sign-out | `DELETE /v1/sessions/{hex}` at Aduki ID | revoke the key |
 
----
+Tokens and sessions are held in memory (`client.session`). The SDK does not
+write them to disk; persisting the refresh token between launches is up to the
+app (restore it with `Id.adopt` or `session.update`).
 
-## 2. Session Lifecycle & State Machine
+## In this section
+
+- [Sign-in](login.md): `Aduki.login`.
+- [Aduki ID client](id.md): `Id`, one sign-in with many audiences.
+- [Token lifecycle](tokens.md): renewal, sign-out, the rights stream.
+- [DPoP](dpop.md): binding tokens to a device key.
+- [OIDC client](oidc.md): "Sign in with Aduki" for third-party apps.
+- [Account Center & unlock](center.md).
+- [API keys](keys.md).
+- [Two-factor TOTP](totp.md) (deprecated).
+
+## Session lifecycle
 
 ```mermaid
 stateDiagram-v2
     [*] --> Unauthenticated
-    Unauthenticated --> LoggingIn: Aduki.login(handle, pass, code)
-    LoggingIn --> ActiveSession: 200 OK (Tokens received)
-    LoggingIn --> Unauthenticated: 401 Unauthorized / Error
-    ActiveSession --> Refreshing: 401 / Aduki.refresh()
-    Refreshing --> ActiveSession: 200 OK (Tokens rotated)
-    Refreshing --> Unauthenticated: 401 Unauthorized (Refresh expired)
-    ActiveSession --> Unauthenticated: Aduki.logout() (DELETE /v1/sessions/{hex})
+    Unauthenticated --> ActiveSession: Aduki.login(handle, password, code)
+    Unauthenticated --> Unauthenticated: 401 / error
+    ActiveSession --> ActiveSession: 401 or refresh(): tokens rotated
+    ActiveSession --> Unauthenticated: refresh refused (sign in again)
+    ActiveSession --> Unauthenticated: logout()
 ```
 
----
-
-## 3. Core Data Types
-
-### `Tokens`
-Container for active access and refresh credentials returned from authentication endpoints:
+## Core types
 
 ```kotlin
-package pro.aduki.core.models
-
 data class Tokens(
-    val token: String = "",
-    val refresh: String = "",
-    val expires: String = "",
-    val session: String = ""
+    val token: String = "",    // access token (JWT)
+    val refresh: String = "",  // single-use refresh token
+    val expires: String = "",  // access-token lifetime in seconds
+    val session: String = ""   // Aduki ID session hex, used to sign out
 )
-```
-
-- `token: String`: Short-lived JSON Web Token (JWT) passed in `Authorization: Bearer <jwt>`.
-- `refresh: String`: Single-use refresh token for Aduki ID `POST /v1/tokens`.
-- `expires: String`: Access-token lifetime in seconds.
-- `session: String`: Aduki ID session hex, used to sign out.
-
-### `Identity`
-Resolved account retrieved via `GET /v1/user` (`scopes` and `tier` stay empty):
-
-```kotlin
-package pro.aduki.state.repository
 
 data class Identity(
     val user: String = "",
     val tenant: String = "",
     val owner: Boolean = false,
-    val scopes: List<String> = emptyList(),
-    val tier: String = ""
+    val scopes: List<String> = emptyList(),  // only if the server returns them
+    val tier: String = ""                    // only if the server returns it
 )
 ```
 
-- `user: String`: Unique user identifier hex string.
-- `tenant: String`: Organization / tenant isolation hex string.
-- `owner: Boolean`: True if the user possesses administrative privileges within the tenant.
-- `scopes: List<String>`: List of authorized capability strings (e.g., `mail:read`, `mail:write`, `contacts:sync`).
-- `tier: String`: Account service tier (`free`, `pro`, `enterprise`).
-
----
-
-## 4. Hardware Security Guarantees
-
-All authentication tokens and credentials adhere to the following zero-exposure runtime rules:
-
-1. **Envelope Encryption**: Tokens stored locally are encrypted with an AES-256-GCM data encryption key sealed by the Android KeyStore hardware root of trust (StrongBox or TEE).
-2. **In-Memory Zeroization**: Plaintext passwords, TOTP codes, and sensitive buffers are allocated in guarded memory segments and wiped immediately after transmission (`wipe(ByteArray)`).
-3. **Automatic Cache Clear**: Invoking `logout()` revokes the Aduki ID session, wipes local KeyStore entries, and transitions reactive `Session` state flows to `null`.
-
+`Identity` is read from mail's `GET /v1/user` by `client.me()`.

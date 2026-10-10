@@ -1,24 +1,15 @@
 # Static API Keys Reference
 
-API keys provide immutable machine-to-machine authentication for background workers, automated tests, headless kiosks, and daemons without requiring interactive user credentials.
+API keys give machine-to-machine access for background workers, tests and daemons, without interactive credentials.
 
 ---
 
-## 1. Key Format & Specification
+## 1. Key format
 
-Aduki API keys are 64-character or 40-character cryptographic tokens formatted with an environment prefix:
-
-| Prefix | Environment | Intended Use |
-| :--- | :--- | :--- |
-| `hm_live_<hex>` | Production | Live production tenants and real message dispatch |
-| `hm_test_<hex>` | Sandbox / Staging | Integration testing, CI/CD pipelines, mock server testing |
-
-### Examples
-
-```text
-hm_live_7f9b8c2d1e0a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a
-hm_test_0123456789abcdef0123456789abcdef0123456789abcdef
-```
+The SDK recognises a credential as an API key when it starts with `hm_` or
+`key_`, and then sends it as `Authorization: Key <key>`. Anything else is sent
+as `Authorization: Bearer <token>`. Keys are issued and revoked in the Aduki
+admin console; the SDK does not validate their format beyond this prefix test.
 
 ---
 
@@ -30,7 +21,7 @@ API keys are configured via `Aduki.Builder.key(String)`:
 package pro.aduki.sdk
 
 val client = Aduki.builder()
-    .key("hm_live_7f9b8c2d1e0a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a")
+    .key(apiKey) // starts with hm_ or key_
     .endpoint("https://mail.aduki.pro/v1")
     .timeout(30)
     .secure(true)
@@ -62,7 +53,7 @@ On all outbound HTTP requests, the SDK interceptor inspects the credential and a
 ```http
 GET /v1/user HTTP/1.1
 Host: mail.aduki.pro
-Authorization: Key hm_live_7f9b8c2d1e0a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a
+Authorization: Key <your key>
 Accept: application/json
 ```
 
@@ -79,26 +70,14 @@ val metadata = Metadata().apply {
 
 ---
 
-## 4. Scope Resolution
+## 4. Resolving the account
 
-When initialized with an API key, calling `client.me()` contacts `GET /v1/user` to verify the key and retrieve its account and tenant:
+With an API key, `client.me()` calls `GET /v1/user` to verify the key and read its account and tenant:
 
 ```kotlin
 val identity: Identity? = client.me()
-if (identity != null) {
-    println("Tenant: ${identity.tenant}")
-    println("Tier: ${identity.tier}")
-    println("Scopes: ${identity.scopes.joinToString()}")
-}
+println("User: ${identity?.user}, tenant: ${identity?.tenant}")
 ```
 
-### Permission Scopes
-
-| Scope | Capability |
-| :--- | :--- |
-| `mail:read` | Inspect mailboxes, query CONDSTORE delta changes, fetch message metadata |
-| `mail:send` | Enqueue outbound messages and dispatch raw RFC 822 blobs |
-| `mail:modify` | Flag, move, or delete messages |
-| `contacts:read` | Query address book contacts and incremental ctag changes |
-| `contacts:write` | Create, update, or delete contacts |
-
+`Identity.scopes` and `Identity.tier` are filled only when the server returns
+them; do not rely on them. API keys are never renewed.

@@ -1,40 +1,55 @@
-# Aduki Android Kotlin SDK
+# Aduki Kotlin SDK
 
-Welcome to the official developer reference manual for the **Aduki Android Kotlin SDK** — an ultra-low latency, battery-efficient, offline-first mobile library engineered specifically for the [Aduki](https://github.com/aduki-org/aduki) communication platform.
+The Aduki Kotlin SDK is a client library for the [Aduki](https://aduki.pro)
+platform. It signs people in at Aduki ID, reads and sends mail, syncs contacts
+and appointments, and keeps working offline.
 
----
+The SDK is a set of Gradle modules built as plain Kotlin/JVM libraries. The
+group is `pro.aduki`; the Android-specific parts (Keystore access, Account
+Manager) use the Android framework when present and fall back to software
+implementations on a plain JVM.
 
-## Architectural Philosophy
+## What it does
 
-Traditional mobile database ORMs like Android Room and SQLite suffer from substantial cursor allocations, serialization reflection, and main-thread blocking. The Aduki Android SDK re-architects mobile email and contact sync from the ground up:
+- **Sign-in at Aduki ID.** Address, password and second factor produce a
+  10-minute access token per audience and a rotating refresh token. The SDK
+  renews on `401` and signs out by revoking the session. See [Sign-in](auth/login.md).
+- **One session, many audiences.** The `Id` client caches one access token per
+  audience (`mail`, `id`, ...). See [Aduki ID client](auth/id.md).
+- **Rights stream.** Subscribes to the mail event stream and renews the token
+  when the account's rights change. See [Token lifecycle](auth/tokens.md).
+- **DPoP.** Binds sign-ins to a device key (RFC 9449). See [DPoP](auth/dpop.md).
+- **Sign in with Aduki (OIDC).** An OpenID Connect relying-party client with
+  PKCE for apps that use Aduki ID as their identity provider. See [OIDC client](auth/oidc.md).
+- **Offline-first mail.** Local storage in ObjectBox, an outbox that journals
+  every change before it is sent, and incremental sync over `GET /v1/user/mail/changes`.
+  See [Mail](services/mail.md), [Sync](services/sync.md) and [Outbox](services/outbox.md).
+- **Reactive state.** Repositories expose Kotlin `StateFlow` streams for UI binding.
+  See [Reactive](reactive/index.md).
+- **Typed REST clients** for mail, scheduling and the Account Center.
 
-1. **Pure ObjectBox FlatBuffers Persistence**: Eliminates SQLite overhead completely. Reads happen directly from memory-mapped (`mmap`) FlatBuffers binary files in sub-millisecond timeframes.
-2. **Hardware-Isolated Device Security**: Keys never touch disk unencrypted. Storage is sealed with AES-256-GCM envelope encryption anchored directly in the **Android KeyStore** (StrongBox Keymaster with TEE fallback).
-3. **Dual Transport Flexibility**: Multiplexed HTTP/2 OkHttp 4 for REST and `grpc-okhttp` for high-throughput binary sync streaming.
-4. **Resilient Offline Outbox**: Every mutation (email sent, flags changed, message moved) journals atomically to an offline queue before wire dispatch, retrying automatically with Decorrelated Jitter.
-5. **RFC 7162 CONDSTORE / MODSEQ Sync**: High-efficiency incremental mailbox synchronizer that transfers only modified message sequence numbers.
-6. **Reactive Unidirectional Data Flow (UDF)**: Jetpack Compose and ViewModel UI binds directly to hot Kotlin `StateFlow` pipelines.
+## Modules
 
----
+| Module | Holds |
+| :--- | :--- |
+| `core` | models, errors, configuration, retry primitives (`Jitter`, `Circuit`), memory helpers |
+| `crypto` | Keystore provider, AES-256-GCM `Envelope`, `Guard`, TLS pinning, DPoP keys |
+| `net` | HTTP clients (`Id`, `Login`, `Center`, `Mail`, `Scheduling`, `Events`, `Dpop`, `Oidc`) and a gRPC channel factory |
+| `store` | ObjectBox entities and batch transactions |
+| `sync` | mailbox, contact and schedule sync engines; the outbox |
+| `state` | repositories that expose `StateFlow` |
+| `sdk` | the `Aduki` facade |
 
-## Performance Benchmarks
+## Status
 
-| Metric | Aduki Android (ObjectBox) | Traditional Room / SQLite | Advantage |
-| :--- | :--- | :--- | :--- |
-| **Batch Insert (10,000 Messages)** | **142 ms** | 1,890 ms | **13.3x faster** |
-| **P99 Query Latency (Indexed)** | **0.48 ms** | 6.20 ms | **12.9x faster** |
-| **Cold Startup Latency** | **14 ms** | 82 ms | **5.8x faster** |
-| **RAM Allocation (per 1,000 msgs)** | **180 KB** | 3,450 KB | **19.1x less RAM** |
-| **Battery Consumption (500 syncs)** | **0.12 mAh** | 0.89 mAh | **7.4x more efficient** |
+Not yet available: Account Center authenticator for Android, passkeys, and a
+Keystore-backed DPoP key. The local database is not encrypted by the SDK. See
+the individual pages for the exact behaviour of each feature.
 
----
+## Where to start
 
-## Quick Navigation
-
-- [Installation & Setup](start/install.md)
-- [Sign-in (Aduki ID)](auth/login.md)
-- [Hardware Security Model](security/index.md)
-- [ObjectBox FlatBuffers Storage](store/index.md)
-- [Mail & Contacts API](services/mail.md)
-- [Jetpack Compose UI Binding](reactive/compose.md)
-- [Aduki Reference](reference/client.md)
+1. [Installation](start/install.md)
+2. [Configuration](start/config.md)
+3. [Sign-in](auth/login.md)
+4. [Mail](services/mail.md)
+5. [Aduki reference](reference/client.md)

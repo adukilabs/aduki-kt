@@ -14,5 +14,10 @@ objectbox-models/default.json.bak
 # OS
 .DS_Store
 Thumbs.db
-# Documentation build
+
+# Kotlin compiler
+.kotlin/
+# mdBook output
 docs/book/
+book/
+site/

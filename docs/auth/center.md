@@ -1,5 +1,7 @@
 # Account Center & Device Unlock
 
+The calls are blocking (run them off the main thread). Each takes an HTTP client and the Aduki ID base, `https://id.aduki.pro/v1`.
+
 `pro.aduki.net.http.Center` talks to Aduki ID's Account Center
 (ADK-AUTH-002 §5) and device-bound unlock (ADK-AUTH-001 §9).
 
@@ -13,7 +15,7 @@
 
 ## Device unlock
 
-1. Generate an Ed25519 key pair in the Android KeyStore.
+1. Generate an Ed25519 key pair on the device and keep the private key in the platform keystore where the device supports Ed25519 there; the SDK only asks for a `sign` callback and never sees the private key. (The SDK does not ship a Keystore-backed key yet.)
 2. Register the 32-byte public key with `Center.register` (a step-up code is required).
    Pass `center = true` to register against the Account Center instead of one account.
 3. To unlock, call `Center.unlock` with a `sign` callback. The server issues a

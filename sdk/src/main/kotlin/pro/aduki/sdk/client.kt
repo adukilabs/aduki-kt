@@ -10,6 +10,9 @@ import org.json.JSONObject
 import pro.aduki.core.config.Endpoints
 import pro.aduki.core.config.Options
 import pro.aduki.net.http.Client as HttpClient
+import pro.aduki.net.http.Dpop
+import pro.aduki.net.http.Events
+import pro.aduki.net.http.Id
 import pro.aduki.net.http.Login
 import pro.aduki.net.http.Whoami
 import pro.aduki.core.models.Identity
@@ -45,7 +48,8 @@ class Aduki internal constructor(
     mailboxEngine: MailboxEngine? = null,
     contactEngine: ContactEngine? = null,
     scheduleEngine: ScheduleEngine? = null,
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    private val dpop: Dpop? = null
 ) {
     private fun activeAuthString(): String {
         return session.token() ?: if (token.isNotBlank()) token else apiKey
@@ -72,6 +76,7 @@ class Aduki internal constructor(
                 chain.proceed(request)
             }
             .authenticator(renewer)
+            .apply { dpop?.let(::addInterceptor) }
             .build()
     }
 
@@ -79,11 +84,13 @@ class Aduki internal constructor(
     // refresh token and retry. API keys are not renewed.
     private val renewer = Authenticator { _, response ->
         val sent = response.request.header("Authorization").orEmpty()
-        if (response.priorResponse != null || !sent.startsWith("Bearer ")) {
+        val scheme = listOf("Bearer ", "DPoP ").firstOrNull { sent.startsWith(it) }
+        if (response.priorResponse != null || scheme == null) {
             null
         } else {
-            renew(sent.removePrefix("Bearer "))?.let { fresh ->
-                response.request.newBuilder().header("Authorization", "Bearer $fresh").build()
+            renew(sent.removePrefix(scheme))?.let { fresh ->
+                val next = response.request.newBuilder().header("Authorization", "Bearer $fresh").build()
+                dpop?.apply(next) ?: next // a rebuilt request needs its own proof
             }
         }
     }
@@ -92,29 +99,45 @@ class Aduki internal constructor(
     // its own authenticator.
     private val customClient: OkHttpClient? by lazy {
         httpClient?.let { custom ->
-            if (custom.authenticator == Authenticator.NONE) custom.newBuilder().authenticator(renewer).build() else custom
+            if (custom.authenticator == Authenticator.NONE) {
+                custom.newBuilder().authenticator(renewer).apply { dpop?.let(::addInterceptor) }.build()
+            } else custom
         }
     }
 
     private val renewal = Any()
 
+    // The Aduki ID client (K2) owns renewal: one serialized refresh rotation,
+    // a spent refresh token is dropped and never presented again. `session`
+    // stays the observable copy and the source of truth for sign-ins adopted
+    // from outside (`Aduki.login`, `session.update`).
+    private val id: Id by lazy { Id(identityClient, options.identity) }
+
+    // Makes [id] hold what [session] holds; must hold [renewal].
+    private fun align(current: Tokens) {
+        if (id.refreshToken() != current.refresh || id.session() != current.session) id.adopt(current)
+    }
+
     /**
      * Renews the access token unless another caller already replaced [stale].
-     * Serialized: refresh tokens rotate, and presenting a spent one twice
-     * makes Aduki ID revoke the whole session.
      */
     private fun renew(stale: String?): String? = synchronized(renewal) {
         val current = session.tokens.value ?: return null
         if (stale != null && current.token != stale) return current.token
         if (current.refresh.isBlank()) return null
+        align(current)
         try {
-            val fresh = Login.refresh(identityClient, options.identity, current.refresh)
+            val fresh = id.rotate(Endpoints.AUDIENCE, current.token)
             session.update(fresh.copy(session = current.session))
             fresh.token
         } catch (e: pro.aduki.core.errors.AdukiException.Auth) {
             // A 2xx that failed validation spent the refresh token: keep the
             // rotated one if it came back, else drop it (reuse revokes the session).
             session.update(current.copy(refresh = e.refresh))
+            null
+        } catch (e: pro.aduki.core.errors.AdukiException.Unauthorized) {
+            // Refused: spent, expired or revoked. Never present it again.
+            session.update(current.copy(refresh = ""))
             null
         } catch (_: Exception) {
             null
@@ -134,7 +157,10 @@ class Aduki internal constructor(
             interceptors().clear()
             networkInterceptors().clear()
             authenticator(Authenticator.NONE)
-        }?.build() ?: HttpClient.create("", options.timeoutSeconds)
+            dpop?.let(::addInterceptor)
+        }?.build() ?: HttpClient.create("", options.timeoutSeconds).let { base ->
+            if (dpop == null) base else base.newBuilder().addInterceptor(dpop).build()
+        }
     }
 
     // Declared after the HTTP client above: property initializers run in
@@ -203,11 +229,40 @@ class Aduki internal constructor(
      * before the next request would be refused with `auth.stale`; anything
      * else is ignored. Returns whether a token was renewed.
      */
-    suspend fun rights(payload: String): Boolean {
+    suspend fun rights(payload: String): Boolean = applyRights(payload)
+
+    private fun applyRights(payload: String): Boolean {
         val type = runCatching { JSONObject(payload).optString("@type") }.getOrNull()
         if (type != "Rights") return false
         val stale = session.tokens.value?.token ?: return false
         return renew(stale) != null
+    }
+
+    private var watcher: Events? = null
+
+    /**
+     * Subscribes to the Mail JMAP EventSource (`{mail host}/jmap/eventsource`)
+     * and renews the access token on every `rights` event (plan K3). The
+     * stream reconnects by itself, with jitter backoff after failures, and a
+     * stale token is renewed on the next 401 whether or not a push arrived.
+     * [host] is the mail host root, by default the REST endpoint without
+     * its `/v1`. Calling it again replaces the previous subscription; stop it
+     * with [unwatchRights] (also done by [logout]).
+     */
+    fun watchRights(host: String = options.endpoint.removeSuffix("/").removeSuffix("/v1")) {
+        val http = activeHttpClient().newBuilder().readTimeout(90, java.util.concurrent.TimeUnit.SECONDS).build()
+        val events = Events(http, host, { payload -> applyRights(payload) })
+        synchronized(renewal) {
+            watcher?.stop()
+            watcher = events
+        }
+        scope.launch { events.run() }
+    }
+
+    /** Stops the subscription started by [watchRights]. */
+    fun unwatchRights() = synchronized(renewal) {
+        watcher?.stop()
+        watcher = null
     }
 
     /**
@@ -220,19 +275,22 @@ class Aduki internal constructor(
      * later call can retry; `session.clear()` forgets it locally instead.
      */
     suspend fun logout(): Boolean = synchronized(renewal) {
+        watcher?.stop()
+        watcher = null
         val current = session.tokens.value
         if (current == null) {
             session.clear()
             return false
         }
-        val outcome = Login.logout(identityClient, options.identity, current.session, current.refresh)
-        if (outcome.revoked || outcome.refresh.isBlank()) {
-            session.clear()
-        } else {
+        align(current)
+        val revoked = id.signOut()
+        if (id.signedIn()) {
             // Still signed in remotely: keep the retry credential.
-            session.update(current.copy(refresh = outcome.refresh))
+            session.update(current.copy(refresh = id.refreshToken()))
+        } else {
+            session.clear()
         }
-        outcome.revoked
+        revoked
     }
 
     /**
@@ -267,6 +325,7 @@ class Aduki internal constructor(
         private var contactEngine: ContactEngine? = null
         private var appointmentRepo: AppointmentRepo? = null
         private var scheduleEngine: ScheduleEngine? = null
+        private var dpop: Dpop? = null
 
         fun key(key: String) = apply { this.apiKey = key }
         fun token(token: String) = apply { this.token = token }
@@ -277,6 +336,12 @@ class Aduki internal constructor(
             this.grpcHost = host
             this.grpcPort = port
         }
+        /**
+         * Binds sign-ins to a device key (DPoP, RFC 9449): Aduki ID and mail
+         * calls carry a proof, and tokens bound to the key are sent as
+         * `Authorization: DPoP`. Hardware keys must be P-256 (`ES256`).
+         */
+        fun dpop(key: pro.aduki.crypto.dpop.Key) = apply { this.dpop = Dpop(key) }
         fun secure(enabled: Boolean) = apply { this.secure = enabled }
         fun timeout(seconds: Long) = apply { this.timeoutSeconds = seconds }
         fun http(client: OkHttpClient) = apply { this.httpClient = client }
@@ -317,7 +382,8 @@ class Aduki internal constructor(
                 appointmentRepo = appointmentRepo,
                 mailboxEngine = mailboxEngine,
                 contactEngine = contactEngine,
-                scheduleEngine = scheduleEngine
+                scheduleEngine = scheduleEngine,
+                dpop = dpop
             )
         }
     }
@@ -336,11 +402,15 @@ class Aduki internal constructor(
             code: String? = null,
             endpoint: String = Endpoints.REST,
             identity: String = Endpoints.ID,
-            backup: String? = null
+            backup: String? = null,
+            dpop: pro.aduki.crypto.dpop.Key? = null
         ): Aduki {
-            val tempClient = HttpClient.create("", 15)
+            val tempClient = HttpClient.create("", 15).let { base ->
+                if (dpop == null) base else base.newBuilder().addInterceptor(Dpop(dpop)).build()
+            }
             val tokens = Login.submit(tempClient, identity, handle, password, code, backup)
             val client = builder()
+                .apply { if (dpop != null) dpop(dpop) }
                 .endpoint(endpoint)
                 .identity(identity)
                 .token(tokens.token)

@@ -13,7 +13,8 @@ suspend fun Aduki.Companion.login(
     code: String? = null,
     endpoint: String = Endpoints.REST,
     identity: String = Endpoints.ID,
-    backup: String? = null
+    backup: String? = null,
+    dpop: pro.aduki.crypto.dpop.Key? = null
 ): Aduki
 ```
 
@@ -25,6 +26,7 @@ suspend fun Aduki.Companion.login(
 | `endpoint` | `String` | `Endpoints.REST` | Mail REST base. |
 | `identity` | `String` | `Endpoints.ID` | Aduki ID base, `https://id.aduki.pro/v1`. |
 | `backup` | `String?` | `null` | A backup code, instead of `code`. |
+| `dpop` | `Key?` | `null` | A device key: the session is bound to it ([DPoP](dpop.md)). |
 
 Returns a client holding the access token, the refresh token and the session,
 with the account (`me()`) already resolved.

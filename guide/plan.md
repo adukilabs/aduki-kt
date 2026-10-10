@@ -1,189 +1,74 @@
-# Phased Implementation Plan & Test Criteria
-
-This document defines the implementation roadmap, phased milestones, and multi-tiered test criteria for the Aduki Android Kotlin SDK.
-
-To enable fast feedback loops and CI/CD reliability, **all tests are strictly ordered by dependency level**: self-contained algorithmic, cryptographic, database, and mocked transport tests execute first, while **tests requiring a live Aduki server are placed strictly last**.
-
+---
+Spec-ID: ADK-KT-003
+Title: aduki-kt plan
+Category: KT
+Status: Draft
+Version: 3
+Depends-on: ADK-KT-002, ADK-AUTH-001, ADK-AUTH-002, ADK-AUTH-003
 ---
 
-## 1. Phased Implementation Roadmap
+# aduki-kt plan
 
-```text
-┌─────────────────────────────────────────────────────────────┐
-│ Phase 1: Project Scaffolding & Multi-Module Build Setup    │
-└──────────────────────────────┬──────────────────────────────┘
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Phase 2: Core Primitives & Fastest Algorithms (xxHash, etc) │
-└──────────────────────────────┬──────────────────────────────┘
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Phase 3: Hardware-Backed Device Security (Android KeyStore) │
-└──────────────────────────────┬──────────────────────────────┘
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Phase 4: ObjectBox Zero-Copy Storage Layer (FlatBuffers)    │
-└──────────────────────────────┬──────────────────────────────┘
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Phase 5: Dual Network Transport Layer (OkHttp + gRPC)       │
-└──────────────────────────────┬──────────────────────────────┘
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Phase 6: Sync & State Engine (CONDSTORE/MODSEQ + Outbox)    │
-└──────────────────────────────┬──────────────────────────────┘
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Phase 7: Public Facade SDK (Aduki Builder & API)     │
-└──────────────────────────────┬──────────────────────────────┘
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Phase 8: Tiered Test Execution (Server Tests LAST)          │
-└─────────────────────────────────────────────────────────────┘
-```
+Phases refer to `plan.md` in `aduki/guide/` (P2, P4, P9). Work items are
+independent pull requests, one concern each. Build rules: one shared Gradle
+cache, no incremental Kotlin compile on the 8 GB VPS (`--no-daemon`, clean
+modules); see `../SKILLS.md`.
 
----
+## 1. Items
 
-## 2. Phase Breakdown
+| # | Item | Phase | Exit criteria |
+|---|---|---|---|
+| K0 | Verify the `pro.aduki` namespace on Maven Central (DNS TXT on `aduki.pro` by the owner) and set up signing and publishing for the new group | P2 | namespace shows verified; a snapshot publishes under `pro.aduki` | 
+| K1 | Packages are `pro.aduki.*` (`pro.aduki.core`, `.net`, ...); the client is `Aduki` and the error type `AdukiException`; no compatibility shims (no released app depends on the old names) | P2 | no old-name references in sources or tests; docs and README updated; Maven group moves to `pro.aduki` (owner decision D-KT-1, 2026-10-08): needs the Maven Central namespace `pro.aduki` verified first (DNS TXT record on `aduki.pro`, K0 below); the old `io.github.adukilabs:sdk` gets a relocation POM pointing to the new coordinates |
+| K2 | Aduki ID client module: typed sessions, refresh, logout, `whoami`, audiences (`mail`, `id`, later `space`), one token cache keyed by audience | P2 | one unit test per route against MockWebServer using the REST envelope; 401 renews once, never loops; a refresh already spent is never reused |
+| K3 | `rights` stream: subscribe to the push channel (`event: rights`), call `rights()`, backoff on disconnect with jitter. **Source**: the Aduki Mail JMAP EventSource (the only `rights` publisher that exists: `aduki` pushes it on every epoch change, `aduki/guide/progress.md` section 3.4; there is no `id` or gateway "rights channel"), audience `mail`. A client with no Mail audience (a future Space-only app) needs the same event from its own product (decide D-KT-3, ADK-AUTH-003 §7.4) | P4 | a rights event renews the token within 1 s in a fake-server test; reconnect resumes without a duplicate renew; a stale-token response (`auth.stale`) renews once even if no push arrived (the gate is the guarantee, the push an optimisation) |
+| K4 | Account Center authenticator `pro.aduki.account` (Android module: `AccountManager`, multiple accounts, switcher, device-key unlock through `Center`) | P4 | solo-developer scenario (ADK-AUTH-002 section 11) passes on a device or emulator; tenant `links = deny` removes the account within 1 s; test that access tokens hold no center data |
+| K5 | DPoP: per-device Keystore key, proof JWT per request (`htm`, `htu`, `iat`, `jti`, `ath`), server nonce retry once. **Algorithm**: Android Keystore and the Secure Enclave generate P-256 keys on every supported version (Ed25519 only on newer Android TEE keystores, not StrongBox), so the proof is `ES256` with a hardware key and `EdDSA` only with a software key; the server side must accept both (ADK-AUTH-001 §10, S-ID-14: `gate::dpop` and Space's gate step 2 accept `EdDSA` only today) | P9 | tokens issued bound to the key; replayed `jti` rejected by the server contract test; key never exported; an ES256 proof from a Keystore key is accepted by the `id` test server |
+| K6 | Passkeys via Credential Manager (register, authenticate) | P9, later | register and authenticate against the Aduki ID test server on Android |
+| K7 | OIDC "Sign in with Aduki" (basic and PKCE profiles) | P9, later | conformance with the id repo suite |
 
-### Phase 1: Project Scaffolding & Multi-Module Gradle Setup
-- **Deliverables**:
-  - Root `build.gradle.kts` with `io.objectbox` plugin (4.0.3) and Kotlin (1.9.24 / 2.0.0).
-  - Multi-module project definition (`core`, `crypto`, `store`, `net`, `sync`, `state`, `sdk`).
-  - Version catalog (`gradle/libs.versions.toml`).
-- **Success Criteria**: Clean project sync with zero dependency conflicts.
+Order: K1, K2, K3, K4, then K5; K6 and K7 only after K5. Sessions may stay
+unbound until K5 (ADK-AUTH-001 section 10, `id` README: "may stay unbound"),
+so K1 to K4 work against Mail today; **K5 moves ahead of any Space client**,
+because Space accepts DPoP-bound tokens only (ADK-SPACE-001, gate step 2).
+K3 uses the JMAP EventSource that `aduki` already serves.
 
-### Phase 2: Core Primitives & Proven Fastest Algorithms
-- **Deliverables**:
-  - `FastHash`: xxHash64 implementation processing over 10 GB/s for cache keys.
-  - `DecorrelatedJitter`: AWS-style decorrelated jitter algorithm for backoff.
-  - `AdukiDispatchers`: Dedicated dispatchers (`Store` for single-thread write transactions, `Net` for network I/O, `Crypto` for hardware crypto).
-  - Memory zeroing utilities: `withWipedBytes` and `withWipedChars` using `Arrays.fill(0)`.
-  - `CircuitBreaker`: Three-state atomic state machine (Closed, Open, Half-Open).
-- **Success Criteria**: 100% test pass on JVM unit tests with zero Android dependencies.
+### 1.1 Where each item can be built and verified
 
-### Phase 3: Hardware-Backed Device Security Layer
-- **Deliverables**:
-  - `KeyStoreProvider`: Hardware-backed key generation via `AndroidKeyStore` with StrongBox support and TEE fallback.
-  - `EnvelopeCipher`: AES-256-GCM envelope encryption for database and attachment keys.
-  - In-memory secret scrubbing wrappers.
-  - SPKI Certificate Pinning and TLS 1.3 Restricted ConnectionSpec.
-- **Success Criteria**: Successful encryption/decryption roundtrip in Robolectric with verified auth tags.
+This VPS has no JDK, no Gradle and no Android SDK (`dev.md`, checked
+2026-10-08 and 2026-10-10), and 8 GB RAM does not run an emulator beside a Gradle build.
 
-### Phase 4: ObjectBox Zero-Copy Storage Layer
-- **Deliverables**:
-  - ObjectBox entities: `Message`, `Mailbox`, `Contact`, `Outbox`.
-  - B-Tree indexes on lookup and sorting fields (`hex`, `mailbox`, `uid`, `date`, `flags`).
-  - Encrypted `BoxStore` initialization with KeyStore-derived master key.
-  - Reactive `Query.flow()` adapters for asynchronous state emissions.
-  - Atomic batch transaction helpers via `BoxStore.runInTx()`.
-- **Success Criteria**: Batch insert of 10,000 entities in < 200ms in Robolectric tests.
+| Items | Kind | Verified where |
+|---|---|---|
+| K1, K2, K3, K5 (protocol parts), K7 | plain JVM modules and MockWebServer tests | the VPS after installing a JDK 17 (`--no-daemon`, one build at a time, not beside cargo), or CI |
+| K4, K6, the Keystore parts of K5 | needs Android (`AccountManager`, Keystore, Credential Manager) | a device or a CI emulator; their exit criteria are **not** claimed from the VPS (decide D-KT-5) |
 
-### Phase 5: Dual Network Transport Layer (Mockable)
-- **Deliverables**:
-  - OkHttp 4 client with HTTP/2 multiplexing and `AuthInterceptor`.
-  - `grpc-okhttp` channel with TLS and `KeyCallCredentials` metadata injector.
-  - `WhoamiResolver` for proactive identity caching.
-  - MockWebServer and in-process gRPC test harnesses.
-- **Success Criteria**: Verified header injection, connection pooling, and error code translation against mock servers.
+The `crypto` module holds the Android Keystore provider inside a plain
+`kotlin("jvm")` module, so the Android-only classes compile against stubs or
+are not exercised by JVM tests: K4 starts by introducing the Android Gradle
+modules and moving the Keystore provider into one.
 
-### Phase 6: Sync & State Engine (CONDSTORE/MODSEQ + Outbox)
-- **Deliverables**:
-  - `OutboxManager`: Optimistic local mutations coupled with persistent outbox journal.
-  - `MailboxSynchronizer`: RFC 7162 CONDSTORE / MODSEQ incremental sync.
-  - Conflict resolution: Local dirty preservation and server flag merge.
-  - `MailRepository` and `ContactRepository` exposing hot `StateFlow` instances.
-  - **Network transport (0.2.0):** `net.http.Mail` (typed REST client), `HttpMailboxTransport` over `GET /v1/user/mail/changes` (paging with `more`, `reset` on a stale UIDVALIDITY, moved-in messages adopted), and `HttpDispatcher` for the outbox (a stable `Idempotency-Key` per send, placeholder ids replaced by server ids, permanent 4xx dropped via `Rejected`). Contract-tested against the server's own fixtures (`guide/fixtures/sdk` in the Aduki repo).
-- **Success Criteria**: Simulated network drops cause no data loss; outbox automatically flushes on simulated reconnection.
+## 2. Rules
 
-### Phase 7: Public Facade SDK (`Aduki`)
-- **Deliverables**:
-  - `Aduki.builder(context)` API.
-  - Domain sub-services: `aduki.mail`, `aduki.contacts`, `aduki.sync`, `aduki.state`, `aduki.me()`.
-  - Lifecycle integration pausing sync when app backgrounds.
-- **Success Criteria**: End-to-end client initialization and observation lifecycle verified.
+- Specs are cited by Spec-ID and section; behaviour changes bump the owning spec.
+- No secrets or default credentials in tests; live tests read the endpoint from the environment and skip when unset.
 
----
+## 3. Space client (deferred)
 
-## 3. Test Criteria & Tiered Verification Matrix
+Backend only now: no Space SDK module is built. When it is, a `space` module
+(audience `space`, host `space.aduki.pro`) will need these Space APIs, per
+the Space specs (ADK-SPACE-*): workspaces and members, teams and rosters read
+from Aduki ID (not Space), projects and tasks, time and check-ins, invoices and
+their PDFs (via Store), notifications push, and search collections. It reuses K2
+tokens and K5 DPoP, and the `rights` stream (K3). Until those APIs are final the
+module is not started.
 
-```text
-OFFLINE / MOCKED TIERS (Run first, 100% offline, zero server required)
-  ├── Tier 1: Pure Algorithmic & Unit Tests (JVM)
-  ├── Tier 2: Security & KeyStore Tests (Robolectric)
-  ├── Tier 3: ObjectBox Native Storage Tests (Robolectric Native)
-  └── Tier 4: Mocked Transport & Sync Contract Tests (MockServer)
+## 4. Status (2026-10-10)
 
-SERVER-DEPENDENT TIER (Run strictly last)
-  └── Tier 5: Live Aduki Integration Tests (Live REST & gRPC Server)
-```
+K1, K2 (wired into `Aduki`), K3, the protocol part of K5 and K7 are in code; K0, K4, K6 and the Keystore part of K5 are open. Details and merge state: `progress.md`; what remains to verify: `../AI/PROGRESS.md`.
 
----
+## 5. Changelog
 
-### Tier 1: Pure Algorithmic & Unit Tests (No Android / No Server)
-*Executed via: `./gradlew :core:test`*
-
-| Test ID | Test Case | Target Component | Success Criteria |
-| :--- | :--- | :--- | :--- |
-| `T1-HASH-01` | xxHash64 Vector Test | `FastHash.hash64` | Generates exact hash matching reference C xxHash64 implementation. |
-| `T1-HASH-02` | xxHash64 Throughput | `FastHash.hash64` | Processes > 8 GB/s on 1MB test buffers. |
-| `T1-JITT-01` | Jitter Range Bounds | `DecorrelatedJitter` | All retry delays fall strictly between `baseDelayMs` and `maxDelayMs`. |
-| `T1-JITT-02` | Jitter Anti-Clustering | `DecorrelatedJitter` | Variance across 10,000 iterations verifies no clustered delays. |
-| `T1-CIRC-01` | Circuit Trip to Open | `CircuitBreaker` | Trips to `OPEN` immediately after 5 consecutive failures. |
-| `T1-CIRC-02` | Circuit Half-Open Probe | `CircuitBreaker` | Shifts to `HALF-OPEN` after 15s; single success restores `CLOSED`. |
-| `T1-MEMO-01` | Byte Array Zeroing | `withWipedBytes` | Verifies byte array memory contains only `0x00` after execution. |
-| `T1-MEMO-02` | Char Array Zeroing | `withWipedChars` | Verifies char array memory contains only `\u0000` even after thrown exception. |
-
----
-
-### Tier 2: Security & KeyStore Tests (Robolectric, No Server)
-*Executed via: `./gradlew :crypto:test`*
-
-| Test ID | Test Case | Target Component | Success Criteria |
-| :--- | :--- | :--- | :--- |
-| `T2-KEYS-01` | KeyStore Key Generation | `KeyStoreProvider` | Successfully generates 256-bit AES master key in `AndroidKeyStore`. |
-| `T2-KEYS-02` | Key Alias Persistence | `KeyStoreProvider` | Subsequent calls retrieve existing key without regenerating. |
-| `T2-CIPH-01` | GCM Encryption/Decryption | `EnvelopeCipher` | Decrypted bytes match original plaintext exactly. |
-| `T2-CIPH-02` | Nonce / IV Randomness | `EnvelopeCipher` | Multiple encryptions of same plaintext produce unique IVs and ciphertexts. |
-| `T2-CIPH-03` | Authentication Tag Check | `EnvelopeCipher` | Modifying single ciphertext byte throws `AEADBadTagException`. |
-
----
-
-### Tier 3: ObjectBox Native Storage Tests (Robolectric Native, No Server)
-*Executed via: `./gradlew :store:test`*
-
-| Test ID | Test Case | Target Component | Success Criteria |
-| :--- | :--- | :--- | :--- |
-| `T3-BOX-01` | Message CRUD | `Box<Message>` | Insert, read by hex, update flags, and delete message. |
-| `T3-BOX-02` | 10k Batch Performance | `BoxStore.runInTx` | 10,000 messages inserted and indexed in < 200 ms. |
-| `T3-INDX-01` | B-Tree Mailbox Query | `MessageQueries` | Querying by mailbox hex returns exact expected set in < 1 ms. |
-| `T3-FLAG-01` | Bitmask Flag Query | `MessageQueries` | Filtering by `FLAG_SEEN` bitmask returns only matching messages. |
-| `T3-FLOW-01` | Reactive Flow Emission | `MessageQueries.flow` | Inserting message triggers Flow emission with updated list within 5 ms. |
-| `T3-OUTB-01` | Outbox Atomic Rollback | `OutboxManager` | Failure during transaction rolls back both message mutation and outbox action. |
-
----
-
-### Tier 4: Mocked Transport & Sync Contract Tests (No Server)
-*Executed via: `./gradlew :sync:test :net:test`*
-
-| Test ID | Test Case | Target Component | Success Criteria |
-| :--- | :--- | :--- | :--- |
-| `T4-AUTH-01` | REST Auth Header | `AuthInterceptor` | MockWebServer verifies `Authorization: Key hm_live_...` on every call. |
-| `T4-GRPC-01` | gRPC Metadata Header | `KeyCallCredentials` | In-process gRPC interceptor verifies metadata header injection. |
-| `T4-SYNC-01` | CONDSTORE Delta Application | `MailboxSynchronizer` | Mock delta (3 new, 1 modified, 2 removed) correctly reconciles in ObjectBox. |
-| `T4-SYNC-02` | UIDVALIDITY Reset | `MailboxSynchronizer` | Changing `uidvalidity` wipes local mailbox messages and re-initializes sync. |
-| `T4-OUTB-01` | Outbox Network Retry | `OutboxWorker` | Mock 500 error triggers retry with jitter; subsequent 200 completes action. |
-
----
-
-### Tier 5: Live Aduki Integration Tests (SERVER REQUIRED - PUT LAST)
-*Executed via: `./gradlew :sdk:connectedCheck -Daduki.live=true`*
-
-| Test ID | Test Case | Server Dependencies | Success Criteria |
-| :--- | :--- | :--- | :--- |
-| `T5-LIVE-01` | Live Whoami Resolution | Aduki REST API active at `:443` or `https://mail.aduki.pro/v1`. | Resolves user hex, tenant hex, and scopes against live database. |
-| `T5-LIVE-02` | Live gRPC Connection | Aduki gRPC service active at `:8443` or `grpc.aduki.pro:443`. | Completes TLS handshake and invokes `SessionService.Whoami`. |
-| `T5-LIVE-03` | Live Mailbox Listing | Test tenant populated with standard mailboxes. | Populates local ObjectBox mailboxes from live server. |
-| `T5-LIVE-04` | Live CONDSTORE Delta Sync | Server mailbox with newly delivered test message. | Receives new message UID via `MailboxSyncReq` and stores in ObjectBox. |
-| `T5-LIVE-05` | Live Outbox Send & Delivery | Active SMTP submission service (`:587`). | Enqueues outbound message offline; reconnects; verifies delivery and server status. |
-
+- v3: paths moved from `Next/` to `guide/`; status section.
+- v2 (adversarial review, second pass): K3 source corrected (JMAP EventSource, not an `id` channel); K5 algorithm (ES256 for hardware keys) and its position before any Space client; build and verification locations (section 1.1).
+- v1: created.

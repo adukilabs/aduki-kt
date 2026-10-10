@@ -1,6 +1,6 @@
 # Contacts Service Reference
 
-The `Contacts` service (`client.contacts`) provides address book synchronization, zero-copy contact lookups, and indexed substring search across names, emails, and phone numbers.
+The `Contacts` service (`client.contacts`) provides address book synchronization, contact lookups, and substring search across names, emails, and phone numbers.
 
 ---
 
@@ -46,7 +46,7 @@ suspend fun sync(tenant: String = ""): Boolean
 ```http
 GET /v1/contacts?ctag=ct_8f3a02c91b4e5d6f HTTP/1.1
 Host: mail.aduki.pro
-Authorization: Bearer eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9...
+Authorization: Bearer <access token>
 Accept: application/json
 ```
 
@@ -81,12 +81,12 @@ Returns a hot, reactive `StateFlow` emitting the full list of address book conta
 fun observe(): StateFlow<List<Contact>>?
 ```
 
-- **Return Type**: `StateFlow<List<Contact>>?` — Hot stream populated directly from ObjectBox live query. Returns `null` if contact repository is uninitialized.
+- **Return Type**: `StateFlow<List<Contact>>?` — Stream populated by an ObjectBox live query. Returns `null` if contact repository is uninitialized.
 
 ---
 
 ### `search`
-Executes an indexed, case-insensitive substring search across `name`, `email`, and `phone` properties.
+Runs a case-insensitive substring search across `name`, `email`, and `phone` properties.
 
 ```kotlin
 fun search(query: String): StateFlow<List<Contact>>?
@@ -104,7 +104,7 @@ fun search(query: String): StateFlow<List<Contact>>?
 ---
 
 ### `get`
-Performs a fast, zero-copy synchronous lookup of a contact by its unique hexadecimal identifier.
+Looks up synchronously of a contact by its unique hexadecimal identifier.
 
 ```kotlin
 fun get(hex: String): Contact?
@@ -145,9 +145,9 @@ data class Contact(
 ```
 
 - `id: Long`: Local ObjectBox 64-bit record ID (`0` for new inserts).
-- `hex: String`: Globally unique contact hexadecimal ID (`@Index` indexed for O(1) key lookups).
-- `name: String`: Contact full display name (`@Index` indexed for prefix/substring queries).
-- `email: String`: Contact primary email address (`@Index` indexed).
+- `hex: String`: Globally unique contact hexadecimal ID (indexed).
+- `name: String`: Contact full display name (indexed).
+- `email: String`: Contact primary email address (indexed).
 - `phone: String`: Contact phone number.
 - `company: String`: Organization affiliation.
 - `vcard: String`: Raw RFC 6350 vCard v4.0 representation.
