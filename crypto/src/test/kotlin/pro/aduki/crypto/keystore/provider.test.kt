@@ -28,5 +28,18 @@ class ProviderTest {
         val key2 = provider.get("alias_persistent")
         assertEquals(key1, key2)
     }
-}
 
+    @Test
+    fun testMasterAliasIsAduki() {
+        assertEquals("aduki_master", Provider.MASTER)
+    }
+
+    @Test
+    fun testMasterKeyPersists() {
+        val p = Provider()
+        p.remove(Provider.MASTER)
+        val key = p.get(Provider.MASTER)
+        assertEquals(key, p.get())
+        p.remove(Provider.MASTER)
+    }
+}

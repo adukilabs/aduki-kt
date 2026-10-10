@@ -61,7 +61,7 @@ suspend fun Aduki.Companion.login(
   - `handle`: Full address, e.g. `ada@aduki.me`.
   - `password`: Account password.
   - `code` / `backup`: Authenticator code or backup code.
-  - `endpoint`: Mail REST base (defaults to `https://hermers.aduki.pro/v1`).
+  - `endpoint`: Mail REST base (defaults to `https://mail.aduki.pro/v1`).
   - `identity`: Aduki ID base (defaults to `https://id.aduki.pro/v1`).
 - **Return Type**: `Aduki` — holding the access token, refresh token and session, with `Identity` resolved.
 - **Throws**: `AdukiException.Unauthorized` on a wrong password or second factor; `AdukiException.Network` otherwise.

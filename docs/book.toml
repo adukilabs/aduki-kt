@@ -6,9 +6,9 @@ language = "en"
 src = "."
 
 [output.html]
-git-repository-url = "https://github.com/adukilabs/hermers-kt"
-edit-url-template = "https://github.com/adukilabs/hermers-kt/edit/main/docs/{path}"
-site-url = "/hermers-kt/"
+git-repository-url = "https://github.com/adukilabs/aduki-kt"
+edit-url-template = "https://github.com/adukilabs/aduki-kt/edit/main/docs/{path}"
+site-url = "/aduki-kt/"
 default-theme = "rust"
 preferred-dark-theme = "coal"
 mathjax-support = false

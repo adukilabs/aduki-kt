@@ -45,7 +45,7 @@ suspend fun sync(tenant: String = ""): Boolean
 
 ```http
 GET /v1/contacts?ctag=ct_8f3a02c91b4e5d6f HTTP/1.1
-Host: hermers.aduki.pro
+Host: mail.aduki.pro
 Authorization: Bearer eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9...
 Accept: application/json
 ```

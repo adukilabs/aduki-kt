@@ -29,7 +29,7 @@ data class Options(
 package pro.aduki.core.config
 
 object Endpoints {
-    const val REST = "https://hermers.aduki.pro/v1"
+    const val REST = "https://mail.aduki.pro/v1"
     const val GRPC_HOST = "grpc.aduki.pro"
     const val GRPC_PORT = 443
 }
@@ -89,7 +89,7 @@ val client = Aduki.login(
 ```kotlin
 val client = Aduki.builder()
     .key("hm_live_7f9b8c2d1e0a4b5c6d7e8f9a0b1c2d3e")
-    .endpoint("https://hermers.aduki.pro/v1")
+    .endpoint("https://mail.aduki.pro/v1")
     .grpc("grpc.aduki.pro", 443)
     .timeout(30)
     .secure(true)

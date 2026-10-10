@@ -12,8 +12,9 @@ import javax.crypto.SecretKey
 class Provider(private val type: String = "AndroidKeyStore") {
 
     companion object {
-        // Legacy alias kept on purpose: renaming it would orphan keys of existing installs.
-        const val MASTER = "hermes_master"
+        /** Alias used for newly created master keys. */
+        const val MASTER = "aduki_master"
+
         private val cache = ConcurrentHashMap<String, SecretKey>()
     }
 

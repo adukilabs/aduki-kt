@@ -80,7 +80,7 @@ fun listen(listener: (Boolean) -> Unit)
 The recommended integration utilizes AndroidX `ProcessLifecycleOwner`:
 
 ```kotlin
-package com.example.hermesapp
+package com.example.adukiapp
 
 import android.app.Application
 import androidx.lifecycle.DefaultLifecycleObserver
@@ -97,7 +97,7 @@ class App : Application(), DefaultLifecycleObserver {
         super.onCreate()
 
         client = Aduki.builder()
-            .key(BuildConfig.HERMES_API_KEY)
+            .key(BuildConfig.ADUKI_API_KEY)
             .build()
 
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)

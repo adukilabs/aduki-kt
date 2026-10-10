@@ -44,7 +44,7 @@ suspend fun Aduki.totp(code: String): Boolean
 
 ```http
 PATCH /v1/user/totp HTTP/1.1
-Host: hermers.aduki.pro
+Host: mail.aduki.pro
 Authorization: Bearer eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9...
 Content-Type: application/json; charset=utf-8
 Accept: application/json
