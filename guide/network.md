@@ -1,6 +1,6 @@
 # Dual-Stack Network Transport Specification
 
-This document details the network transport architecture of the Hermes Android Kotlin SDK. The SDK provides a dual-stack engine combining **gRPC (via `grpc-okhttp`)** for binary streaming and synchronization with **REST (via `OkHttp 4`)** for HTTP/2 multiplexed endpoints and multipart blob uploads.
+This document details the network transport architecture of the Aduki Android Kotlin SDK. The SDK provides a dual-stack engine combining **gRPC (via `grpc-okhttp`)** for binary streaming and synchronization with **REST (via `OkHttp 4`)** for HTTP/2 multiplexed endpoints and multipart blob uploads.
 
 ---
 
@@ -8,7 +8,7 @@ This document details the network transport architecture of the Hermes Android K
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│                     Hermes Network Layer                    │
+│                     Aduki Network Layer                    │
 └──────────────┬──────────────────────────────┬───────────────┘
                │                              │
        (High-Throughput / Sync)        (REST / Blob Uploads)
@@ -27,7 +27,7 @@ This document details the network transport architecture of the Hermes Android K
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                     Hermes Server Fleet                     │
+│                     Aduki Server Fleet                     │
 │        REST: https://hermers.aduki.pro/v1 (Port 443)        │
 │        gRPC: grpc.aduki.pro (Port 443 TLS)                  │
 └─────────────────────────────────────────────────────────────┘
@@ -42,7 +42,7 @@ All SDK requests authenticate using an API key in the format `hm_live_...`. Call
 ### 2.1. REST Auth Interceptor
 
 ```kotlin
-package pro.aduki.hermes.net.http
+package pro.aduki.net.http
 
 import okhttp3.Interceptor
 import okhttp3.Response
@@ -52,7 +52,7 @@ class AuthInterceptor(private val apiKey: String) : Interceptor {
         val request = chain.request().newBuilder()
             .header("Authorization", "Key $apiKey")
             .header("Accept", "application/json")
-            .header("User-Agent", "Hermes-Android-SDK/1.0.0")
+            .header("User-Agent", "Aduki-Android-SDK/1.0.0")
             .build()
         return chain.proceed(request)
     }
@@ -62,7 +62,7 @@ class AuthInterceptor(private val apiKey: String) : Interceptor {
 ### 2.2. gRPC CallCredentials Interceptor
 
 ```kotlin
-package pro.aduki.hermes.net.grpc
+package pro.aduki.net.grpc
 
 import io.grpc.CallCredentials
 import io.grpc.Metadata
@@ -99,7 +99,7 @@ The REST client is tuned for mobile performance:
 3. **Transparent Compression**: Supports Brotli and Gzip decompression.
 
 ```kotlin
-package pro.aduki.hermes.net.http
+package pro.aduki.net.http
 
 import okhttp3.CertificatePinner
 import okhttp3.ConnectionPool
@@ -129,7 +129,7 @@ object HttpClientFactory {
 gRPC on Android utilizes `grpc-okhttp` instead of `grpc-netty` to avoid heavy native Netty dependencies and ensure optimal battery life on Android runtime (ART):
 
 ```kotlin
-package pro.aduki.hermes.net.grpc
+package pro.aduki.net.grpc
 
 import io.grpc.ManagedChannel
 import io.grpc.okhttp.OkHttpChannelBuilder

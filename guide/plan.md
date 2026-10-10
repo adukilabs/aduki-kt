@@ -1,8 +1,8 @@
 # Phased Implementation Plan & Test Criteria
 
-This document defines the implementation roadmap, phased milestones, and multi-tiered test criteria for the Hermes Android Kotlin SDK.
+This document defines the implementation roadmap, phased milestones, and multi-tiered test criteria for the Aduki Android Kotlin SDK.
 
-To enable fast feedback loops and CI/CD reliability, **all tests are strictly ordered by dependency level**: self-contained algorithmic, cryptographic, database, and mocked transport tests execute first, while **tests requiring a live Hermes server are placed strictly last**.
+To enable fast feedback loops and CI/CD reliability, **all tests are strictly ordered by dependency level**: self-contained algorithmic, cryptographic, database, and mocked transport tests execute first, while **tests requiring a live Aduki server are placed strictly last**.
 
 ---
 
@@ -34,7 +34,7 @@ To enable fast feedback loops and CI/CD reliability, **all tests are strictly or
 └──────────────────────────────┬──────────────────────────────┘
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ Phase 7: Public Facade SDK (HermesClient Builder & API)     │
+│ Phase 7: Public Facade SDK (Aduki Builder & API)     │
 └──────────────────────────────┬──────────────────────────────┘
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
@@ -57,7 +57,7 @@ To enable fast feedback loops and CI/CD reliability, **all tests are strictly or
 - **Deliverables**:
   - `FastHash`: xxHash64 implementation processing over 10 GB/s for cache keys.
   - `DecorrelatedJitter`: AWS-style decorrelated jitter algorithm for backoff.
-  - `HermesDispatchers`: Dedicated dispatchers (`Store` for single-thread write transactions, `Net` for network I/O, `Crypto` for hardware crypto).
+  - `AdukiDispatchers`: Dedicated dispatchers (`Store` for single-thread write transactions, `Net` for network I/O, `Crypto` for hardware crypto).
   - Memory zeroing utilities: `withWipedBytes` and `withWipedChars` using `Arrays.fill(0)`.
   - `CircuitBreaker`: Three-state atomic state machine (Closed, Open, Half-Open).
 - **Success Criteria**: 100% test pass on JVM unit tests with zero Android dependencies.
@@ -93,13 +93,13 @@ To enable fast feedback loops and CI/CD reliability, **all tests are strictly or
   - `MailboxSynchronizer`: RFC 7162 CONDSTORE / MODSEQ incremental sync.
   - Conflict resolution: Local dirty preservation and server flag merge.
   - `MailRepository` and `ContactRepository` exposing hot `StateFlow` instances.
-  - **Network transport (0.2.0):** `net.http.Mail` (typed REST client), `HttpMailboxTransport` over `GET /v1/user/mail/changes` (paging with `more`, `reset` on a stale UIDVALIDITY, moved-in messages adopted), and `HttpDispatcher` for the outbox (a stable `Idempotency-Key` per send, placeholder ids replaced by server ids, permanent 4xx dropped via `Rejected`). Contract-tested against the server's own fixtures (`guide/fixtures/sdk` in the Hermes repo).
+  - **Network transport (0.2.0):** `net.http.Mail` (typed REST client), `HttpMailboxTransport` over `GET /v1/user/mail/changes` (paging with `more`, `reset` on a stale UIDVALIDITY, moved-in messages adopted), and `HttpDispatcher` for the outbox (a stable `Idempotency-Key` per send, placeholder ids replaced by server ids, permanent 4xx dropped via `Rejected`). Contract-tested against the server's own fixtures (`guide/fixtures/sdk` in the Aduki repo).
 - **Success Criteria**: Simulated network drops cause no data loss; outbox automatically flushes on simulated reconnection.
 
-### Phase 7: Public Facade SDK (`HermesClient`)
+### Phase 7: Public Facade SDK (`Aduki`)
 - **Deliverables**:
-  - `HermesClient.builder(context)` API.
-  - Domain sub-services: `hermes.mail`, `hermes.contacts`, `hermes.sync`, `hermes.state`, `hermes.me()`.
+  - `Aduki.builder(context)` API.
+  - Domain sub-services: `aduki.mail`, `aduki.contacts`, `aduki.sync`, `aduki.state`, `aduki.me()`.
   - Lifecycle integration pausing sync when app backgrounds.
 - **Success Criteria**: End-to-end client initialization and observation lifecycle verified.
 
@@ -115,7 +115,7 @@ OFFLINE / MOCKED TIERS (Run first, 100% offline, zero server required)
   └── Tier 4: Mocked Transport & Sync Contract Tests (MockServer)
 
 SERVER-DEPENDENT TIER (Run strictly last)
-  └── Tier 5: Live Hermes Integration Tests (Live REST & gRPC Server)
+  └── Tier 5: Live Aduki Integration Tests (Live REST & gRPC Server)
 ```
 
 ---
@@ -176,13 +176,13 @@ SERVER-DEPENDENT TIER (Run strictly last)
 
 ---
 
-### Tier 5: Live Hermes Integration Tests (SERVER REQUIRED - PUT LAST)
-*Executed via: `./gradlew :sdk:connectedCheck -Dhermes.live=true`*
+### Tier 5: Live Aduki Integration Tests (SERVER REQUIRED - PUT LAST)
+*Executed via: `./gradlew :sdk:connectedCheck -Daduki.live=true`*
 
 | Test ID | Test Case | Server Dependencies | Success Criteria |
 | :--- | :--- | :--- | :--- |
-| `T5-LIVE-01` | Live Whoami Resolution | Hermes REST API active at `:443` or `https://hermers.aduki.pro/v1`. | Resolves user hex, tenant hex, and scopes against live database. |
-| `T5-LIVE-02` | Live gRPC Connection | Hermes gRPC service active at `:8443` or `grpc.aduki.pro:443`. | Completes TLS handshake and invokes `SessionService.Whoami`. |
+| `T5-LIVE-01` | Live Whoami Resolution | Aduki REST API active at `:443` or `https://hermers.aduki.pro/v1`. | Resolves user hex, tenant hex, and scopes against live database. |
+| `T5-LIVE-02` | Live gRPC Connection | Aduki gRPC service active at `:8443` or `grpc.aduki.pro:443`. | Completes TLS handshake and invokes `SessionService.Whoami`. |
 | `T5-LIVE-03` | Live Mailbox Listing | Test tenant populated with standard mailboxes. | Populates local ObjectBox mailboxes from live server. |
 | `T5-LIVE-04` | Live CONDSTORE Delta Sync | Server mailbox with newly delivered test message. | Receives new message UID via `MailboxSyncReq` and stores in ObjectBox. |
 | `T5-LIVE-05` | Live Outbox Send & Delivery | Active SMTP submission service (`:587`). | Enqueues outbound message offline; reconnects; verifies delivery and server status. |

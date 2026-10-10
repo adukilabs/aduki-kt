@@ -1,6 +1,6 @@
 # Installation
 
-This guide walks you through integrating the Hermes Android Kotlin SDK into your Android application using Gradle Kotlin DSL (`.gradle.kts`).
+This guide walks you through integrating the Aduki Android Kotlin SDK into your Android application using Gradle Kotlin DSL (`.gradle.kts`).
 
 ---
 
@@ -16,7 +16,7 @@ This guide walks you through integrating the Hermes Android Kotlin SDK into your
 
 ## 2. Configure Repositories
 
-Because Hermes is published to **Maven Central**, no custom repository configuration is needed if your project already includes `mavenCentral()`:
+Because Aduki is published to **Maven Central**, no custom repository configuration is needed if your project already includes `mavenCentral()`:
 
 ```kotlin
 // settings.gradle.kts
@@ -67,12 +67,12 @@ plugins {
 
 ## 4. Add Dependencies
 
-Add the Hermes SDK to `app/build.gradle.kts`:
+Add the Aduki SDK to `app/build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    // Hermes Android SDK Facade (Maven Central)
-    implementation("io.github.adukilabs:sdk:0.2.0")
+    // Aduki Android SDK Facade (Maven Central)
+    implementation("pro.aduki:sdk:0.2.0")
 
     // Or via JitPack mirror:
     // implementation("com.github.adukilabs.hermers-kt:sdk:v0.2.0")
@@ -97,13 +97,13 @@ If your application only needs specific subsystems, you can import individual mo
 
 | Module | Maven Coordinate | Purpose |
 | :--- | :--- | :--- |
-| **SDK Facade** | `io.github.adukilabs:sdk:0.2.0` | Unified Hermes client entrypoint |
-| **State** | `io.github.adukilabs:state:0.2.0` | Live query observers & StateFlow feeds |
-| **Sync** | `io.github.adukilabs:sync:0.2.0` | RFC 7162 CONDSTORE synchronizer & Outbox |
-| **Store** | `io.github.adukilabs:store:0.2.0` | ObjectBox FlatBuffers models |
-| **Net** | `io.github.adukilabs:net:0.2.0` | HTTP/2 REST client & Auth tokens |
-| **Crypto** | `io.github.adukilabs:crypto:0.2.0` | Android KeyStore & AES-256-GCM cipher |
-| **Core** | `io.github.adukilabs:core:0.2.0` | RingBuffer, Jitter, Memory safety |
+| **SDK Facade** | `pro.aduki:sdk:0.2.0` | Unified Aduki client entrypoint |
+| **State** | `pro.aduki:state:0.2.0` | Live query observers & StateFlow feeds |
+| **Sync** | `pro.aduki:sync:0.2.0` | RFC 7162 CONDSTORE synchronizer & Outbox |
+| **Store** | `pro.aduki:store:0.2.0` | ObjectBox FlatBuffers models |
+| **Net** | `pro.aduki:net:0.2.0` | HTTP/2 REST client & Auth tokens |
+| **Crypto** | `pro.aduki:crypto:0.2.0` | Android KeyStore & AES-256-GCM cipher |
+| **Core** | `pro.aduki:core:0.2.0` | RingBuffer, Jitter, Memory safety |
 
 ---
 

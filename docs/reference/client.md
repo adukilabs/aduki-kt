@@ -1,15 +1,15 @@
-# HermesClient API Reference
+# Aduki API Reference
 
-`HermesClient` is the central facade entry point for all mobile operations in the Hermes Android Kotlin SDK.
+`Aduki` is the central facade entry point for all mobile operations in the Aduki Android Kotlin SDK.
 
 ---
 
 ## 1. Class Signature & Properties
 
 ```kotlin
-package pro.aduki.hermes.sdk
+package pro.aduki.sdk
 
-class HermesClient internal constructor(
+class Aduki internal constructor(
     val apiKey: String = "",
     val token: String = "",
     val options: Options,
@@ -43,18 +43,18 @@ class HermesClient internal constructor(
 
 ## 2. Factory & Builder Methods
 
-### `HermesClient.Companion.login`
+### `Aduki.Companion.login`
 Signs in at Aduki ID for a mail token. See [Sign-in](../auth/login.md).
 
 ```kotlin
-suspend fun HermesClient.Companion.login(
+suspend fun Aduki.Companion.login(
     handle: String,
     password: String,
     code: String? = null,
     endpoint: String = Endpoints.REST,
     identity: String = Endpoints.ID,
     backup: String? = null
-): HermesClient
+): Aduki
 ```
 
 - **Parameters**:
@@ -63,16 +63,16 @@ suspend fun HermesClient.Companion.login(
   - `code` / `backup`: Authenticator code or backup code.
   - `endpoint`: Mail REST base (defaults to `https://hermers.aduki.pro/v1`).
   - `identity`: Aduki ID base (defaults to `https://id.aduki.pro/v1`).
-- **Return Type**: `HermesClient` — holding the access token, refresh token and session, with `Identity` resolved.
-- **Throws**: `HermesException.Unauthorized` on a wrong password or second factor; `HermesException.Network` otherwise.
+- **Return Type**: `Aduki` — holding the access token, refresh token and session, with `Identity` resolved.
+- **Throws**: `AdukiException.Unauthorized` on a wrong password or second factor; `AdukiException.Network` otherwise.
 
 ---
 
-### `HermesClient.Companion.builder`
+### `Aduki.Companion.builder`
 Creates a fluent `Builder` instance for custom client configuration.
 
 ```kotlin
-fun HermesClient.Companion.builder(): HermesClient.Builder
+fun Aduki.Companion.builder(): Aduki.Builder
 ```
 
 #### `Builder` Methods
@@ -92,7 +92,7 @@ class Builder {
     fun mail(repo: MailRepo): Builder
     fun contacts(repo: ContactRepo): Builder
     fun engines(mailbox: MailboxEngine, contact: ContactEngine): Builder
-    fun build(): HermesClient
+    fun build(): Aduki
 }
 ```
 
@@ -120,7 +120,7 @@ suspend fun totp(code: String): Boolean
 
 - **Parameters**: `code: String` — Exactly 6 numeric digits.
 - **Return Type**: `Boolean` — `true` if server confirms verification.
-- **Throws**: `IllegalArgumentException` if code is not 6 digits; `HermesException.Unauthorized` if session expired.
+- **Throws**: `IllegalArgumentException` if code is not 6 digits; `AdukiException.Unauthorized` if session expired.
 
 ### `refresh`
 Renews the access token at Aduki ID (`POST /v1/tokens`) ahead of time. The SDK also does this by itself on a `401`.

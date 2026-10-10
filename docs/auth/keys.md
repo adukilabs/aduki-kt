@@ -6,7 +6,7 @@ API keys provide immutable machine-to-machine authentication for background work
 
 ## 1. Key Format & Specification
 
-Hermes API keys are 64-character or 40-character cryptographic tokens formatted with an environment prefix:
+Aduki API keys are 64-character or 40-character cryptographic tokens formatted with an environment prefix:
 
 | Prefix | Environment | Intended Use |
 | :--- | :--- | :--- |
@@ -24,12 +24,12 @@ hm_test_0123456789abcdef0123456789abcdef0123456789abcdef
 
 ## 2. Builder Initialization
 
-API keys are configured via `HermesClient.Builder.key(String)`:
+API keys are configured via `Aduki.Builder.key(String)`:
 
 ```kotlin
-package pro.aduki.hermes.sdk
+package pro.aduki.sdk
 
-val client = HermesClient.builder()
+val client = Aduki.builder()
     .key("hm_live_7f9b8c2d1e0a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a")
     .endpoint("https://hermers.aduki.pro/v1")
     .timeout(30)
@@ -40,7 +40,7 @@ val client = HermesClient.builder()
 ### Builder Method Signatures
 
 ```kotlin
-fun HermesClient.Builder.key(key: String): HermesClient.Builder
+fun Aduki.Builder.key(key: String): Aduki.Builder
 ```
 
 - **`key: String`**: API key string. Must not be blank if no JWT token is provided.

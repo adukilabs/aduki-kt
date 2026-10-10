@@ -1,6 +1,6 @@
 # Unidirectional Data Flow (UDF)
 
-The Hermes Android SDK enforces strict Unidirectional Data Flow (UDF) to prevent UI race conditions and stale state bugs:
+The Aduki Android SDK enforces strict Unidirectional Data Flow (UDF) to prevent UI race conditions and stale state bugs:
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐

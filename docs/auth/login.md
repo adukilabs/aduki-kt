@@ -4,17 +4,17 @@ People sign in at **Aduki ID**, not at mail. The SDK posts the address,
 password and second factor to Aduki ID, asks for an access token with audience
 `mail`, and sends that token to the mail API as `Authorization: Bearer <token>`.
 
-## `HermesClient.login`
+## `Aduki.login`
 
 ```kotlin
-suspend fun HermesClient.Companion.login(
+suspend fun Aduki.Companion.login(
     handle: String,
     password: String,
     code: String? = null,
     endpoint: String = Endpoints.REST,
     identity: String = Endpoints.ID,
     backup: String? = null
-): HermesClient
+): Aduki
 ```
 
 | Parameter | Type | Default | Description |
@@ -31,10 +31,10 @@ with the account (`me()`) already resolved.
 
 **Throws**
 
-- `HermesException.Unauthorized`: wrong password, inactive account, or a
+- `AdukiException.Unauthorized`: wrong password, inactive account, or a
   missing or wrong second factor. The message starts with Aduki ID's error
   kind, e.g. `auth.factor: ...` when no second factor was given.
-- `HermesException.Network`: anything else, e.g. `429` while rate-limited
+- `AdukiException.Network`: anything else, e.g. `429` while rate-limited
   (`code` holds the status).
 
 ## Wire format
@@ -75,18 +75,18 @@ sequenceDiagram
     participant ID as Aduki ID
     participant Mail
 
-    App->>SDK: HermesClient.login(handle, password, code)
+    App->>SDK: Aduki.login(handle, password, code)
     SDK->>ID: POST /v1/sessions {…, audience: mail}
     ID-->>SDK: {session, access, refresh, expires}
     SDK->>Mail: GET /v1/user (Bearer access)
     Mail-->>SDK: account
-    SDK-->>App: HermesClient
+    SDK-->>App: Aduki
 ```
 
 ## Example
 
 ```kotlin
-val client = HermesClient.login(
+val client = Aduki.login(
     handle = "ada@aduki.me",
     password = password,
     code = "123456"

@@ -1,13 +1,13 @@
 # TLS & Certificate Pinning Reference
 
-To eliminate man-in-the-middle (MITM) risks and defend against compromised certificate authority (CA) root stores, the Hermes Android SDK enforces certificate public key pinning and restricted forward-secret TLS 1.3 cipher suites.
+To eliminate man-in-the-middle (MITM) risks and defend against compromised certificate authority (CA) root stores, the Aduki Android SDK enforces certificate public key pinning and restricted forward-secret TLS 1.3 cipher suites.
 
 ---
 
 ## 1. Class & Method Signatures
 
 ```kotlin
-package pro.aduki.hermes.crypto.tls
+package pro.aduki.crypto.tls
 
 import okhttp3.CertificatePinner
 import okhttp3.ConnectionSpec

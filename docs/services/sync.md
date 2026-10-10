@@ -7,7 +7,7 @@ The `Sync` service (`client.sync`) orchestrates incremental delta synchronizatio
 ## 1. Class & Method Signatures
 
 ```kotlin
-package pro.aduki.hermes.sdk
+package pro.aduki.sdk
 
 class Sync internal constructor(...) {
     suspend fun all(mailboxes: List<String> = listOf("inbox")): Boolean
@@ -66,7 +66,7 @@ fun pending(): Int
 
 ## 3. Wire Protocol: `GET /v1/user/mail/changes`
 
-`HttpMailboxTransport` (`pro.aduki.hermes.sync.http`) implements `MailboxTransport` over the REST face of CONDSTORE/QRESYNC:
+`HttpMailboxTransport` (`pro.aduki.sync.http`) implements `MailboxTransport` over the REST face of CONDSTORE/QRESYNC:
 
 ```kotlin
 val engine = Mailbox(boxStore, HttpMailboxTransport(client.mailApi))
@@ -143,7 +143,7 @@ flowchart TD
 ## 5. Data Model: `Sync` Cursor Entity
 
 ```kotlin
-package pro.aduki.hermes.store.entities
+package pro.aduki.store.entities
 
 import io.objectbox.annotation.Entity
 import io.objectbox.annotation.Id

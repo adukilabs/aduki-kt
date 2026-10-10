@@ -1,6 +1,6 @@
 # Account Center & Device Unlock
 
-`pro.aduki.hermes.net.http.Center` talks to Aduki ID's Account Center
+`pro.aduki.net.http.Center` talks to Aduki ID's Account Center
 (ADK-AUTH-002 §5) and device-bound unlock (ADK-AUTH-001 §9).
 
 | Call | Endpoint | Returns |

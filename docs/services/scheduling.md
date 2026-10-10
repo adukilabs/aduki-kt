@@ -7,7 +7,7 @@ The `Scheduling` service (`client.scheduling`) provides high-level operations fo
 ## 1. Class & Method Signatures
 
 ```kotlin
-package pro.aduki.hermes.sdk
+package pro.aduki.sdk
 
 class Scheduling internal constructor(...) {
     val appointments: StateFlow<List<Appointment>>?

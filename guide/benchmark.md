@@ -1,12 +1,12 @@
 # Performance Benchmarks: ObjectBox vs Room / SQLite
 
-This document details the quantitative benchmark results, test methodology, and harness configurations used to validate the performance claims of the Hermes Android Kotlin SDK.
+This document details the quantitative benchmark results, test methodology, and harness configurations used to validate the performance claims of the Aduki Android Kotlin SDK.
 
 ---
 
 ## 1. Executive Summary
 
-Benchmarks were conducted comparing **Hermes (ObjectBox 4.x)** against an identical schema implemented in **Google Android Room 2.6.x (SQLite WAL mode)**.
+Benchmarks were conducted comparing **Aduki (ObjectBox 4.x)** against an identical schema implemented in **Google Android Room 2.6.x (SQLite WAL mode)**.
 
 ```text
 Batch Insert (10,000 Messages):
@@ -33,7 +33,7 @@ Room/SQL   ██████ 82 ms
 - **Harness**: `androidx.benchmark:benchmark-junit4:1.2.4`
 - **Compiler**: R8 enabled, minified release build
 
-| Benchmark Scenario | Hermes (ObjectBox) | Android Room (SQLite) | Delta |
+| Benchmark Scenario | Aduki (ObjectBox) | Android Room (SQLite) | Delta |
 | :--- | :--- | :--- | :--- |
 | **Insert 1,000 Messages (Tx)** | **16.2 ms** | 198.4 ms | **12.2x faster** |
 | **Insert 10,000 Messages (Tx)** | **142.1 ms** | 1,890.5 ms | **13.3x faster** |
@@ -53,7 +53,7 @@ Room/SQL   ██████ 82 ms
 The following test harness is integrated into the benchmark test suite using AndroidX Benchmark:
 
 ```kotlin
-package pro.aduki.hermes.benchmark
+package pro.aduki.benchmark
 
 import androidx.benchmark.junit4.BenchmarkRule
 import androidx.benchmark.junit4.measureRepeated
@@ -63,8 +63,8 @@ import io.objectbox.BoxStore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import pro.aduki.hermes.store.entities.Message
-import pro.aduki.hermes.store.entities.Message_
+import pro.aduki.store.entities.Message
+import pro.aduki.store.entities.Message_
 
 @RunWith(AndroidJUnit4::class)
 class MessageQueryBenchmark {

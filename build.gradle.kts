@@ -6,7 +6,7 @@ plugins {
 }
 
 val release = "0.3.0"
-val domain = "io.github.adukilabs"
+val domain = "pro.aduki"
 
 subprojects {
     apply(plugin = "maven-publish")
@@ -28,7 +28,7 @@ subprojects {
 
                     pom {
                         name.set(project.name)
-                        description.set("Hermes Android Kotlin SDK - ${project.name} module")
+                        description.set("Aduki Android Kotlin SDK - ${project.name} module")
                         url.set("https://github.com/adukilabs/hermers-kt")
                         licenses {
                             license {

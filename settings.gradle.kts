@@ -38,7 +38,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "hermes-android"
+rootProject.name = "aduki-kt"
 
 include(":core")
 include(":crypto")

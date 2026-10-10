@@ -7,7 +7,7 @@ The `Contacts` service (`client.contacts`) provides address book synchronization
 ## 1. Class & Method Signatures
 
 ```kotlin
-package pro.aduki.hermes.sdk
+package pro.aduki.sdk
 
 class Contacts internal constructor(...) {
     suspend fun sync(tenant: String = ""): Boolean
@@ -124,7 +124,7 @@ fun get(hex: String): Contact?
 ## 3. Data Model: `Contact` Entity
 
 ```kotlin
-package pro.aduki.hermes.store.entities
+package pro.aduki.store.entities
 
 import io.objectbox.annotation.Entity
 import io.objectbox.annotation.Id

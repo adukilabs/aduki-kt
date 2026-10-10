@@ -1,13 +1,13 @@
 # ACID Batch Transactions Reference
 
-The Hermes Android SDK executes all multi-record mutations in single ACID transactions via the `Batch` executor, eliminating SQLite lock contention and reducing disk `fsync` barriers to one operation per batch.
+The Aduki Android SDK executes all multi-record mutations in single ACID transactions via the `Batch` executor, eliminating SQLite lock contention and reducing disk `fsync` barriers to one operation per batch.
 
 ---
 
 ## 1. Class & Method Signatures
 
 ```kotlin
-package pro.aduki.hermes.store.queries
+package pro.aduki.store.queries
 
 import io.objectbox.BoxStore
 

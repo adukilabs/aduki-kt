@@ -28,7 +28,7 @@ together share one renewal. API keys are never renewed.
 ## `refresh`
 
 ```kotlin
-suspend fun HermesClient.refresh(): Boolean
+suspend fun Aduki.refresh(): Boolean
 ```
 
 Renews ahead of time. Returns `false` when there is no refresh token or Aduki ID
@@ -37,7 +37,7 @@ refused it (sign in again).
 ## `logout`
 
 ```kotlin
-suspend fun HermesClient.logout(): Boolean
+suspend fun Aduki.logout(): Boolean
 ```
 
 Revokes the session at Aduki ID, which ends every token issued from it, and

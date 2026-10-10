@@ -1,6 +1,6 @@
 # Dual Network Transports Reference
 
-The Hermes Android SDK implements a dual-stack transport layer: an **OkHttp 4.12.0 HTTP/2 REST client** for lightweight CRUD and metadata operations, and an **OkHttp-backed gRPC Protobuf pipeline** for high-volume delta streaming.
+The Aduki Android SDK implements a dual-stack transport layer: an **OkHttp 4.12.0 HTTP/2 REST client** for lightweight CRUD and metadata operations, and an **OkHttp-backed gRPC Protobuf pipeline** for high-volume delta streaming.
 
 ---
 
@@ -9,7 +9,7 @@ The Hermes Android SDK implements a dual-stack transport layer: an **OkHttp 4.12
 ### Configuration & Factory Signature
 
 ```kotlin
-package pro.aduki.hermes.net.http
+package pro.aduki.net.http
 
 object Client {
     fun create(
@@ -54,12 +54,12 @@ class Auth(
 
 ## 2. gRPC Protobuf OkHttp Channel Pipeline
 
-For streaming mailbox deltas and heavy binary payload synchronization, Hermes utilizes `grpc-okhttp`:
+For streaming mailbox deltas and heavy binary payload synchronization, Aduki utilizes `grpc-okhttp`:
 
 ### Channel Factory Signature
 
 ```kotlin
-package pro.aduki.hermes.net.grpc
+package pro.aduki.net.grpc
 
 object Channel {
     fun build(
@@ -75,7 +75,7 @@ object Channel {
 Every RPC call receives authorization metadata without incurring socket renegotiation:
 
 ```kotlin
-package pro.aduki.hermes.net.grpc
+package pro.aduki.net.grpc
 
 object MetadataFactory {
     fun create(token: String): io.grpc.Metadata {
@@ -95,8 +95,8 @@ object MetadataFactory {
 | Header | Value / Format | Purpose |
 | :--- | :--- | :--- |
 | `Authorization` | `Bearer <jwt>` or `Key <apiKey>` | Cryptographic identity and permission verification. |
-| `X-Hermes-Idempotency-Key` | UUIDv4 (e.g., `7b9f8a02-1c3d-...`) | Prevents duplicate actions (sends, moves) upon network retries. |
+| `X-Aduki-Idempotency-Key` | UUIDv4 (e.g., `7b9f8a02-1c3d-...`) | Prevents duplicate actions (sends, moves) upon network retries. |
 | `Accept` | `application/json` | REST content negotiation. |
 | `Content-Type` | `application/json; charset=utf-8` | JSON request body payload typing. |
-| `User-Agent` | `Hermes-Android/1.0.0 (Linux; Android 14; Pixel 8)` | Client telemetry and version validation. |
+| `User-Agent` | `Aduki-Android/1.0.0 (Linux; Android 14; Pixel 8)` | Client telemetry and version validation. |
 

@@ -1,6 +1,6 @@
-# Hermes Android Kotlin SDK Scheduling Engine
+# Aduki Android Kotlin SDK Scheduling Engine
 
-This guide details the scheduling and appointment subsystem integrated into the Hermes Android Kotlin SDK.
+This guide details the scheduling and appointment subsystem integrated into the Aduki Android Kotlin SDK.
 
 ---
 
@@ -12,7 +12,7 @@ The scheduling capability is distributed across the SDK modules following clean 
 - **`:net`**: Pure OkHttp JSON client executing `/user/appointments`, `/user/services`, `/user/availability`, and public `/book/{slug}` requests.
 - **`:sync`**: Delta synchronizer updating local appointments cache with local ID retention, and enqueuing offline booking mutations in the outbox.
 - **`:state`**: Reactive `AppointmentRepository` exposing hot `StateFlow<List<Appointment>>` feeds via live ObjectBox query observers.
-- **`:sdk`**: High-level `Scheduling` service facade attached to `HermesClient`.
+- **`:sdk`**: High-level `Scheduling` service facade attached to `Aduki`.
 
 ---
 

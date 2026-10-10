@@ -1,24 +1,24 @@
 # Jetpack Compose UI Binding Reference
 
-Because the Hermes Android SDK exposes standard Kotlin `StateFlow` primitives backed by ObjectBox live queries, integrating with Jetpack Compose requires zero adapter boilerplate and guarantees 60/120 FPS frame rates.
+Because the Aduki Android SDK exposes standard Kotlin `StateFlow` primitives backed by ObjectBox live queries, integrating with Jetpack Compose requires zero adapter boilerplate and guarantees 60/120 FPS frame rates.
 
 ---
 
 ## 1. ViewModel Implementation
 
 ```kotlin
-package com.example.hermesapp.ui
+package com.example.adukiapp.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import pro.aduki.hermes.sdk.HermesClient
-import pro.aduki.hermes.store.entities.Message
+import pro.aduki.sdk.Aduki
+import pro.aduki.store.entities.Message
 
 class MailboxViewModel(
-    private val client: HermesClient,
+    private val client: Aduki,
     private val mailboxHex: String = "inbox"
 ) : ViewModel() {
 
@@ -54,7 +54,7 @@ class MailboxViewModel(
 ## 2. High-Performance Composable List
 
 ```kotlin
-package com.example.hermesapp.ui
+package com.example.adukiapp.ui
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn

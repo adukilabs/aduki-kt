@@ -1,6 +1,6 @@
 # ObjectBox Storage Architecture
 
-The Hermes Android SDK completely replaces SQLite and Room with **ObjectBox** (version 4.0.3).
+The Aduki Android SDK completely replaces SQLite and Room with **ObjectBox** (version 4.0.3).
 
 ---
 

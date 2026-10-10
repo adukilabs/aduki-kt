@@ -2,19 +2,21 @@
 
 > Plans and progress: [`Next/README.md`](Next/README.md).
 
-> Formerly the Hermes Android Kotlin SDK (`adukilabs/hermers-kt`). The
-> repository is now `adukilabs/aduki-kt`. Package names move from
-> `hermes.*` to `pro.aduki.*`, and the SDK gains the Aduki ID client and the
-> Account Center authenticator, in phases P2 and P4 of
-> `aduki/Next/plan.md`. The Maven coordinates are unchanged until then.
+> Formerly the Aduki Android Kotlin SDK (`adukilabs/hermers-kt`). The
+> repository is now `adukilabs/aduki-kt`. Packages moved from
+> `pro.aduki.hermes.*` to `pro.aduki.*`, `HermesClient` is `Aduki` and
+> `HermesException` is `AdukiException` (deprecated aliases remain for one
+> minor release). The Maven group is `pro.aduki`; the Aduki ID client and the
+> Account Center authenticator follow in phases P2 and P4 of
+> `aduki/Next/plan.md`.
 
 [![Documentation](https://img.shields.io/badge/docs-mdBook-blue.svg)](https://adukilabs.github.io/aduki-kt/)
-[![Maven Central](https://img.shields.io/badge/Maven%20Central-0.3.0-blue.svg)](https://central.sonatype.com/artifact/io.github.adukilabs/sdk)
+[![Maven Central](https://img.shields.io/badge/Maven%20Central-0.3.0-blue.svg)](https://central.sonatype.com/artifact/pro.aduki/sdk)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-purple.svg)](https://kotlinlang.org)
 [![ObjectBox](https://img.shields.io/badge/ObjectBox-4.0.3-green.svg)](https://objectbox.io)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-An ultra-low latency, battery-efficient, offline-first Android Kotlin SDK engineered specifically for the [Hermes](https://github.com/aduki-org/hermes) communication platform.
+An ultra-low latency, battery-efficient, offline-first Android Kotlin SDK engineered specifically for the [Aduki](https://github.com/aduki-org/hermes) communication platform.
 
 ---
 
@@ -40,7 +42,7 @@ Because `mavenCentral()` is enabled by default in Android projects, include the 
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("io.github.adukilabs:sdk:0.3.0")
+    implementation("pro.aduki:sdk:0.3.0")
     implementation("io.objectbox:objectbox-android:4.0.3")
 }
 ```
@@ -73,7 +75,7 @@ dependencies {
 ```kotlin
 // In your Login ViewModel or CoroutineScope
 // Signs in at Aduki ID (id.aduki.pro) for a mail token; renewed automatically
-val client = HermesClient.login(
+val client = Aduki.login(
     handle = "ada@aduki.me",
     password = "CorrectHorseBatteryStaple123!",
     code = "123456" // authenticator code (or backup = "...")
@@ -81,13 +83,13 @@ val client = HermesClient.login(
 
 // Identity is eagerly cached
 val identity = client.me()
-Log.d("Hermes", "Logged in as ${identity?.user} in tenant ${identity?.tenant}")
+Log.d("Aduki", "Logged in as ${identity?.user} in tenant ${identity?.tenant}")
 ```
 
 ### 2. Headless Daemon / API Key
 
 ```kotlin
-val client = HermesClient.builder()
+val client = Aduki.builder()
     .key("hm_live_7f9b8c2d1e0a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a")
     .endpoint("https://hermers.aduki.pro/v1")
     .timeout(30)
@@ -146,7 +148,7 @@ The compiled output will be written to `KOTLIN/docs/book/` (gitignored).
 | **[High-Level Services](docs/services/mail.md)** | [Mail Service](docs/services/mail.md), [Contacts Service](docs/services/contacts.md), [Sync Engine](docs/services/sync.md), [Offline Outbox](docs/services/outbox.md), [Lifecycle](docs/services/lifecycle.md) |
 | **[Reactive & UI](docs/reactive/index.md)** | [Unidirectional Data Flow](docs/reactive/index.md), [Jetpack Compose Integration](docs/reactive/compose.md) |
 | **[Network Transports](docs/network/transports.md)**| [OkHttp & gRPC Transports](docs/network/transports.md), [Circuit Breaker](docs/network/circuit.md) |
-| **[API Reference](docs/reference/client.md)** | [HermesClient Facade](docs/reference/client.md), [Error Handling & Exceptions](docs/reference/errors.md) |
+| **[API Reference](docs/reference/client.md)** | [Aduki Facade](docs/reference/client.md), [Error Handling & Exceptions](docs/reference/errors.md) |
 
 ---
 
@@ -154,7 +156,7 @@ The compiled output will be written to `KOTLIN/docs/book/` (gitignored).
 
 Benchmarked on Android 14 (ARM64, Google Pixel 8):
 
-| Metric | Hermes Android SDK (ObjectBox) | Traditional Room / SQLite | Advantage |
+| Metric | Aduki Android SDK (ObjectBox) | Traditional Room / SQLite | Advantage |
 | :--- | :--- | :--- | :--- |
 | **Batch Insert (10,000 Messages)** | **142.1 ms** | 4,200.0 ms | **29.5x faster** |
 | **P99 Query Latency (Indexed)** | **0.40 ms** | 14.80 ms | **37.0x faster** |
@@ -171,7 +173,7 @@ build works on networks that block `dl.google.com`.
 
 ```bash
 ./gradlew test          # every module; contract tests replay the server's fixtures
-./gradlew :net:liveTest # the live tier, against a running Hermes server
+./gradlew :net:liveTest # the live tier, against a running Aduki server
 ```
 
 The live tier (`net/src/test/.../live.test.kt`) logs in, sends a message to
@@ -181,9 +183,9 @@ these are set (otherwise it is skipped, in `test` too):
 
 | Variable | Value |
 |---|---|
-| `HERMES_LIVE_URL` | the REST base, e.g. `https://mail.example.com/v1` |
-| `HERMES_LIVE_EMAIL` | a test account's address |
-| `HERMES_LIVE_PASSWORD` | its password |
+| `ADUKI_LIVE_URL` | the REST base, e.g. `https://mail.example.com/v1` |
+| `ADUKI_LIVE_EMAIL` | a test account's address |
+| `ADUKI_LIVE_PASSWORD` | its password |
 
 Point it at a test account: it sends and deletes real mail. For a server
 with a self-signed certificate, add the certificate to the JVM's truststore.
@@ -198,7 +200,7 @@ KOTLIN/
 ├── net/        # OkHttp 4.12.0 REST client, gRPC ManagedChannel, Auth interceptor, Login
 ├── sync/       # CONDSTORE/MODSEQ mail delta sync, CardDAV contact delta sync, Outbox Worker
 ├── state/      # Reactive repositories: Mail, Contact, Session StateFlow pipelines
-├── sdk/        # Public facade: HermesClient, Mail, Contacts, Sync, Lifecycle
+├── sdk/        # Public facade: Aduki, Mail, Contacts, Sync, Lifecycle
 └── docs/       # mdBook documentation source and book.toml configuration
 ```
 

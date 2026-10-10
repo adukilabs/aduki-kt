@@ -1,6 +1,6 @@
 # State Management & Synchronization Specification
 
-This document details the reactive state management architecture, offline-first persistent outbox engine, and CONDSTORE / MODSEQ incremental synchronization algorithms for the Hermes Android Kotlin SDK.
+This document details the reactive state management architecture, offline-first persistent outbox engine, and CONDSTORE / MODSEQ incremental synchronization algorithms for the Aduki Android Kotlin SDK.
 
 ---
 
@@ -44,7 +44,7 @@ All public repositories expose hot `StateFlow` instances. `StateFlow` retains th
 ### Implementation: Mailbox Flow
 
 ```kotlin
-package pro.aduki.hermes.state.repository
+package pro.aduki.state.repository
 
 import io.objectbox.Box
 import io.objectbox.kotlin.flow
@@ -53,8 +53,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import pro.aduki.hermes.store.entities.Message
-import pro.aduki.hermes.store.entities.Message_
+import pro.aduki.store.entities.Message
+import pro.aduki.store.entities.Message_
 
 class MailRepository(
     private val messageBox: Box<Message>,
@@ -85,12 +85,12 @@ To achieve true offline resilience, any state-altering user action (sending emai
 ### 3.1. Optimistic Local Mutation
 
 ```kotlin
-package pro.aduki.hermes.sync.outbox
+package pro.aduki.sync.outbox
 
 import io.objectbox.BoxStore
-import pro.aduki.hermes.store.entities.Message
-import pro.aduki.hermes.store.entities.Message_
-import pro.aduki.hermes.store.entities.Outbox
+import pro.aduki.store.entities.Message
+import pro.aduki.store.entities.Message_
+import pro.aduki.store.entities.Outbox
 
 class OutboxManager(private val store: BoxStore) {
 
@@ -126,7 +126,7 @@ The background worker executes sequentially, reading from the outbox and dispatc
 
 ## 4. CONDSTORE / MODSEQ Incremental Sync Algorithm
 
-Hermes implements the RFC 7162 **CONDSTORE** and **MODSEQ** protocols. Instead of polling every email or scanning message lists, the client tracks two state variables per mailbox:
+Aduki implements the RFC 7162 **CONDSTORE** and **MODSEQ** protocols. Instead of polling every email or scanning message lists, the client tracks two state variables per mailbox:
 
 1. `uidvalidity`: Unique ID identifying the mailbox generation. If this changes, local cache must be invalidated.
 2. `modseq`: Monotonically increasing 64-bit sequence number.
@@ -135,8 +135,8 @@ Hermes implements the RFC 7162 **CONDSTORE** and **MODSEQ** protocols. Instead o
 
 ```mermaid
 sequenceDiagram
-    participant Client as Hermes Android Client
-    participant Server as Hermes gRPC Server
+    participant Client as Aduki Android Client
+    participant Server as Aduki gRPC Server
     participant Store as ObjectBox Store
 
     Client->>Store: Read stored uidvalidity & modseq
@@ -155,15 +155,15 @@ sequenceDiagram
 ### 4.2. Implementation
 
 ```kotlin
-package pro.aduki.hermes.sync.engine
+package pro.aduki.sync.engine
 
 import io.objectbox.BoxStore
-import pro.aduki.hermes.proto.sync.MailboxSyncReq
-import pro.aduki.hermes.proto.sync.SyncServiceGrpcKt
-import pro.aduki.hermes.store.entities.Mailbox
-import pro.aduki.hermes.store.entities.Mailbox_
-import pro.aduki.hermes.store.entities.Message
-import pro.aduki.hermes.store.entities.Message_
+import pro.aduki.proto.sync.MailboxSyncReq
+import pro.aduki.proto.sync.SyncServiceGrpcKt
+import pro.aduki.store.entities.Mailbox
+import pro.aduki.store.entities.Mailbox_
+import pro.aduki.store.entities.Message
+import pro.aduki.store.entities.Message_
 
 class MailboxSynchronizer(
     private val store: BoxStore,
