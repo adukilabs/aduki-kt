@@ -60,11 +60,11 @@ Fixed on `code/phase1-fixes` (see `CHANGELOG.md`):
 - TLS pinning is opt-in (`Options.pins`, `Builder.pins`), no built-in pins. Tested against a local TLS server only.
 - The `Authorization` scheme is chosen by one helper (`net.http.Scheme`): `Key` only for a credential given to `Builder.key(...)`, `Bearer` otherwise, no prefix sniffing. The server (`aduki` `crates/api/src/helpers/auth.rs`) accepts both schemes for both credential kinds and tells them apart by token shape.
 - Contacts: `HttpContactTransport` (full-list reconcile over `GET /user/contacts`; the server's JMAP `Contact/changes` is not used), `net.http.Contacts`, `Builder.contactStorage`. MockWebServer tests only; never run against a server.
-- `Factory.create(dir, key)` ignored `key`; the parameter is removed. ObjectBox 4.0.3 has no encryption option (jar, native library and a plaintext-on-disk test); the design for field encryption is in `guide/security.md` section 4. The database is NOT encrypted; nothing may claim it is.
+- ObjectBox 4.0.3 has no encryption option (jar, native library and a plaintext-on-disk test). Owner decision: platform encryption plus sealed sensitive fields. Built: `crypto.cipher.Vault` and `store.box.Sealing` seal `Message.preview/blob`, `Contact.vcard/company`, `Appointment.notes` and the outbox payload (`guide/security.md` section 4, `docs/security/vault.md`). The database file is NOT encrypted as a whole; indexed metadata is in the clear; nothing may claim more.
 
 Still open:
 
-- Local database encryption with a Keystore-held key (owner decision: required). Needs a route chosen (field encryption touches every entity and search; ask ObjectBox whether a commercial edition encrypts), then a device run. Pending device.
+- Sealed columns on a device: Android Keystore key creation (the `setRandomizedEncryptionRequired(false)` reflection call), use with Envelope's own IV, non-exportability, reinstall/backup, real `objectbox-android`. UNVERIFIED until a device run. Also: plaintext pages left in LMDB after migrating a legacy database (compaction not done).
 - `Circuit` is used by no client; `Lifecycle.pause()` stops nothing: wire or delete.
 - `whoami` stays on mail `GET /user` because Aduki ID has no whoami route; `Identity.scopes` and `tier` are filled only if mail returns them.
 - No benchmark harness exists. Do not add numbers to docs without one.
@@ -90,4 +90,4 @@ Still open:
 - D-KT-5 (Android items K4, K6, Keystore K5 are verified only on a device or CI emulator): decided; infrastructure missing.
 - GitHub Pages deploy of the book: remove or keep (item 10).
 - Version: the changes in `CHANGELOG.md` are breaking; `release` is still 0.3.0. Bump (0.4.0) when the release is cut.
-- Database encryption route (see item 9): field encryption, vendor edition, or platform encryption only.
+- Database encryption: decided (platform + sealed fields). Open: whether to sign off the unsealed metadata list (names, subjects, addresses, phones).

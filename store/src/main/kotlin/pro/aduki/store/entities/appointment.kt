@@ -1,8 +1,10 @@
 package pro.aduki.store.entities
 
+import io.objectbox.annotation.Convert
 import io.objectbox.annotation.Entity
 import io.objectbox.annotation.Id
 import io.objectbox.annotation.Index
+import pro.aduki.store.box.SealedText
 
 /**
  * Appointment represents a scheduled meeting or calendar booking.
@@ -22,7 +24,7 @@ data class Appointment(
     var sequence: Int = 0,
     var method: String = "REQUEST",
     var location: String = "",
-    var notes: String = "",
+    @Convert(converter = SealedText::class, dbType = String::class) var notes: String = "",
     var cancelled: Long = 0L,
     var rescheduled: String = "",
     var updated: Long = 0L

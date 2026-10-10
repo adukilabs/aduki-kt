@@ -228,10 +228,10 @@ class MessageBatchWriter(private val store: BoxStore) {
 
 ---
 
-## 6. Database encryption (not built)
+## 6. Sealed columns (no full-database encryption)
 
-The earlier draft here claimed that ObjectBox has native encryption and showed
-`initialBytes(dbKey)`. Both are wrong for ObjectBox 4.0.3: there is no
-encryption option, and `initialBytes` is not a key. The findings, the options
-and the field-encryption design are in `security.md` section 4. The database is
-stored in the clear today.
+ObjectBox 4.0.3 has no encryption option, so the file is not encrypted as a
+whole (the earlier draft, `initialBytes(dbKey)`, was wrong). Sensitive payload
+columns are sealed with `Vault` (AES-256-GCM, versioned, key id for rotation);
+indexed metadata stays in the clear. What is sealed, how legacy rows upgrade,
+and what is unverified: `security.md` section 4.

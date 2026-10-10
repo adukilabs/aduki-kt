@@ -1,8 +1,10 @@
 package pro.aduki.store.entities
 
+import io.objectbox.annotation.Convert
 import io.objectbox.annotation.Entity
 import io.objectbox.annotation.Id
 import io.objectbox.annotation.Index
+import pro.aduki.store.box.SealedText
 
 /**
  * Message represents an email message stored in ObjectBox FlatBuffers binary format.
@@ -20,8 +22,8 @@ data class Message(
     var fromName: String = "",
     var fromEmail: String = "",
     var to: String = "", // Comma-delimited recipients for FlatBuffers efficiency
-    var preview: String = "",
-    var blob: String = "",
+    @Convert(converter = SealedText::class, dbType = String::class) var preview: String = "",
+    @Convert(converter = SealedText::class, dbType = String::class) var blob: String = "",
     var size: Long = 0,
     @Index var flags: Int = 0, // Bitmask: SEEN=1, ANSWERED=2, FLAGGED=4, DELETED=8, DRAFT=16
     var keywords: String = "", // Other server flags/keywords, space-separated (e.g. "$Junk $Forwarded")

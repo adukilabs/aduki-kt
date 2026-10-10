@@ -1,8 +1,10 @@
 package pro.aduki.store.entities
 
+import io.objectbox.annotation.Convert
 import io.objectbox.annotation.Entity
 import io.objectbox.annotation.Id
 import io.objectbox.annotation.Index
+import pro.aduki.store.box.SealedText
 
 /**
  * Contact represents an address book contact with search indexes.
@@ -14,8 +16,8 @@ data class Contact(
     @Index var name: String = "",
     @Index var email: String = "",
     var phone: String = "",
-    var company: String = "",
-    var vcard: String = "",
+    @Convert(converter = SealedText::class, dbType = String::class) var company: String = "",
+    @Convert(converter = SealedText::class, dbType = String::class) var vcard: String = "",
     var ctag: String = "",
     var updated: Long = 0
 )

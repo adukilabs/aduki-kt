@@ -5,7 +5,7 @@ plugins {
 
 dependencies {
     implementation(project(":core"))
-    implementation(project(":crypto"))
+    api(project(":crypto"))
     implementation(libs.kotlin.stdlib)
     implementation(libs.kotlin.coroutines.core)
     implementation(libs.objectbox.kotlin)

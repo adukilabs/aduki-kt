@@ -346,6 +346,7 @@ class Aduki internal constructor(
         private var scheduleEngine: ScheduleEngine? = null
         private var dpop: Dpop? = null
         private var contactStorage: ContactStorage? = null
+        private var secureStore: pro.aduki.crypto.keystore.Provider? = null
 
         fun key(key: String) = apply { this.apiKey = key }
         fun token(token: String) = apply { this.token = token }
@@ -382,6 +383,16 @@ class Aduki internal constructor(
          * work without building an engine. With ObjectBox, `ContactEngine.storage(boxStore)`.
          */
         fun contactStorage(storage: ContactStorage) = apply { this.contactStorage = storage }
+        /**
+         * Seals the sensitive payload columns of the local database (see
+         * `Sealing`) with keys from [provider]. On Android with no call to this,
+         * the Android Keystore provider is used; on a plain JVM nothing is
+         * sealed unless this is called, and a `Provider` there keeps its keys
+         * in memory only, so use it for tests. The vault is process-wide and is
+         * installed by [build], before the database is opened. Android Keystore
+         * behaviour is unverified until a device run.
+         */
+        fun secureStore(provider: pro.aduki.crypto.keystore.Provider) = apply { this.secureStore = provider }
         fun engines(mailbox: MailboxEngine, contact: ContactEngine) = apply {
             this.mailboxEngine = mailbox
             this.contactEngine = contact
@@ -391,6 +402,8 @@ class Aduki internal constructor(
             require(apiKey.isNotBlank() || token.isNotBlank()) {
                 "Either API key or JWT token must not be blank"
             }
+            (secureStore?.let { pro.aduki.crypto.cipher.Vault(it) } ?: pro.aduki.crypto.cipher.Vault.platform())
+                ?.let { pro.aduki.store.box.Sealing.install(it) }
             val options = Options(
                 endpoint = endpoint,
                 identity = identity,

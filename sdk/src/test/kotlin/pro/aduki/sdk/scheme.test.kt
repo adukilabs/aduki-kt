@@ -49,3 +49,20 @@ class SchemeTest {
         assertEquals("Bearer key_session_token", server.takeRequest().getHeader("Authorization"))
     }
 }
+
+class SecureStoreTest {
+    @org.junit.After
+    fun reset() = pro.aduki.store.box.Sealing.install(null)
+
+    @Test
+    fun noVaultIsInstalledOnAPlainJvmByDefault() {
+        Aduki.builder().key("k").build()
+        org.junit.Assert.assertNull(pro.aduki.store.box.Sealing.vault())
+    }
+
+    @Test
+    fun secureStoreInstallsAVaultOnTheGivenProvider() {
+        Aduki.builder().key("k").secureStore(pro.aduki.crypto.keystore.Provider()).build()
+        org.junit.Assert.assertNotNull(pro.aduki.store.box.Sealing.vault())
+    }
+}

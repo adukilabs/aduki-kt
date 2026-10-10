@@ -14,9 +14,10 @@ exact API.
 
 ## What is not done for you
 
-- The SDK does not encrypt the local ObjectBox database. `Envelope` and
-  `Provider` are available for apps that encrypt their own data, but no SDK
-  code path uses them.
+- The SDK does not encrypt the local ObjectBox database as a whole; it seals
+  only the sensitive payload columns ([Vault](vault.md)) and leaves indexed
+  metadata in the clear. The Android Keystore part is unverified until a device
+  run.
 - Access and refresh tokens are held in memory only; the SDK never writes them
   to disk.
 - The SDK does not request StrongBox; the Keystore key is generated with the

@@ -9,7 +9,7 @@ This document details the device-level security architecture of the Aduki Androi
 ## 1. Security Architecture Principles
 
 1. **Hardware-Enforced Cryptography**: Secrets are bound to dedicated secure hardware (StrongBox Keymaster chip or Trusted Execution Environment - TEE).
-2. **Zero Plaintext at Rest** (a goal, not the current state): the local ObjectBox database is stored in the clear today; see section 4. Session tokens are held in memory only.
+2. **Sealed payload columns** (not full-database encryption): message previews and bodies refs, contact vCards, outbox payloads and appointment notes are AES-256-GCM sealed; indexed metadata is in the clear; see section 4. Session tokens are held in memory only. Device-unverified.
 3. **In-Memory Zeroization**: Sensitive buffers (passwords, tokens, database keys) are stored in mutable arrays and zeroed immediately after use to protect against heap dump analysis.
 4. **Transport Hardening**: Enforces TLS 1.3, strict SPKI certificate pinning, and disallows cleartext traffic.
 5. **Biometric Crypto Binding**: Hardware keys can optionally require cryptographic biometric authentication (`BiometricPrompt`) for sensitive actions.
@@ -156,32 +156,57 @@ has run on a device.
   data, it is not a key. `Factory.create(dir, key)` ignored its `key`; the
   parameter was removed.
 
-### 4.2 Routes, and why none was built yet
+### 4.2 Decision and what is built (owner, 2026-10-10)
 
-| Route | Cost | State |
-|---|---|---|
-| Platform file-based encryption (Android FBE, on by default since Android 10) | none | protects a locked device only; not app-level, not Keystore-held by the SDK |
-| Field encryption with `@Convert` (property converter to `ByteArray` using `Envelope`) | converters are no-arg classes, so the key must sit in a process-wide holder; encrypted properties cannot use `@Index` or substring queries (`Contact.name`/`email` are indexed and searched by `Contacts.search`, so search must move in memory or to a blind index); entity model and on-disk schema change; each entity needs migration | not small: touches every entity, `state` repositories and the model file; not built |
-| Replace the store with an encrypted engine (SQLCipher-style) | rewrite of `store`, `state`, `sync` storage | not planned |
+"Platform encryption + encrypt sensitive fields": the file as a whole relies on
+Android file-based encryption and OS protection; the sensitive payload columns
+are sealed by the SDK. Built and tested on the JVM (software `Provider`):
 
-### 4.3 Design for field encryption (if chosen)
+- `crypto.cipher.Vault`: AES-256-GCM (`Envelope`) under keys from `Provider`.
+  Sealed layout `0xAD 0x4B | version | key id (4 bytes) | IV | ciphertext | tag`;
+  text is stored as `aduki:1:` + base64. Key id `n` is Provider alias
+  `aduki_data_n`; `rotate()` makes a new key current, older values still open
+  while their key exists, and any rewrite seals under the current key. Anything
+  not in the sealed format is legacy plaintext and reads unchanged; a tampered
+  value, an unknown key id or version throws `SealException` (fails closed).
+- `store.box.Sealing`: the process-wide vault and the converters
+  (`SealedText`, an ObjectBox `@Convert` on String columns). Sealed columns:
+  `Message.preview`, `Message.blob`, `Contact.vcard`, `Contact.company`,
+  `Appointment.notes`, and `Outbox.payload`. The outbox payload is sealed by
+  the storage (`Sealing.put` / `Sealing.opened`) because the ObjectBox
+  generator (4.0.3, kapt) emits invalid Java for a converted byte-array column.
+  `Sealing.reseal(store)` rewrites every row (legacy plaintext and old keys
+  upgrade to the current key).
+- Left in the clear on purpose, so queries and sync work: names, subjects,
+  e-mail addresses, phones, from/to, hexes, uids, flags, timestamps, thread ids,
+  appointment times and status, every `@Index` column. These rely on OS
+  protection only.
+- Wiring: `Aduki.builder().secureStore(provider)`, or `Factory.build(dir, vault)`;
+  on Android the Keystore `Provider` is the default when `secureStore` is not
+  called (`Vault.platform()`); on a plain JVM nothing is sealed unless asked.
+  With no vault installed values are written in clear and sealed values cannot
+  be read.
+- Cost of "legacy readable": a sealed-looking value written by something else is
+  not told apart from ours except by the magic header or the `aduki:1:` prefix.
+- LMDB copy-on-write can leave old (plaintext) pages in the file after a row is
+  rewritten; `reseal` does not scrub them. A fresh database sealed from the
+  start has none; a migrated one may, until the file is compacted.
 
-- Sensitive columns only: `Message.subject`, `preview`, `fromName`, `fromEmail`,
-  `to`, `blob`; `Contact.name`, `email`, `phone`, `company`, `vcard`;
-  `Appointment` text fields. Identifiers, flags, UIDs, timestamps stay in the
-  clear so queries and sync keep working.
-- Key: a random 256-bit data key, wrapped with `Envelope` under the Keystore
-  master key (`Provider`, alias `aduki_master`) and stored in a small file next
-  to the database; unwrapped at open into a process-wide holder used by the
-  converters, wiped on close.
-- Search over encrypted contact fields: in-memory filter after decrypting, or a
-  keyed hash (blind index) for prefix search.
-- JVM tests use a software key (`Provider` falls back to a process-lifetime key
-  off Android, so a JVM test cannot prove survival across restarts; that needs
-  a device or a file-backed software provider).
-- Verification still to do on a device: the key is non-exportable in the
-  Keystore, the database file holds no marker string, a wrong key fails to read,
-  reinstall behaviour. Until then no document says "encrypted".
+Unverified until a device run: that the Android Keystore generates and uses
+the key (the default Keystore spec refuses a caller-supplied IV, so `Provider`
+now sets `setRandomizedEncryptionRequired(false)` via reflection; untested),
+non-exportability, reinstall and backup behaviour, behaviour with a real
+`objectbox-android` artifact. On a plain JVM a `Provider` key lives only for the
+process, so JVM tests cannot show data surviving a restart.
+
+### 4.3 Routes considered
+
+| Route | State |
+|---|---|
+| Platform file-based encryption (Android FBE) | relied on for the rest of the file |
+| Field encryption of sensitive payload columns | built (4.2) |
+| Encrypting indexed or searched columns (names, subjects, addresses) | not done: it breaks queries; would need in-memory filtering or a blind index |
+| Replace the store with an encrypted engine (SQLCipher-style) | not planned |
 
 ### 4.4 Envelope encryption sketch (the earlier draft, kept for the key wrapping)
 

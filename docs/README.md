@@ -43,7 +43,7 @@ implementations on a plain JVM.
 ## Status
 
 Not yet available: Account Center authenticator for Android, passkeys, and a
-Keystore-backed DPoP key. The local database is not encrypted by the SDK. See
+Keystore-backed DPoP key. The local database file is not encrypted; only sensitive payload columns are sealed (unverified on Android). See
 the individual pages for the exact behaviour of each feature.
 
 ## Where to start

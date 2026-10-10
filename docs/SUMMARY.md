@@ -26,6 +26,7 @@
 - [Envelope Cipher](security/cipher.md)
 - [Memory Sanitization](security/sanitizer.md)
 - [TLS & Pinning](security/tls.md)
+- [Sealed columns (Vault)](security/vault.md)
 
 # Local Storage
 
