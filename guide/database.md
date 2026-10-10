@@ -228,33 +228,10 @@ class MessageBatchWriter(private val store: BoxStore) {
 
 ---
 
-## 6. Hardware-Secured Database Encryption
+## 6. Database encryption (not built)
 
-ObjectBox supports native database encryption using AES-256-GCM. The SDK configures the encryption key using hardware derived secrets from the Android KeyStore:
-
-```kotlin
-package pro.aduki.store.box
-
-import android.content.Context
-import io.objectbox.BoxStore
-import io.objectbox.MyObjectBox
-import pro.aduki.crypto.keystore.KeyStoreProvider
-
-object StoreFactory {
-
-    fun create(context: Context, secure: Boolean): BoxStore {
-        val builder = MyObjectBox.builder()
-            .androidContext(context.applicationContext)
-
-        if (secure) {
-            // Hardware-backed KeyStore derivation
-            val dbKey = KeyStoreProvider.getOrCreateDatabaseKey()
-            builder.initialBytes(dbKey)
-            // Immediately zeroize raw byte key copy in memory
-            dbKey.fill(0)
-        }
-
-        return builder.build()
-    }
-}
-```
+The earlier draft here claimed that ObjectBox has native encryption and showed
+`initialBytes(dbKey)`. Both are wrong for ObjectBox 4.0.3: there is no
+encryption option, and `initialBytes` is not a key. The findings, the options
+and the field-encryption design are in `security.md` section 4. The database is
+stored in the clear today.

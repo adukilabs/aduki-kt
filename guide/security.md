@@ -9,7 +9,7 @@ This document details the device-level security architecture of the Aduki Androi
 ## 1. Security Architecture Principles
 
 1. **Hardware-Enforced Cryptography**: Secrets are bound to dedicated secure hardware (StrongBox Keymaster chip or Trusted Execution Environment - TEE).
-2. **Zero Plaintext at Rest**: All local databases (ObjectBox), cached blobs, and session tokens are encrypted using AES-256-GCM.
+2. **Zero Plaintext at Rest** (a goal, not the current state): the local ObjectBox database is stored in the clear today; see section 4. Session tokens are held in memory only.
 3. **In-Memory Zeroization**: Sensitive buffers (passwords, tokens, database keys) are stored in mutable arrays and zeroed immediately after use to protect against heap dump analysis.
 4. **Transport Hardening**: Enforces TLS 1.3, strict SPKI certificate pinning, and disallows cleartext traffic.
 5. **Biometric Crypto Binding**: Hardware keys can optionally require cryptographic biometric authentication (`BiometricPrompt`) for sensitive actions.
@@ -130,13 +130,60 @@ inline fun <R> withWipedChars(chars: CharArray, block: (CharArray) -> R): R {
 
 ---
 
-## 4. Envelope Encryption for ObjectBox & Blobs
+## 4. Local database encryption: findings and design
 
-For file blobs (email attachments) and ObjectBox database encryption:
+Owner decision (2026-10-10): the local database must be encrypted with a key
+held in the Android Keystore, and no document may say it is encrypted until it
+has run on a device.
 
-- A 256-bit AES data key is generated randomly.
-- The data key is encrypted using the hardware-backed Master Key and stored in a protected envelope.
-- At runtime, the data key is decrypted into a temporary byte buffer, loaded into ObjectBox native memory, and immediately wiped from JVM memory.
+### 4.1 What ObjectBox 4.0.3 offers (checked 2026-10-10)
+
+- `io.objectbox:objectbox-java:4.0.3`: `BoxStoreBuilder` has no encryption,
+  key, password or cipher method (all 34 public members listed with `javap`);
+  no class or string in the jar mentions encryption.
+- `io.objectbox:objectbox-linux:4.0.3` (the native library the JVM tests load):
+  no encryption-related string in the binary. A test
+  (`FactoryTest.theDatabaseFileHoldsStoredTextInTheClear`) writes a marker and
+  finds it in the clear in the database file.
+- The Android artifact `objectbox-android` is not in the build cache and was
+  not inspected; nothing public found suggests it differs. Public sources
+  (GitHub issues `objectbox-java#8` and `#641`) describe the same situation:
+  field encryption with `@Convert` is the suggested route. Not checked: whether
+  a commercial ObjectBox edition offers at-rest encryption; ask the vendor
+  before choosing a route.
+- The old draft in this folder (`initialBytes(dbKey)`, "ObjectBox supports
+  native AES-256-GCM encryption") was wrong: `initialBytes` loads initial
+  data, it is not a key. `Factory.create(dir, key)` ignored its `key`; the
+  parameter was removed.
+
+### 4.2 Routes, and why none was built yet
+
+| Route | Cost | State |
+|---|---|---|
+| Platform file-based encryption (Android FBE, on by default since Android 10) | none | protects a locked device only; not app-level, not Keystore-held by the SDK |
+| Field encryption with `@Convert` (property converter to `ByteArray` using `Envelope`) | converters are no-arg classes, so the key must sit in a process-wide holder; encrypted properties cannot use `@Index` or substring queries (`Contact.name`/`email` are indexed and searched by `Contacts.search`, so search must move in memory or to a blind index); entity model and on-disk schema change; each entity needs migration | not small: touches every entity, `state` repositories and the model file; not built |
+| Replace the store with an encrypted engine (SQLCipher-style) | rewrite of `store`, `state`, `sync` storage | not planned |
+
+### 4.3 Design for field encryption (if chosen)
+
+- Sensitive columns only: `Message.subject`, `preview`, `fromName`, `fromEmail`,
+  `to`, `blob`; `Contact.name`, `email`, `phone`, `company`, `vcard`;
+  `Appointment` text fields. Identifiers, flags, UIDs, timestamps stay in the
+  clear so queries and sync keep working.
+- Key: a random 256-bit data key, wrapped with `Envelope` under the Keystore
+  master key (`Provider`, alias `aduki_master`) and stored in a small file next
+  to the database; unwrapped at open into a process-wide holder used by the
+  converters, wiped on close.
+- Search over encrypted contact fields: in-memory filter after decrypting, or a
+  keyed hash (blind index) for prefix search.
+- JVM tests use a software key (`Provider` falls back to a process-lifetime key
+  off Android, so a JVM test cannot prove survival across restarts; that needs
+  a device or a file-backed software provider).
+- Verification still to do on a device: the key is non-exportable in the
+  Keystore, the database file holds no marker string, a wrong key fails to read,
+  reinstall behaviour. Until then no document says "encrypted".
+
+### 4.4 Envelope encryption sketch (the earlier draft, kept for the key wrapping)
 
 ```kotlin
 package pro.aduki.crypto.cipher
