@@ -1,6 +1,6 @@
-# ObjectBox FlatBuffers Entity Schemas Reference
+# Entities
 
-All data models in the Aduki Android SDK are compiled as **ObjectBox FlatBuffers tables**, guaranteeing zero-copy memory-mapped reads and sub-millisecond query latencies.
+The SDK's local data models are ObjectBox entities (`pro.aduki.store.entities`). Besides the four below the module holds `Appointment`, `Service` and `Slot` for [scheduling](../services/scheduling.md).
 
 ---
 
@@ -106,7 +106,7 @@ data class Mailbox(
 
 ## 3. `Contact` Entity
 
-Stores address book contacts with memory-mapped search indexes.
+Stores address book contacts.
 
 ```kotlin
 package pro.aduki.store.entities
@@ -145,7 +145,8 @@ import io.objectbox.annotation.Index
 @Entity
 data class Outbox(
     @Id var id: Long = 0,
-    @Index var action: String = "", // send, flag, move, remove
+    @Index var hex: String = "",    // the message the action is about
+    @Index var action: String = "", // "send", "flag", "move", "delete"
     var payload: ByteArray = byteArrayOf(),
     @Index var created: Long = System.currentTimeMillis(),
     var attempts: Int = 0,
@@ -170,7 +171,7 @@ import io.objectbox.annotation.Index
 data class Sync(
     @Id var id: Long = 0,
     @Index var target: String = "", // "contacts", "inbox", etc.
-    var cursor: String = "",
+    var token: String = "",
     var timestamp: Long = 0
 )
 ```

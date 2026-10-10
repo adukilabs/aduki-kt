@@ -1,6 +1,6 @@
 # Offline Outbox & Retry Engine Reference
 
-The Aduki Android SDK guarantees zero data loss across network drops, crashes, and device reboots via an atomic write-ahead transactional outbox journal.
+Every change is journaled in the local store in the same transaction as the local edit, and sent later; a network drop, crash or restart does not lose it.
 
 ---
 
@@ -128,7 +128,7 @@ A send whose response is lost (timeout, dropped connection) is retried with the 
 
 ```http
 POST /v1/user/mail/send HTTP/1.1
-Authorization: Bearer eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9...
+Authorization: Bearer <access token>
 Idempotency-Key: outbox-42-1790413340658
 Content-Type: application/json
 
@@ -141,19 +141,14 @@ The key is `outbox-<entry id>-<created>`, stable across retries and app restarts
 
 ## 5. Decorrelated Jitter Retry Backoff
 
-When transient errors occur, retry delays are computed using Amazon's **Decorrelated Jitter** algorithm to avoid thundering-herd synchronization across mobile fleets:
-
-$$t_{i+1} = \min(t_{\max}, \text{random}(t_{\min}, 3 \times t_i))$$
+Each retry waits `min(max, random(base, 3 x previous))` (Amazon's Decorrelated Jitter), so retries from many devices do not synchronise.
 
 ```kotlin
 package pro.aduki.core.retry
 
-object Jitter {
-    fun nextDelay(currentDelayMs: Long, baseMs: Long = 1000L, maxMs: Long = 60000L): Long {
-        val high = (currentDelayMs * 3).coerceAtLeast(baseMs)
-        val jittered = kotlin.random.Random.nextLong(baseMs, high + 1)
-        return jittered.coerceAtMost(maxMs)
-    }
+class Jitter(val base: Long = 100, val max: Long = 30_000) {
+    fun next(attempt: Int = 0): Long   // next delay in ms
+    fun reset()
+    fun current(): Long
 }
 ```
-

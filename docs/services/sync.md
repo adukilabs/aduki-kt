@@ -77,7 +77,7 @@ engine.sync(mailboxHex)
 
 ```http
 GET /v1/user/mail/changes?mailbox=M0X1A2B3C4D5E6F&since=11500&uidvalidity=1790413341&limit=500 HTTP/1.1
-Authorization: Bearer eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9...
+Authorization: Bearer <access token>
 ```
 
 | Parameter | Meaning |
@@ -153,7 +153,7 @@ import io.objectbox.annotation.Index
 data class Sync(
     @Id var id: Long = 0,
     @Index var target: String = "", // e.g. "contacts", "inbox"
-    var cursor: String = "",
+    var token: String = "",
     var timestamp: Long = 0
 )
 ```

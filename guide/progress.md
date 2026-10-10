@@ -9,26 +9,26 @@ Depends-on: ADK-KT-003
 
 # aduki-kt progress
 
-Facts from the repository on 2026-10-08. Update in the same PR as the change.
+Facts from the repository on 2026-10-10 (git log of `code/slice-4`). Update in the same PR as the change.
 
 ## 1. Build layout
 
 Gradle multi-project, plain `kotlin("jvm")` modules (no Android plugin yet), ObjectBox 4.0.3,
-OkHttp, coroutines, org.json. Maven group `pro.aduki` (was `io.github.adukilabs`) (README shows 0.3.0).
+OkHttp, coroutines, org.json. Maven group `pro.aduki` (was `io.github.adukilabs`); `release = "0.3.0"` in the root `build.gradle.kts`.
 
 ## 2. Modules
 
 | Module | Exists |
 |---|---|
 | `core` | models (tokens, center, identity, mail, schedule), config (endpoints, options), memory (pool, ring, wipe, hash), retry (circuit, jitter), errors (`AdukiException`) |
-| `crypto` | Android Keystore provider, AES-256-GCM envelope, `Guard` sanitizer, TLS pinning |
-| `net` | HTTP: login (submit, refresh, logout, totp), `Center` (link, fetch, unlink, register, unlock), mail, scheduling, whoami, REST envelope reader, bearer interceptor; gRPC channel and metadata |
+| `crypto` | Android Keystore provider (`aduki_master`, no StrongBox request), AES-256-GCM `Envelope`, `Guard` sanitizer, TLS pinning (`Pinning`), DPoP `Key` interface with `Software` P-256 / Ed25519 keys |
+| `net` | HTTP: login (submit, refresh, logout, totp), `Id` (K2), `Center` (link, fetch, unlink, register, unlock), `Events` (K3), `Dpop` (K5), `Oidc` (K7), mail, scheduling, whoami, REST envelope reader, bearer interceptor; gRPC channel and metadata (not used by the `Aduki` facade) |
 | `store` | ObjectBox entities (message, mailbox, contact, appointment, slot, service, outbox, sync), batch queries, box holder |
 | `sync` | mailbox, contact, schedule engines; outbox manager and worker; HTTP transport and dispatcher; merge reconcile |
 | `state` | repositories (mail, contact, appointment, session) |
-| `sdk` | `Aduki` (builder, `me`, `totp`, `refresh`, `rights`, `logout`, `pause`, `resume`), mail, contacts, scheduling, sync, lifecycle |
+| `sdk` | `Aduki` (builder incl. `identity` and `dpop`, `login`, `me`, `totp`, `refresh`, `rights`, `watchRights`, `unwatchRights`, `logout`, `pause`, `resume`), mail, contacts, scheduling, sync, lifecycle |
 
-All have unit tests; there is a live test (`live.test.kt`) in `net` and `sdk`.
+All have unit tests (none was run on this VPS: no JDK, see section 4); there is a live test (`live.test.kt`) in `net` and `sdk`.
 
 ## 3. Against the platform plan
 
@@ -44,9 +44,31 @@ All have unit tests; there is a live test (`live.test.kt`) in `net` and `sdk`.
 | P9 | DPoP (proof signing, `jti`, nonce) | protocol part done (K5, slice 4): `crypto.dpop.Key` (sign-only interface, `ES256` and `EdDSA`, RFC 7638 `jkt`) with `Software` P-256 and Ed25519 keys; `net.http.Dpop` (proof with `htm`, `htu`, `iat`, random `jti`, `ath`, `nonce`; interceptor: proof on credential-less calls, `Authorization: DPoP` for tokens whose `cnf.jkt` is this key, one retry on `DPoP-Nonce`); `Aduki.builder().dpop(key)`. **Not done, Android only**: the Keystore-backed `Key` (P-256, non-exportable), tests on a device, and the contract test against the `id` test server (the proofs are verified by an independent verifier in the unit tests; the `id` server accepts `ES256` since S-ID-14) |
 | P9 | passkeys (WebAuthn / Credential Manager) | missing |
 | P9 | OIDC "Sign in with Aduki" client | done as a client library (K7, slice 4): `net.http.Oidc` (discovery check, PKCE `S256`, state, nonce, `iss` check, code exchange with `client_secret_basic`, `client_secret_post` or `none`, rotating refresh, userinfo, revocation, optional DPoP, `EdDSA` id token validation with `kid` and one JWKS refetch, `at_hash`); MockWebServer tests (`oidc.test.kt`). **Not run**: the conformance suite of the `id` repo (it is documented there, not installable, and cannot pass while PKCE is mandatory) and a live run against `id.aduki.pro`; no browser or Custom Tabs step (Android) |
-| Space | any Space client | none; deferred (see ADK-KT-003 section 4) |
+| Space | any Space client | none; deferred (see ADK-KT-003 section 3) |
 
-## 3.1 Slice 4 scope
+## 3.2 Merge state and history (from git log)
+
+| PR | Branch | Content | State |
+|---|---|---|---|
+| #8, #9 | `next/space-overhaul`, `next/decisions-1` | `Next/` README, progress, plan, SKILLS.md; Maven group decision | merged to `main` 2026-10-08 |
+| #10 | `code/slice-2` | K1: `pro.aduki.hermes` to `pro.aduki`, `HermesClient` to `Aduki`, Maven group `pro.aduki` | merged to `main` 2026-10-10 |
+| #11 | `code/rename-hermes` | every remaining `hermes` name to `aduki`; shims and the legacy Keystore alias removed | merged to `main` 2026-10-10 |
+| #12 | `code/slice-3` | K2 `Id` client | merged to `main` 2026-10-10 |
+| #13 | `code/slice-4` | `Id` wired into `Aduki`, K3, K5 protocol part, K7 | merged **into `code/slice-3`, not into `main`** (its base was `code/slice-3`); `main` stopped at #12 when this was written. Open a PR `code/slice-3` to `main` (or merge it) so the slice 4 code reaches `main` |
+
+Not started: K0 (Maven Central namespace), K4 (authenticator), K6 (passkeys), Android Keystore `Key`, relocation POM, Space client.
+
+## 3.3 Known code facts that docs must not overstate
+
+- `Factory.create(dir, key)` ignores `key`: the ObjectBox database is **not encrypted**. `Envelope` and `Provider` are building blocks no SDK code path calls; session tokens live in memory (`Session` StateFlows), not in a store.
+- `Options.secure` only switches TLS pinning on the default HTTP client (off for `localhost`/`127.0.0.1`); `Options.maxRetries` is read by nothing.
+- `Circuit` is a standalone utility; nothing in the SDK wraps calls with it. The `Channel` gRPC factory is not used by `Aduki`.
+- `Lifecycle.pause()` only flips a flag and calls listeners; the one internal listener flushes the outbox on resume.
+- `Pinning` holds two SPKI pins whose values were never confirmed against the live certificate (the backup looks like a placeholder).
+- Contacts sync has an engine (`ContactEngine`) but no HTTP `ContactTransport`; callers supply one.
+- No benchmark harness exists; the benchmark numbers that used to be in the docs had no source and were removed.
+
+## 3.4 Slice 4 scope
 
 Built (plain JVM, one commit each): K2 wiring into `Aduki`, K3 rights stream, K5 protocol part, K7 client.
 Skipped, Android only: K4 (Account Center authenticator, `AccountManager`), K6 (passkeys, Credential Manager),
@@ -54,9 +76,14 @@ the Android Keystore `Key` and device runs of K5, the browser/Custom Tabs step o
 Hosts: `id.aduki.pro` (Aduki ID, `https://id.aduki.pro/v1`), `mail.aduki.pro` (REST `https://mail.aduki.pro/v1`,
 JMAP EventSource `https://mail.aduki.pro/jmap/eventsource`), `store`, `files`, `space`, `chat` `.aduki.pro` (no client yet).
 
-## 4. Changelog
+## 4. Environment
 
-- v4: slice 4: `Id` wired into `Aduki`, K3 rights stream, K5 protocol part, K7 client (section 3.1).
+No JDK, Gradle or Android SDK on the VPS (checked 2026-10-08 and again 2026-10-10); nothing in this repository was compiled or tested there. `/dev/kvm` is present but 8 GB does not run an emulator beside Gradle. The next step on the real server is `AI/PROGRESS.md`.
+
+## 5. Changelog
+
+- v5 (2026-10-10): merge state from git log, facts section 3.3, docs restructure (`Next/` moved to `guide/`).
+- v4: slice 4: `Id` wired into `Aduki`, K3 rights stream, K5 protocol part, K7 client (section 3.4).
 - v3: slice 3 takes K2 only (the `Id` client and tests); K3 to K7 not started.
 - v2 (adversarial review, second pass): environment facts (no JDK, Gradle or Android SDK on the VPS; `/dev/kvm` present), DPoP algorithm gap, `rights` source.
 - v1: first record.

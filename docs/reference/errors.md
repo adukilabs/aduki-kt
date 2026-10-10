@@ -1,6 +1,6 @@
 # Error Handling & Exception Reference
 
-All errors originating from the Aduki Android SDK are modeled as strongly-typed subclasses of the sealed `AdukiException` hierarchy.
+Errors raised by the SDK's clients are subclasses of the sealed `AdukiException`.
 
 ---
 
@@ -17,7 +17,8 @@ sealed class AdukiException(
     class Network(message: String, cause: Throwable? = null, val code: Int? = null) :
         AdukiException(message, cause)
 
-    class Auth(message: String, cause: Throwable? = null) :
+    /** An auth response that could not be used; [refresh] carries a rotated refresh token it did include. */
+    class Auth(message: String, cause: Throwable? = null, val refresh: String = "") :
         AdukiException(message, cause)
 
     class Unauthorized(message: String, cause: Throwable? = null) :
@@ -39,30 +40,33 @@ sealed class AdukiException(
 
 ---
 
-## 2. Exception Types & HTTP Status Code Mapping
+## 2. Exception types
 
-| Exception Subclass | Triggering Condition | HTTP Status Codes | Recommended Recovery Action |
-| :--- | :--- | :--- | :--- |
-| `AdukiException.Unauthorized` | Invalid credentials, missing/incorrect TOTP code, expired access token, or revoked refresh token. | `401 Unauthorized` | Attempt silent `client.refresh()`; if that fails, navigate user to interactive login screen. |
-| `AdukiException.Auth` | Permission scope insufficient or forbidden tenant access. | `403 Forbidden` | Inform user of permission deficiency; request tenant owner elevation. |
-| `AdukiException.Network` | TCP timeouts, DNS resolution failure, SSL handshake errors, or HTTP 5xx errors. | `500`, `502`, `503`, `504` | Enqueue to offline outbox journal; retry via Decorrelated Jitter backoff. |
-| `AdukiException.Storage` | ObjectBox database disk full, filesystem permission error, or encryption key corruption. | N/A (Local) | Verify device storage quota; re-initialize database if key is corrupted. |
-| `AdukiException.Sync` | CONDSTORE sequence mismatch, unrecoverable UIDVALIDITY divergence, or schema conflict. | `409 Conflict`, `422 Unprocessable` | Invalidate local folder cache and execute fresh CONDSTORE re-seed. |
-| `AdukiException.Protocol` | Malformed JSON response, missing mandatory fields, or FlatBuffers decoding error. | N/A | Log protocol diagnostics report for SDK support. |
-| `AdukiException.CircuitOpen` | Failure threshold exceeded (5 consecutive errors); circuit tripped to open state. | N/A (Internal) | Display offline banner; await circuit cooldown (30 seconds) before retrying network calls. |
+| Exception | Raised when | Typical recovery |
+| :--- | :--- | :--- |
+| `Unauthorized` | Aduki ID refused a sign-in, refresh or unlock (wrong password, missing or wrong second factor, spent, expired or revoked refresh token); a signed-out `Id` has no refresh token; an OIDC error such as `invalid_grant` | sign in again |
+| `Auth` | the mail or scheduling API answered `401`/`403`; an API key was refused; an Aduki ID `2xx` lacked a required field (`refresh` then holds the rotated token, if any) | renew the token (`client.refresh()`), or fix the account's rights |
+| `Network` | transport failure (timeout, DNS, TLS), or an HTTP error not covered above; `code` holds the status when there was a response (e.g. `429`) | retry later; the outbox does this for queued changes |
+| `Protocol` | a response that cannot be parsed, a missing mandatory field, or an OIDC check failing (state, issuer, id token) | report it; do not retry blindly |
+| `CircuitOpen` | a `Circuit` you use is open | wait for the cooldown |
+| `Storage`, `Sync` | declared for local-store and sync failures | the SDK does not raise them yet |
+
+Sign-in messages start with Aduki ID's error kind where it sent one, for
+example `auth.factor: ...`.
 
 ---
 
 ## 3. Recommended Handling Patterns
 
-### Comprehensive Error Handling in ViewModel
+### Error handling in a ViewModel
 
 ```kotlin
 viewModelScope.launch(Dispatchers.IO) {
     try {
         client.sync.all()
-    } catch (e: AdukiException.Unauthorized) {
-        // Step 1: Attempt silent token rotation
+    } catch (e: AdukiException.Auth) {
+        // The SDK already renews once on a 401; a second refusal lands here.
+        // Step 1: Try an explicit renewal
         val refreshed = client.refresh()
         if (!refreshed) {
             // Step 2: Refresh token is dead — clear session and redirect to login
@@ -70,14 +74,11 @@ viewModelScope.launch(Dispatchers.IO) {
             _navEvents.emit(NavDestination.Login)
         }
     } catch (e: AdukiException.CircuitOpen) {
-        // Device is offline or server experiencing outage — graceful UI degradation
+        // Only if you wrap calls in a Circuit: fail fast while the service is down
         _uiState.update { it.copy(isOffline = true) }
     } catch (e: AdukiException.Network) {
         // Network blip — Outbox already handles queueing
         Log.w("Aduki", "Network synchronization deferred: ${e.message} (HTTP ${e.code})")
-    } catch (e: AdukiException.Storage) {
-        // Critical storage failure
-        Log.e("Aduki", "Fatal storage error: ${e.message}", e)
     }
 }
 ```

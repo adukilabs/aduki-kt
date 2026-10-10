@@ -1,6 +1,6 @@
 # Circuit Breaker & Fault Tolerance Reference
 
-To conserve device battery and eliminate unnecessary radio wakeups during network outages, the Aduki Android SDK wraps network operations in a non-blocking 3-state `Circuit` breaker.
+`pro.aduki.core.retry.Circuit` is a small three-state circuit breaker for fail-fast behaviour during outages. It is a utility: the SDK's own clients do not wrap their calls in it, so use it around your own calls (for example a custom `Dispatcher` for the outbox).
 
 ---
 

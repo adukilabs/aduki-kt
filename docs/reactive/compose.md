@@ -1,6 +1,6 @@
 # Jetpack Compose UI Binding Reference
 
-Because the Aduki Android SDK exposes standard Kotlin `StateFlow` primitives backed by ObjectBox live queries, integrating with Jetpack Compose requires zero adapter boilerplate and guarantees 60/120 FPS frame rates.
+Because the Aduki Android SDK exposes standard Kotlin `StateFlow` primitives backed by ObjectBox live queries, integrating with Jetpack Compose needs no adapter code: collect the flows with `collectAsStateWithLifecycle()`.
 
 ---
 
@@ -22,7 +22,7 @@ class MailboxViewModel(
     private val mailboxHex: String = "inbox"
 ) : ViewModel() {
 
-    // Hot StateFlow collecting directly from ObjectBox query observer
+    // StateFlow fed by an ObjectBox query observer
     val messages: StateFlow<List<Message>> = client.mail
         .observe(mailboxHex) ?: MutableStateFlow(emptyList())
 
@@ -101,7 +101,7 @@ fun MailboxScreen(viewModel: MailboxViewModel) {
 
 ## 3. Recomposition Best Practices
 
-1. **Always Supply `key = { it.hex }`**: Without a stable key, inserting a single message at index 0 forces Compose to recreate all visible rows. With `key = { it.hex }`, Compose animates the item insertion with 0 redundant recompositions.
-2. **Use `collectAsStateWithLifecycle()`**: Disables coroutine observation while the screen is in the background, conserving battery and CPU.
-3. **Immutability**: ObjectBox entities emitted by `StateFlow` are emitted as freshly read snapshots, preventing concurrent modification exceptions across composition passes.
+1. **Always Supply `key = { it.hex }`**: Without a stable key, inserting a single message at index 0 forces Compose to recreate all visible rows. With `key = { it.hex }`, Compose can keep the other rows and animate the insertion.
+2. **Use `collectAsStateWithLifecycle()`**: Stops collecting while the screen is in the background.
+3. **Immutability**: Each emission is a freshly read list; treat the entities in it as read-only.
 

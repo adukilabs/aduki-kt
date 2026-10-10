@@ -1,8 +1,8 @@
 # SKILLS.md - aduki-kt engineering guides
 
-Condensed, Kotlin-flavoured rules. The originals are in `aduki/Next/skills/`
+Condensed, Kotlin-flavoured rules. The originals are in `aduki/guide/skills/`
 (`naming.md`, `design.md`, `rust.md`, `optimize.md`); on a difference the
-originals win. Specs: `Next/README.md`; registry: `aduki/Next/spec.md`.
+originals win. Specs: `guide/README.md`; registry: `aduki/guide/spec.md`.
 A PR that changes behaviour changes the owning spec and bumps its version.
 
 ## 1. Naming (naming.md)
@@ -28,7 +28,7 @@ A PR that changes behaviour changes the owning spec and bumps its version.
 ## 3. Optimisation (optimize.md)
 
 - Define the metric and the budget first; without a budget there is no optimisation work.
-- Measure (profiler, benchmark in `guide/benchmark.md`) before changing; macro first (batching, caching, query shape, off the main thread), micro last.
+- Measure (profiler, your own benchmark; none is kept in the repository) before changing; macro first (batching, caching, query shape, off the main thread), micro last.
 - Evidence in the PR: before and after numbers.
 - Battery counts as a budget: batch network work, use jittered retries, no polling where a push exists.
 

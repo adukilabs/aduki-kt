@@ -1,5 +1,7 @@
 # Project Structure & Architecture
 
+> Design note (internal). Written before parts of it were built; it states intent, and its performance numbers are unmeasured targets. Where it disagrees with the code (database encryption, StrongBox, circuit breaker use, gRPC use), the code and `progress.md` section 3.3 win.
+
 This document specifies the module decomposition, package layout, and design conventions for the Aduki Android Kotlin SDK.
 
 ---
@@ -43,7 +45,7 @@ To enable clean tree-shaking, minimal cold startup overhead, and isolated unit t
 
 ```text
 KOTLIN/
-├── docs/                     # Architectural, database, and benchmark specifications
+├── docs/                     # Public mdBook (docs.aduki.pro/kt)
 ├── core/                     # Shared models, errors, dispatchers, and memory buffers
 ├── crypto/                   # Hardware KeyStore integration and zero-copy envelope encryption
 ├── store/                    # ObjectBox entities, indexes, and reactive Flow box queries

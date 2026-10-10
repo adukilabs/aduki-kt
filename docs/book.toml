@@ -1,17 +1,16 @@
 [book]
-title = "Aduki Android Kotlin SDK Book"
-authors = ["Aduki Org"]
-description = "Comprehensive developer guide and API reference for the high-performance Aduki Android Kotlin SDK."
+title = "Aduki Kotlin SDK"
+authors = ["Aduki Labs"]
+description = "Developer guide and API reference for the Aduki Kotlin SDK."
 language = "en"
 src = "."
 
 [output.html]
 git-repository-url = "https://github.com/adukilabs/aduki-kt"
 edit-url-template = "https://github.com/adukilabs/aduki-kt/edit/main/docs/{path}"
-site-url = "/aduki-kt/"
+site-url = "/kt/"
 default-theme = "rust"
 preferred-dark-theme = "coal"
-mathjax-support = false
 
 [output.html.fold]
 enable = true

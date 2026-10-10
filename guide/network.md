@@ -1,5 +1,7 @@
 # Dual-Stack Network Transport Specification
 
+> Design note (internal). Written before parts of it were built; it states intent, and its performance numbers are unmeasured targets. Where it disagrees with the code (database encryption, StrongBox, circuit breaker use, gRPC use), the code and `progress.md` section 3.3 win.
+
 This document details the network transport architecture of the Aduki Android Kotlin SDK. The SDK provides a dual-stack engine combining **gRPC (via `grpc-okhttp`)** for binary streaming and synchronization with **REST (via `OkHttp 4`)** for HTTP/2 multiplexed endpoints and multipart blob uploads.
 
 ---

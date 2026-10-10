@@ -8,13 +8,14 @@ The Aduki Android SDK is configured either interactively via `Aduki.login(...)` 
 
 ### `Options` Data Class
 
-All network and runtime parameters are encapsulated in the immutable `Options` data class:
+Network and runtime parameters are held in the immutable `Options` data class (`maxRetries` is reserved: no SDK code reads it yet):
 
 ```kotlin
 package pro.aduki.core.config
 
 data class Options(
     val endpoint: String = Endpoints.REST,
+    val identity: String = Endpoints.ID,
     val grpcHost: String = Endpoints.GRPC_HOST,
     val grpcPort: Int = Endpoints.GRPC_PORT,
     val timeoutSeconds: Long = 15,
@@ -30,6 +31,8 @@ package pro.aduki.core.config
 
 object Endpoints {
     const val REST = "https://mail.aduki.pro/v1"
+    const val ID = "https://id.aduki.pro/v1"
+    const val AUDIENCE = "mail"
     const val GRPC_HOST = "grpc.aduki.pro"
     const val GRPC_PORT = 443
 }
@@ -46,6 +49,8 @@ class Builder {
     fun key(key: String): Builder
     fun token(token: String): Builder
     fun endpoint(endpoint: String): Builder
+    fun identity(identity: String): Builder
+    fun dpop(key: pro.aduki.crypto.dpop.Key): Builder
     fun grpc(host: String, port: Int = Endpoints.GRPC_PORT): Builder
     fun secure(enabled: Boolean): Builder
     fun timeout(seconds: Long): Builder
@@ -54,6 +59,7 @@ class Builder {
     fun worker(worker: Worker): Builder
     fun mail(repo: MailRepo): Builder
     fun contacts(repo: ContactRepo): Builder
+    fun scheduling(repo: AppointmentRepo, engine: ScheduleEngine? = null): Builder
     fun engines(mailbox: MailboxEngine, contact: ContactEngine): Builder
     fun build(): Aduki
 }
@@ -63,14 +69,15 @@ class Builder {
 
 | Method | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `key` | `key` | `String` | `""` | Static API key (`hm_live_...` or `hm_test_...`). |
+| `key` | `key` | `String` | `""` | Static API key, sent as `Authorization: Key <key>` (see [API keys](../auth/keys.md)). |
 | `token` | `token` | `String` | `""` | Pre-existing JWT access token for user sessions. |
 | `endpoint` | `endpoint` | `String` | `Endpoints.REST` | Base REST API URL. |
 | `grpc` | `host`, `port`| `String`, `Int` | `grpc.aduki.pro`, `443` | Target gRPC host and TLS port. |
-| `secure` | `enabled` | `Boolean` | `true` | Enables hardware KeyStore StrongBox envelope encryption for local databases. |
+| `secure` | `enabled` | `Boolean` | `true` | Turns TLS certificate pinning on for the default HTTP client (pinning is skipped for `localhost` and `127.0.0.1`). It does not encrypt local storage. |
 | `timeout` | `seconds` | `Long` | `15` | OkHttp socket connect, read, and write timeout in seconds. |
 | `http` | `client` | `OkHttpClient` | `null` | Optional custom OkHttpClient instance. |
 | `identity` | `identity` | `String` | `https://id.aduki.pro/v1` | Aduki ID base used to renew and revoke sign-ins. |
+| `dpop` | `key` | `Key` | none | Device key; binds sign-ins to it ([DPoP](../auth/dpop.md)). |
 
 ---
 
@@ -80,7 +87,7 @@ class Builder {
 ```kotlin
 val client = Aduki.login(
     handle = "alice@aduki.me",
-    password = "CorrectHorseBatteryStaple123!",
+    password = password,
     code = "482019" // authenticator code; Aduki ID requires a second factor
 )
 ```
@@ -88,7 +95,7 @@ val client = Aduki.login(
 ### Headless Worker via API Key
 ```kotlin
 val client = Aduki.builder()
-    .key("hm_live_7f9b8c2d1e0a4b5c6d7e8f9a0b1c2d3e")
+    .key(apiKey) // a key starting hm_ or key_
     .endpoint("https://mail.aduki.pro/v1")
     .grpc("grpc.aduki.pro", 443)
     .timeout(30)

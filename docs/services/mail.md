@@ -1,6 +1,6 @@
 # Mail Service Reference
 
-The `Mail` service (`client.mail`) provides high-level APIs for composing, querying, flagging, and managing email messages and mailbox folders with zero-copy ObjectBox backing.
+The `Mail` service (`client.mail`) provides high-level APIs for composing, querying, flagging, and managing email messages and mailbox folders backed by the local ObjectBox store.
 
 ---
 
@@ -77,7 +77,7 @@ suspend fun flag(hex: String, flag: Int)
 
 | Parameter | Type | Required | Description |
 | :--- | :--- | :--- | :--- |
-| `hex` | `String` | Yes | Unique 64-character message hexadecimal identifier. |
+| `hex` | `String` | Yes | Message hex identifier. |
 | `flag` | `Int` | Yes | Bitmask integer to XOR toggle against the message's current `flags`. |
 
 #### Bitmask Constants (`Message.Companion`)
@@ -132,7 +132,6 @@ fun observe(mailboxHex: String): StateFlow<List<Message>>?
 
 - **Parameters**: `mailboxHex: String` — Mailbox identifier (e.g., `"inbox"`).
 - **Return Type**: `StateFlow<List<Message>>?` — Emits sorted list of `Message` entities. Returns `null` if local store is uninitialized.
-- **Zero-Copy Performance**: ObjectBox subscribers use query observers without allocating intermediate cursor cursors or JSON serialization.
 
 ---
 
