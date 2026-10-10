@@ -3,29 +3,27 @@ package pro.aduki.crypto.tls
 import okhttp3.CertificatePinner
 import okhttp3.ConnectionSpec
 import okhttp3.TlsVersion
+import pro.aduki.core.config.Pin
 
 /**
- * TLS 1.3 transport security configuration and SPKI certificate pinning.
+ * TLS connection settings and opt-in SPKI certificate pinning.
+ *
+ * The SDK ships no pins: pinning is off unless the app passes its own
+ * (`Aduki.Builder.pins(...)`). A pin that does not match what the server
+ * presents breaks every request to that host, so only add pins you took from
+ * the live certificate chain, plus a backup.
  */
 object Pinning {
 
-    const val REST_HOST = "mail.aduki.pro"
-    const val GRPC_HOST = "grpc.aduki.pro"
-
-    // Primary SPKI SHA-256 pin
-    const val PIN_PRIMARY = "sha256/WoiWRyIOVNa9ihaBciRSC7XHjliYS9VwUGOIud4PB18="
-
-    // Backup pin for key rotation
-    const val PIN_BACKUP = "sha256/2k2i402K90558661mndnnd901002872365287293848="
-
     /**
-     * Builds CertificatePinner enforced on Aduki production domains.
+     * Builds a [CertificatePinner] from [pins], or returns null when there are
+     * none (no pinning).
      */
-    fun pinner(): CertificatePinner {
-        return CertificatePinner.Builder()
-            .add(REST_HOST, PIN_PRIMARY, PIN_BACKUP)
-            .add(GRPC_HOST, PIN_PRIMARY, PIN_BACKUP)
-            .build()
+    fun pinner(pins: List<Pin>): CertificatePinner? {
+        if (pins.isEmpty()) return null
+        val builder = CertificatePinner.Builder()
+        pins.forEach { builder.add(it.host, *it.hashes.toTypedArray()) }
+        return builder.build()
     }
 
     /**
@@ -38,4 +36,3 @@ object Pinning {
         return listOf(spec)
     }
 }
-

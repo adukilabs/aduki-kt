@@ -21,21 +21,15 @@ class LiveTest {
     }
 
     private fun liveApiKey(): String {
-        return System.getProperty("aduki.key")
-            ?: System.getenv("ADUKI_KEY")
-            ?: "hm_live_test_credential_hex"
+        val key = System.getProperty("aduki.key") ?: System.getenv("ADUKI_KEY")
+        assumeTrue("Skipping live tests: set ADUKI_KEY (or -Daduki.key)", !key.isNullOrBlank())
+        return key!!
     }
 
     private fun liveEndpoint(): String {
         return System.getProperty("aduki.endpoint")
             ?: System.getenv("ADUKI_ENDPOINT")
             ?: Endpoints.REST
-    }
-
-    private fun liveGrpcHost(): String {
-        return System.getProperty("aduki.grpc.host")
-            ?: System.getenv("ADUKI_GRPC_HOST")
-            ?: Endpoints.GRPC_HOST
     }
 
     @Before
@@ -60,14 +54,13 @@ class LiveTest {
     }
 
     /**
-     * T5-LIVE-02: Live gRPC Connection Handshake
+     * T5-LIVE-02: Client builds against the live endpoint
      */
     @Test
     fun connect() = runBlocking {
         val client = Aduki.builder()
             .key(liveApiKey())
             .endpoint(liveEndpoint())
-            .grpc(liveGrpcHost(), Endpoints.GRPC_PORT)
             .build()
 
         assertNotNull(client)

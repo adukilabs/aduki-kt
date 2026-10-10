@@ -6,10 +6,9 @@ package pro.aduki.core.config
 data class Options(
     val endpoint: String = Endpoints.REST,
     val identity: String = Endpoints.ID,
-    val grpcHost: String = Endpoints.GRPC_HOST,
-    val grpcPort: Int = Endpoints.GRPC_PORT,
     val timeoutSeconds: Long = 15,
     val secure: Boolean = true,
-    val maxRetries: Int = 3
+    /** TLS pins for the default HTTP client; empty (the default) means no pinning. */
+    val pins: List<Pin> = emptyList()
 )
 

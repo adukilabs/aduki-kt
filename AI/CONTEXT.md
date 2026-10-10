@@ -38,7 +38,6 @@ A change of SDK behaviour changes the owning spec in the same pull request (the 
 | Aduki ID | `https://id.aduki.pro/v1` (`Endpoints.ID`); routes used: `POST /sessions`, `POST /tokens`, `DELETE /sessions/{hex}`, `/links`, `/center`, `/credentials`, OIDC discovery at `/.well-known/openid-configuration` on the origin |
 | Mail REST | `https://mail.aduki.pro/v1` (`Endpoints.REST`) |
 | Mail event stream | `https://mail.aduki.pro/jmap/eventsource` |
-| gRPC | `grpc.aduki.pro:443` |
 | Docs | `docs.aduki.pro/kt` |
 
 No local service ports: the SDK is a client; tests use MockWebServer on ephemeral ports.
@@ -48,7 +47,7 @@ No local service ports: the SDK is a client; tests use MockWebServer on ephemera
 | Name | Used by |
 |---|---|
 | `ADUKI_LIVE_URL`, `ADUKI_LIVE_EMAIL`, `ADUKI_LIVE_PASSWORD`, `ADUKI_LIVE_ID`, `ADUKI_LIVE_CODE`, `ADUKI_LIVE_BACKUP` | `net` live test (`./gradlew :net:liveTest`) |
-| `ADUKI_LIVE=true` (or property `aduki.live`), `ADUKI_KEY`, `ADUKI_ENDPOINT`, `ADUKI_GRPC_HOST` | `sdk` live test (API-key based; needs `ADUKI_KEY`, otherwise its built-in placeholder key fails) |
+| `ADUKI_LIVE=true` (or property `aduki.live`), `ADUKI_KEY`, `ADUKI_ENDPOINT` | `sdk` live test (API-key based; skipped without `ADUKI_KEY`) |
 | `SIGNING_KEY`, `SIGNING_PASSWORD` | PGP signing for publishing (also Gradle properties `signing.key`, `signing.password`) |
 | `SONATYPE_USERNAME`, `SONATYPE_PASSWORD` | Maven Central upload in `publish.yml` |
 | `GITHUB_ACTOR`, `GITHUB_TOKEN` (Gradle properties `gpr.user`, `gpr.key`) | GitHub Packages |

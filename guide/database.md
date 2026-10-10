@@ -1,6 +1,6 @@
 # ObjectBox Database Specification
 
-> Design note (internal). Written before parts of it were built; it states intent, and its performance numbers are unmeasured targets. Where it disagrees with the code (database encryption, StrongBox, circuit breaker use, gRPC use), the code and `progress.md` section 3.3 win.
+> Design note (internal). Written before parts of it were built; it states intent, and its performance numbers are unmeasured targets. Where it disagrees with the code (database encryption, StrongBox, circuit breaker use, gRPC use), the code and `progress.md` section 3.3 win. gRPC was dropped (D-HOST-5, 2026-10-10): every mention of it below is history.
 
 This document details the local persistence architecture of the Aduki Android Kotlin SDK. SQLite and Room are completely replaced by **ObjectBox** to achieve true zero-copy binary access, deterministic performance, and ACID durability.
 
@@ -228,33 +228,11 @@ class MessageBatchWriter(private val store: BoxStore) {
 
 ---
 
-## 6. Hardware-Secured Database Encryption
+## 6. Sealed columns (no full-database encryption)
 
-ObjectBox supports native database encryption using AES-256-GCM. The SDK configures the encryption key using hardware derived secrets from the Android KeyStore:
-
-```kotlin
-package pro.aduki.store.box
-
-import android.content.Context
-import io.objectbox.BoxStore
-import io.objectbox.MyObjectBox
-import pro.aduki.crypto.keystore.KeyStoreProvider
-
-object StoreFactory {
-
-    fun create(context: Context, secure: Boolean): BoxStore {
-        val builder = MyObjectBox.builder()
-            .androidContext(context.applicationContext)
-
-        if (secure) {
-            // Hardware-backed KeyStore derivation
-            val dbKey = KeyStoreProvider.getOrCreateDatabaseKey()
-            builder.initialBytes(dbKey)
-            // Immediately zeroize raw byte key copy in memory
-            dbKey.fill(0)
-        }
-
-        return builder.build()
-    }
-}
-```
+ObjectBox 4.0.3 has no encryption option, so the file is not encrypted as a
+whole (the earlier draft, `initialBytes(dbKey)`, was wrong). All personal text columns
+are sealed with `Vault` (AES-256-GCM, versioned, key id for rotation); structural
+columns (ids, flags, timestamps, counters, roles) stay in the clear; exact lookups
+use keyed blind indexes and free-text search runs in memory. What is sealed, how legacy rows upgrade,
+and what is unverified: `security.md` section 4.

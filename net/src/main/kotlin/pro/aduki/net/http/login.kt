@@ -162,13 +162,14 @@ object Login {
         client: OkHttpClient,
         endpoint: String,
         token: String,
-        code: String
+        code: String,
+        apiKey: Boolean = false
     ): Boolean {
         require(code.length == 6 && code.all { it.isDigit() }) { "TOTP code must be exactly 6 digits" }
 
         val url = "${endpoint.trimEnd('/')}/user/totp"
         val payload = JSONObject.quote(code) // Valid JSON string representation
-        val authHeader = if (token.startsWith("hm_") || token.startsWith("key_")) "Key $token" else "Bearer $token"
+        val authHeader = Scheme.header(token, apiKey)
         val request = Request.Builder()
             .url(url)
             .header("Authorization", authHeader)

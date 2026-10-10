@@ -8,7 +8,7 @@ a static API key for headless clients.
 | Property | Interactive sign-in | API key |
 | :--- | :--- | :--- |
 | Use | apps with human users | workers, tests, daemons |
-| Credentials | address + password + second factor, at Aduki ID | a key starting `hm_` or `key_` |
+| Credentials | address + password + second factor, at Aduki ID | an opaque key issued at Aduki Mail |
 | HTTP header | `Authorization: Bearer <access token>` (`DPoP <token>` when bound) | `Authorization: Key <key>` |
 | Lifetime | 10-minute access token (EdDSA JWT per audience), single-use rotating refresh token | until revoked at the server |
 | Renewal | automatic on `401` | none |

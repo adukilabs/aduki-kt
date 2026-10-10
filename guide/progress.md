@@ -3,7 +3,7 @@ Spec-ID: ADK-KT-002
 Title: aduki-kt progress
 Category: KT
 Status: Draft
-Version: 4
+Version: 6
 Depends-on: ADK-KT-003
 ---
 
@@ -14,7 +14,7 @@ Facts from the repository on 2026-10-10 (git log of `code/slice-4`). Update in t
 ## 1. Build layout
 
 Gradle multi-project, plain `kotlin("jvm")` modules (no Android plugin yet), ObjectBox 4.0.3,
-OkHttp, coroutines, org.json. Maven group `pro.aduki` (was `io.github.adukilabs`); `release = "0.3.0"` in the root `build.gradle.kts`.
+OkHttp, coroutines, org.json. Maven group `pro.aduki` (was `io.github.adukilabs`); `release = "0.4.0"` in the root `build.gradle.kts`.
 
 ## 2. Modules
 
@@ -22,7 +22,7 @@ OkHttp, coroutines, org.json. Maven group `pro.aduki` (was `io.github.adukilabs`
 |---|---|
 | `core` | models (tokens, center, identity, mail, schedule), config (endpoints, options), memory (pool, ring, wipe, hash), retry (circuit, jitter), errors (`AdukiException`) |
 | `crypto` | Android Keystore provider (`aduki_master`, no StrongBox request), AES-256-GCM `Envelope`, `Guard` sanitizer, TLS pinning (`Pinning`), DPoP `Key` interface with `Software` P-256 / Ed25519 keys |
-| `net` | HTTP: login (submit, refresh, logout, totp), `Id` (K2), `Center` (link, fetch, unlink, register, unlock), `Events` (K3), `Dpop` (K5), `Oidc` (K7), mail, scheduling, whoami, REST envelope reader, bearer interceptor; gRPC channel and metadata (not used by the `Aduki` facade) |
+| `net` | HTTP: login (submit, refresh, logout, totp), `Id` (K2), `Center` (link, fetch, unlink, register, unlock), `Events` (K3), `Dpop` (K5), `Oidc` (K7), mail, scheduling, whoami, REST envelope reader, bearer interceptor (`Scheme` picks the `Authorization` scheme) |
 | `store` | ObjectBox entities (message, mailbox, contact, appointment, slot, service, outbox, sync), batch queries, box holder |
 | `sync` | mailbox, contact, schedule engines; outbox manager and worker; HTTP transport and dispatcher; merge reconcile |
 | `state` | repositories (mail, contact, appointment, session) |
@@ -60,13 +60,18 @@ Not started: K0 (Maven Central namespace), K4 (authenticator), K6 (passkeys), An
 
 ## 3.3 Known code facts that docs must not overstate
 
-- `Factory.create(dir, key)` ignores `key`: the ObjectBox database is **not encrypted**. `Envelope` and `Provider` are building blocks no SDK code path calls; session tokens live in memory (`Session` StateFlows), not in a store.
-- `Options.secure` only switches TLS pinning on the default HTTP client (off for `localhost`/`127.0.0.1`); `Options.maxRetries` is read by nothing.
-- `Circuit` is a standalone utility; nothing in the SDK wraps calls with it. The `Channel` gRPC factory is not used by `Aduki`.
+- The ObjectBox database file is **not encrypted as a whole**: ObjectBox 4.0.3 has no encryption option. All personal text columns are sealed by `Vault`/`Sealing` (`security.md` section 4); structural metadata is in the clear; Android Keystore behaviour is unverified (device run pending). Session tokens live in memory, not in a store.
+- `Options.secure` only allows TLS pinning on the default HTTP client, and pinning is opt-in (`Options.pins`, none shipped); `Options.maxRetries` was removed.
+- `Circuit` is a standalone utility; nothing in the SDK wraps calls with it.
 - `Lifecycle.pause()` only flips a flag and calls listeners; the one internal listener flushes the outbox on resume.
-- `Pinning` holds two SPKI pins whose values were never confirmed against the live certificate (the backup looks like a placeholder).
-- Contacts sync has an engine (`ContactEngine`) but no HTTP `ContactTransport`; callers supply one.
+- Contacts sync: `HttpContactTransport` reads `GET /user/contacts` in full each time (no incremental REST route; rows carry no vCard). Tested with MockWebServer only, never against a server.
 - No benchmark harness exists; the benchmark numbers that used to be in the docs had no source and were removed.
+
+## 3.5 Phase 1 fixes (branch `code/phase1-fixes`, local, 2026-10-10)
+
+Built: gRPC removed (D-HOST-5); pinning opt-in via `Options.pins`; one `Scheme` helper for the `Authorization` scheme (server accepts `Bearer` or `Key` for both credential kinds); `HttpContactTransport` and the `net.http.Contacts` client (full-list reconcile, see `docs/services/contacts.md`); `Options.maxRetries`, the placeholder live key and the dead `key` parameter of `Factory.create` removed; sealed payload columns (`Vault`, `Sealing`, `Builder.secureStore`); `CHANGELOG.md` added.
+Verified: `./gradlew --no-daemon clean test --continue` is BUILD SUCCESSFUL on JDK 17 and on JDK 22 with 184 tests, 6 skipped (live tier, no server), 0 failures. Pinning against a generated local TLS certificate only; contacts against MockWebServer only.
+Not verified: any real host (`mail.aduki.pro` did not answer on 443), any device, database encryption (not built).
 
 ## 3.4 Slice 4 scope
 
@@ -78,9 +83,11 @@ JMAP EventSource `https://mail.aduki.pro/jmap/eventsource`), `store`, `files`, `
 
 ## 4. Environment
 
-No JDK, Gradle or Android SDK on the VPS (checked 2026-10-08 and again 2026-10-10); nothing in this repository was compiled or tested there. `/dev/kvm` is present but 8 GB does not run an emulator beside Gradle. The next step on the real server is `AI/PROGRESS.md`.
+The VPS had no JDK on 2026-10-08 and 2026-10-10 (first record). The phase 1 build box has JDK 17 and JDK 22 (`/opt/jdk17`, `/opt/jdk22`); no Android SDK. `/dev/kvm` is present but 8 GB does not run an emulator beside Gradle. The next step on the real server is `AI/PROGRESS.md`.
 
 ## 5. Changelog
+
+- v6 (2026-10-10): phase 1 fixes (section 3.5); facts in 3.3 corrected for encryption, pinning, contacts transport.
 
 - v5 (2026-10-10): merge state from git log, facts section 3.3, docs restructure (`Next/` moved to `guide/`).
 - v4: slice 4: `Id` wired into `Aduki`, K3 rights stream, K5 protocol part, K7 client (section 3.4).

@@ -14,10 +14,15 @@ val store: BoxStore = Factory.build(context.filesDir)   // pro.aduki.store.box.F
 
 ## Encryption
 
-The SDK does not encrypt the database. `Factory.create(dir, key)` accepts a
-`key` parameter but does not use it yet. Apps that need encryption at rest must
-rely on the platform (file-based encryption on Android) or encrypt sensitive
-fields themselves with the [`Envelope`](../security/cipher.md) cipher.
+The database file as a whole is **not** encrypted: ObjectBox 4.0.3 has no
+encryption option, so the file relies on the platform (file-based encryption on
+Android). The SDK additionally seals every personal text column with
+AES-256-GCM ([Vault](../security/vault.md)): message subject, sender, recipients,
+preview and blob; contact name, e-mail, phone, company and vCard; appointment
+location and notes; mailbox and service names; the outbox payload. Ids, flags,
+timestamps, counters and roles stay in the clear so sync works; contact lookups
+use keyed blind indexes and free-text search runs in memory. Sealing is tested on a plain
+JVM; on Android it is unverified until a device run.
 
 ## Pages
 

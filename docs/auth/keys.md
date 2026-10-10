@@ -6,10 +6,13 @@ API keys give machine-to-machine access for background workers, tests and daemon
 
 ## 1. Key format
 
-The SDK recognises a credential as an API key when it starts with `hm_` or
-`key_`, and then sends it as `Authorization: Key <key>`. Anything else is sent
-as `Authorization: Bearer <token>`. Keys are issued and revoked in the Aduki
-admin console; the SDK does not validate their format beyond this prefix test.
+The server (Aduki Mail) accepts `Authorization: Bearer <token>` or
+`Authorization: Key <token>` for both Aduki ID tokens and API keys and tells
+them apart by the shape of the token. The SDK therefore does not inspect the
+token: a credential supplied through `Aduki.Builder.key(...)` is sent as
+`Key <key>`, everything else (`token(...)`, a signed-in session, a refreshed
+token) as `Bearer <token>`. Keys are issued and revoked in the Aduki admin
+console; the SDK does not validate their format.
 
 ---
 
@@ -21,7 +24,7 @@ API keys are configured via `Aduki.Builder.key(String)`:
 package pro.aduki.sdk
 
 val client = Aduki.builder()
-    .key(apiKey) // starts with hm_ or key_
+    .key(apiKey)
     .endpoint("https://mail.aduki.pro/v1")
     .timeout(30)
     .secure(true)
@@ -48,24 +51,13 @@ fun Aduki.Builder.key(key: String): Aduki.Builder
 
 ### REST HTTP Header
 
-On all outbound HTTP requests, the SDK interceptor inspects the credential and attaches the `Key` scheme header:
+On all outbound HTTP requests, the SDK interceptor attaches the `Key` scheme header when the credential came from `key(...)`:
 
 ```http
 GET /v1/user HTTP/1.1
 Host: mail.aduki.pro
 Authorization: Key <your key>
 Accept: application/json
-```
-
-### gRPC Transport Metadata
-
-For gRPC channels, the SDK attaches the key as ASCII metadata in the `authorization` header:
-
-```kotlin
-val metadata = Metadata().apply {
-    val key = Metadata.Key.of("authorization", Metadata.ASCII_STRING_MARSHALLER)
-    put(key, "Key $apiKey")
-}
 ```
 
 ---

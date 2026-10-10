@@ -1,6 +1,6 @@
 # PROGRESS: what is done, what remains, what is unverified
 
-Written 2026-10-10 from `git log` and a read of the code. **Nothing in this repository has been compiled or tested by the people or AI who wrote this**: the VPS they used had no JDK, no Gradle and no Android SDK. Every "done" below means "code and tests exist and were reviewed by reading", not "tests pass". Item 1 turns that into fact.
+Written 2026-10-10 from `git log` and a read of the code. Update 2026-10-10 (branch `code/phase1-fixes`): the build now runs on a box with JDKs. `./gradlew --no-daemon test --continue` passes on JDK 17 and JDK 22 (counts in `guide/progress.md` section 3.5). Nothing Android has ever run; items marked "pending device" stay unverified. Older "done" lines below were written by reading and are now backed by the JVM test run, except where stated.
 
 ## Done (code present, reviewed by reading only)
 
@@ -13,21 +13,21 @@ Written 2026-10-10 from `git log` and a read of the code. **Nothing in this repo
 
 ## Remaining, in order
 
-### 1. Get a JDK and run the tests (blocks everything else)
+### 1. Get a JDK and run the tests (done on JDK 17 and 22; CI matrix covers both)
 
 - Install JDK 17 (the CI uses Temurin 17). `cd` to the repo, `./gradlew --no-daemon test`. One build at a time.
 - Verify: all modules compile and every test passes. Expect real failures: ~1,400 lines of slice 3 and 4 code (`id.kt`, `events.kt`, `dpop.kt`, `oidc.kt`, `client.kt` changes) and their tests were never compiled.
 - Gradle version mismatch to resolve: the wrapper says Gradle 9.6.0 (`gradle/wrapper/gradle-wrapper.properties`), `.github/workflows/publish.yml` installs Gradle 8.7 and runs `gradle test`. Decide one, make the workflow use `./gradlew`. Verify by a green CI run.
 - The `store` module applies the ObjectBox Gradle plugin; check it generates `MyObjectBox` on a plain JVM (needs the ObjectBox native lib for the host OS for tests that open a store).
 
-### 2. Merge slice 4 into `main`
+### 2. (closed) Slice 4 is in `main`
 
-PR #13 (K2 wiring, K3, K5, K7) was merged into branch `code/slice-3`, not into `main`; `main` ends at PR #12. Open a PR `code/slice-3` to `main` (after item 1 is green). Verify: `git log origin/main` contains `88fbb4e`. The docs-restructure PR from this task was branched from `code/slice-3` for that reason and includes those commits until they reach `main`.
+`origin/main` contains `88fbb4e` through the docs-restructure PR; nothing to do.
 
 ### 3. K0: Maven Central namespace `pro.aduki` (owner action)
 
 - The owner adds the DNS TXT record on `aduki.pro` that Sonatype Central asks for and verifies the namespace in the Central portal. Decision D-KT-1 (group move) is made; the verification is not done as far as the repo shows.
-- Then: signing key and `SIGNING_KEY`, `SIGNING_PASSWORD`, `SONATYPE_USERNAME`, `SONATYPE_PASSWORD` as repository secrets; tag `v0.3.0` (or newer); `publish.yml` uploads the bundle. Verify: `https://central.sonatype.com/artifact/pro.aduki/sdk` shows the version and a clean Gradle project resolves `pro.aduki:sdk:<version>`.
+- Then: signing key and `SIGNING_KEY`, `SIGNING_PASSWORD`, `SONATYPE_USERNAME`, `SONATYPE_PASSWORD` as repository secrets; tag `v0.4.0` (or newer); `publish.yml` uploads the bundle. Verify: `https://central.sonatype.com/artifact/pro.aduki/sdk` shows the version and a clean Gradle project resolves `pro.aduki:sdk:<version>`.
 - The README and docs say "check releases for the published version"; before verification the badge claim "Maven Central 0.3.0" (removed from the root README in this PR) was unproven.
 - **Relocation POM** for `io.github.adukilabs:sdk` pointing to `pro.aduki:sdk` (plan K1, owner decision D-KT-1): not done; needs write access to the old group's namespace on Central. Verify: resolving the old coordinates redirects with a relocation warning.
 
@@ -51,17 +51,24 @@ Not started. Android only. Verify: register and authenticate against the Aduki I
 
 Deferred: no `space` module. Needs final Space APIs (workspaces, projects, tasks, time, invoices, notifications, search), tokens from `Id` (audience `space`), DPoP (Space accepts DPoP-bound tokens only) and a rights source for non-mail clients (decision D-KT-3: ADK-AUTH-003 section 7.4).
 
-### 9. Claims in the code that are wrong or unproven (fix or verify)
+### 9. Claims in the code: state after the phase 1 fixes
 
-- `store.box.Factory.create(dir, key)` ignores `key`: the database is not encrypted. Decide: implement ObjectBox encryption with a Keystore-held key (`Envelope`/`Provider` are unused building blocks), or keep it documented as unencrypted (the public docs now say so).
-- `crypto.tls.Pinning` holds two SPKI pins (`PIN_PRIMARY`, `PIN_BACKUP`); neither was checked against the live certificates, and the backup value looks like a placeholder. A wrong pin breaks every default-client request in production while `secure(true)`. Verify with `openssl s_client -connect mail.aduki.pro:443 | openssl x509 -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64` and compare; same for `grpc.aduki.pro`.
-- API key prefix: the SDK sends `Key <key>` only for values starting `hm_` or `key_` (`client.kt`, `auth.kt`, `login.kt`). `hm_` is the pre-rename (hermes) prefix; confirm against the Aduki Mail server which prefix it issues now and drop the one that is obsolete.
-- `Options.maxRetries` is read by nothing. `Circuit` is not used by any client. `Channel` (gRPC) is not used by `Aduki`. `Lifecycle.pause()` stops nothing. Decide whether to wire or delete.
-- Contacts sync has an engine but no HTTP transport (`ContactTransport` has no implementation); `client.contacts.sync` works only if the caller built the engine with their own transport. Check against the server's contacts route.
-- `sdk/.../live.test.kt` falls back to a placeholder API key `hm_live_test_credential_hex`.
+Fixed on `code/phase1-fixes` (see `CHANGELOG.md`):
+
+- gRPC host, `Options.grpcHost/grpcPort`, `net.grpc.*` and its dependencies removed (D-HOST-5).
+- `Options.maxRetries` removed; the placeholder live key removed (live test skips without `ADUKI_KEY`).
+- TLS pinning is opt-in (`Options.pins`, `Builder.pins`), no built-in pins. Tested against a local TLS server only.
+- The `Authorization` scheme is chosen by one helper (`net.http.Scheme`): `Key` only for a credential given to `Builder.key(...)`, `Bearer` otherwise, no prefix sniffing. The server (`aduki` `crates/api/src/helpers/auth.rs`) accepts both schemes for both credential kinds and tells them apart by token shape.
+- Contacts: `HttpContactTransport` (full-list reconcile over `GET /user/contacts`; the server's JMAP `Contact/changes` is not used), `net.http.Contacts`, `Builder.contactStorage`. MockWebServer tests only; never run against a server.
+- ObjectBox 4.0.3 has no encryption option (jar, native library and a plaintext-on-disk test). Owner decision: platform encryption plus sealed sensitive fields. Built: `crypto.cipher.Vault` and `store.box.Sealing` seal all personal text columns (message subject/sender/recipients/preview/blob, contact name/email/phone/company/vcard, appointment location/notes, mailbox and service names, outbox payload); ids, flags, timestamps, counters and roles stay clear; contacts have keyed blind indexes; free-text search is in memory (`guide/security.md` section 4, `docs/security/vault.md`). The database file is NOT encrypted as a whole; nothing may claim more. Schema changed for 0.4.0: old databases must be deleted.
+
+Still open:
+
+- Sealed columns on a device: Android Keystore key creation (the `setRandomizedEncryptionRequired(false)` reflection call), use with Envelope's own IV, non-exportability, reinstall/backup, real `objectbox-android`. UNVERIFIED until a device run. Also: plaintext pages left in LMDB after migrating a legacy database (compaction not done).
+- `Circuit` is used by no client; `Lifecycle.pause()` stops nothing: wire or delete.
 - `whoami` stays on mail `GET /user` because Aduki ID has no whoami route; `Identity.scopes` and `tier` are filled only if mail returns them.
-- No LICENSE file exists although the README states Apache 2.0 and the old badge linked to `LICENSE`. Add it (owner to confirm the license).
-- No benchmark harness exists. The numbers once in the docs had no source; if performance claims are wanted, write a JMH or Android Macrobenchmark first.
+- No benchmark harness exists. Do not add numbers to docs without one.
+- Contacts: rows carry no vCard and no modification time; consider JMAP `Contact/changes` for incremental sync.
 
 ### 10. Docs hosting
 
@@ -69,14 +76,18 @@ Deferred: no `space` module. Needs final Space APIs (workspaces, projects, tasks
 - `.github/workflows/book.yml` still deploys to GitHub Pages; with the site now at `docs.aduki.pro/kt` decide whether to remove the deploy job (the build job stays as a check). Owner decision.
 - Pages in `docs/` that were not re-verified line by line against the code: `services/mail.md`, `services/contacts.md`, `services/sync.md`, `services/outbox.md`, `services/scheduling.md`, `reactive/*`, `store/entities.md`. They were written for 0.2.0 and spot-checked; run them against item 1's green build and a live server, and fix drift.
 
-## Needs the real server
+## Needs server
 
-Items 1 (CI or a box with a JDK), 3 (Central), 5, 7 (live Aduki ID), and the live tier (`AI/SKILLS/live-tier.md`) against a running Aduki ID and Mail with a test account that has an authenticator.
+- TLS pins: `mail.aduki.pro` did not answer on 443 when pinning was made opt-in. Once the hosts are live, take the SPKI hash of the live chain and of the backup key (`openssl` command in `docs/security/tls.md`), then add them to the app configuration and the docs. The SDK defines none on purpose; a pin never taken from a live host must not be added.
+- A live check that a real API key is accepted as `Key` and a real Aduki ID token as `Bearer` (live tier).
+- Contacts sync against a real server: `GET /user/contacts` paging (`after`, `next`, limit 200), `contacts:read` scope with an Aduki ID token (the server admits `/user/*` for ID tokens).
+- Items 1 (CI), 3 (Central), 5, 7 (live Aduki ID), and the live tier (`AI/SKILLS/live-tier.md`) against a running Aduki ID and Mail with a test account that has an authenticator.
 
 ## Needs owner decisions
 
 - D-KT-1 (Maven group `pro.aduki`, relocation POM): decided 2026-10-08; execution pending (item 3).
-- D-KT-3 (the `rights` source for clients without a Mail audience): open.
+- D-KT-3 (the `rights` source for clients without a Mail audience): the owner chose SSE in the foreground; the `Events` stream is that (K3).
 - D-KT-5 (Android items K4, K6, Keystore K5 are verified only on a device or CI emulator): decided; infrastructure missing.
 - GitHub Pages deploy of the book: remove or keep (item 10).
-- Encryption of the local database: implement or leave documented as unencrypted (item 9).
+- Version: `release` is 0.4.0 (breaking changes in `CHANGELOG.md`); tag when releasing.
+- Database encryption: decided (platform + sealed fields). Open: none; structural metadata in the clear is listed in `docs/security/vault.md`.

@@ -42,8 +42,8 @@ class Mail(
             private val messageBox = store.boxFor(Message::class.java)
 
             override fun mailboxes(): Flow<List<Mailbox>> = callbackFlow {
-                val query = mailboxBox.query().order(Mailbox_.name).build()
-                val sub = query.subscribe().observer { data -> trySend(data) }
+                val query = mailboxBox.query().build() // names are sealed: sorted in memory
+                val sub = query.subscribe().observer { data -> trySend(data.sortedBy { it.name }) }
                 awaitClose { sub.cancel() }
             }
 

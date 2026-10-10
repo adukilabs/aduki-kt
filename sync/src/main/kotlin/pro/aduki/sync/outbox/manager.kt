@@ -2,6 +2,7 @@ package pro.aduki.sync.outbox
 
 import io.objectbox.BoxStore
 import org.json.JSONObject
+import pro.aduki.store.box.Sealing
 import pro.aduki.store.entities.Message
 import pro.aduki.store.entities.Outbox
 
@@ -37,10 +38,10 @@ class Manager(private val storage: Storage) {
         override fun getMessage(hex: String): Message? =
             messages.query(pro.aduki.store.entities.Message_.hex.equal(hex)).build().findFirst()
         override fun putMessage(msg: Message) { messages.put(msg) }
-        override fun getOutbox(id: Long): Outbox? = outbox.get(id)
-        override fun putOutbox(entry: Outbox): Long = outbox.put(entry)
+        override fun getOutbox(id: Long): Outbox? = outbox.get(id)?.let(Sealing::opened)
+        override fun putOutbox(entry: Outbox): Long = Sealing.put(outbox, entry)
         override fun removeOutbox(id: Long) { outbox.remove(id) }
-        override fun pending(): List<Outbox> = outbox.all.sortedBy { it.created }
+        override fun pending(): List<Outbox> = outbox.all.map(Sealing::opened).sortedBy { it.created }
         override fun <T> tx(block: () -> T): T = store.callInTx(block)
     })
 

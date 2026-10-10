@@ -11,7 +11,5 @@ object Endpoints {
 
     /** The audience mail accepts on Aduki ID tokens. */
     const val AUDIENCE = "mail"
-    const val GRPC_HOST = "grpc.aduki.pro"
-    const val GRPC_PORT = 443
 }
 

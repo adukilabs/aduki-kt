@@ -34,7 +34,7 @@ implementations on a plain JVM.
 | :--- | :--- |
 | `core` | models, errors, configuration, retry primitives (`Jitter`, `Circuit`), memory helpers |
 | `crypto` | Keystore provider, AES-256-GCM `Envelope`, `Guard`, TLS pinning, DPoP keys |
-| `net` | HTTP clients (`Id`, `Login`, `Center`, `Mail`, `Scheduling`, `Events`, `Dpop`, `Oidc`) and a gRPC channel factory |
+| `net` | HTTP clients (`Id`, `Login`, `Center`, `Mail`, `Scheduling`, `Events`, `Dpop`, `Oidc`) |
 | `store` | ObjectBox entities and batch transactions |
 | `sync` | mailbox, contact and schedule sync engines; the outbox |
 | `state` | repositories that expose `StateFlow` |
@@ -43,7 +43,7 @@ implementations on a plain JVM.
 ## Status
 
 Not yet available: Account Center authenticator for Android, passkeys, and a
-Keystore-backed DPoP key. The local database is not encrypted by the SDK. See
+Keystore-backed DPoP key. The local database file is not encrypted; personal text columns are sealed, structural metadata is not (unverified on Android). See
 the individual pages for the exact behaviour of each feature.
 
 ## Where to start

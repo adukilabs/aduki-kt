@@ -71,19 +71,17 @@ Add the Aduki SDK to `app/build.gradle.kts`:
 ```kotlin
 dependencies {
     // Aduki SDK facade
-    implementation("pro.aduki:sdk:0.3.0")
+    implementation("pro.aduki:sdk:0.4.0")
 
     // Or via JitPack mirror:
-    // implementation("com.github.adukilabs.aduki-kt:sdk:v0.3.0")
+    // implementation("com.github.adukilabs.aduki-kt:sdk:v0.4.0")
 
     // ObjectBox persistence
     implementation("io.objectbox:objectbox-kotlin:4.0.3")
     implementation("io.objectbox:objectbox-android:4.0.3")
 
-    // Network & gRPC Transports
+    // Network
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("io.grpc:grpc-okhttp:1.64.0")
-    implementation("io.grpc:grpc-kotlin-stub:1.4.1")
 
     // Kotlin Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
@@ -96,13 +94,13 @@ If your application only needs specific subsystems, you can import individual mo
 
 | Module | Maven Coordinate | Purpose |
 | :--- | :--- | :--- |
-| **SDK Facade** | `pro.aduki:sdk:0.3.0` | The `Aduki` entry point |
-| **State** | `pro.aduki:state:0.3.0` | Repositories exposing `StateFlow` |
-| **Sync** | `pro.aduki:sync:0.3.0` | RFC 7162 CONDSTORE synchronizer & Outbox |
-| **Store** | `pro.aduki:store:0.3.0` | ObjectBox entities |
-| **Net** | `pro.aduki:net:0.3.0` | HTTP clients (Aduki ID, mail, scheduling), gRPC channel |
-| **Crypto** | `pro.aduki:crypto:0.3.0` | Keystore provider, AES-256-GCM cipher, TLS pinning, DPoP keys |
-| **Core** | `pro.aduki:core:0.3.0` | models, errors, Jitter, Circuit, memory helpers |
+| **SDK Facade** | `pro.aduki:sdk:0.4.0` | The `Aduki` entry point |
+| **State** | `pro.aduki:state:0.4.0` | Repositories exposing `StateFlow` |
+| **Sync** | `pro.aduki:sync:0.4.0` | RFC 7162 CONDSTORE synchronizer & Outbox |
+| **Store** | `pro.aduki:store:0.4.0` | ObjectBox entities |
+| **Net** | `pro.aduki:net:0.4.0` | HTTP clients (Aduki ID, mail, scheduling) |
+| **Crypto** | `pro.aduki:crypto:0.4.0` | Keystore provider, AES-256-GCM cipher, TLS pinning, DPoP keys |
+| **Core** | `pro.aduki:core:0.4.0` | models, errors, Jitter, Circuit, memory helpers |
 
 ---
 

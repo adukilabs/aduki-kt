@@ -25,51 +25,56 @@ class Contacts internal constructor(...) {
 ## 2. Detailed Method Specifications
 
 ### `sync`
-Performs an incremental delta synchronization using CardDAV-style `ctag` tokens.
+Reads the address book over REST and reconciles it with the local store.
 
 ```kotlin
 suspend fun sync(tenant: String = ""): Boolean
 ```
 
+`sync` needs a storage: pass one with `Aduki.builder().contactStorage(storage)`
+(with ObjectBox, `pro.aduki.sync.engine.Contact.storage(boxStore)`), or your own
+engine with `engines(...)`. Without either it returns `false`.
+
 #### Parameters
 
 | Parameter | Type | Required | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `tenant` | `String` | No | `""` | Target tenant hex identifier. If empty or blank, defaults to `client.me()?.tenant`. |
+| `tenant` | `String` | No | `""` | Passed to the engine; the server takes the tenant from the credential. If blank, defaults to `client.me()?.tenant`. |
 
 #### Return Value
 - **Type**: `Boolean`
-- **Description**: Returns `true` if delta synchronizer successfully fetched and merged upstream changes; `false` on network or protocol error.
+- **Description**: `true` when the sync ran and was merged; `false` when no storage is configured. Network and protocol errors throw `AdukiException`.
 
-#### Network Wire Protocol
+#### How it syncs (full-list reconcile)
+
+The server has no incremental contacts route over REST, so the transport
+(`pro.aduki.sync.http.HttpContactTransport`, on `client.contactsApi`) reads
+`GET /v1/user/contacts?limit=200` page by page (cursor `after` = the previous
+`next`) with scope `contacts:read`, then:
+
+- stores a digest of every `hex:etag` pair as the sync token; if it equals the
+  stored one the run changes nothing;
+- otherwise merges every row and removes local contacts the server no longer
+  lists.
+
+Limitations, all from the list route: a row has no vCard (the server has no
+`GET /user/contacts/{hex}`), so `vcard` stays empty unless you set it, and an
+existing local `vcard` is kept; only the first e-mail address and phone are
+kept; there is no modification time, so `updated` is the creation time. The
+server's JMAP `Contact/changes` could make this incremental; it is not used
+yet. Cost grows with the size of the address book, one request per 200
+contacts.
 
 ```http
-GET /v1/contacts?ctag=ct_8f3a02c91b4e5d6f HTTP/1.1
-Host: mail.aduki.pro
+GET /v1/user/contacts?limit=200&after=<next> HTTP/1.1
 Authorization: Bearer <access token>
-Accept: application/json
 ```
 
-##### Response (200 OK)
-
-```http
-HTTP/1.1 200 OK
-Content-Type: application/json; charset=utf-8
-
-{
-  "ctag": "ct_901c3d4e5f6a7b8c",
-  "contacts": [
-    {
-      "hex": "c_01HZ9ABCD...",
-      "name": "Alice Bob",
-      "email": "alice@aduki.pro",
-      "phone": "+1-555-0199",
-      "company": "Aduki",
-      "vcard": "BEGIN:VCARD...",
-      "updated": 1725830000000
-    }
-  ]
-}
+```json
+{"success": true, "data": {"items": [
+  {"hex": "...", "etag": "...", "name": "Alice Bob", "emails": ["alice@aduki.pro"],
+   "phones": null, "groups": ["friends"], "created": "2026-09-26T09:02:20.658460", "total": 1}
+], "total": 1, "next": "..."}}
 ```
 
 ---

@@ -5,7 +5,7 @@ plugins {
     signing
 }
 
-val release = "0.3.0"
+val release = "0.4.0"
 val domain = "pro.aduki"
 
 // Java 17 bytecode whichever JDK (17 to 22) runs Gradle; Kotlin 2.0.x cannot target above 22.

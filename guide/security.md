@@ -1,6 +1,6 @@
 # Device-Level Security Specification
 
-> Design note (internal). Written before parts of it were built; it states intent, and its performance numbers are unmeasured targets. Where it disagrees with the code (database encryption, StrongBox, circuit breaker use, gRPC use), the code and `progress.md` section 3.3 win.
+> Design note (internal). Written before parts of it were built; it states intent, and its performance numbers are unmeasured targets. Where it disagrees with the code (database encryption, StrongBox, circuit breaker use, gRPC use), the code and `progress.md` section 3.3 win. gRPC was dropped (D-HOST-5, 2026-10-10): every mention of it below is history.
 
 This document details the device-level security architecture of the Aduki Android Kotlin SDK. The security model enforces **hardware-backed isolation**, **zero unencrypted persistence**, and **deterministic memory sanitization**.
 
@@ -9,7 +9,7 @@ This document details the device-level security architecture of the Aduki Androi
 ## 1. Security Architecture Principles
 
 1. **Hardware-Enforced Cryptography**: Secrets are bound to dedicated secure hardware (StrongBox Keymaster chip or Trusted Execution Environment - TEE).
-2. **Zero Plaintext at Rest**: All local databases (ObjectBox), cached blobs, and session tokens are encrypted using AES-256-GCM.
+2. **Sealed payload columns** (not full-database encryption): all personal text columns (messages, contacts, appointments, mailbox and service names) and outbox payloads are AES-256-GCM sealed; structural metadata (ids, flags, timestamps, counters) is in the clear; see section 4. Session tokens are held in memory only. Device-unverified.
 3. **In-Memory Zeroization**: Sensitive buffers (passwords, tokens, database keys) are stored in mutable arrays and zeroed immediately after use to protect against heap dump analysis.
 4. **Transport Hardening**: Enforces TLS 1.3, strict SPKI certificate pinning, and disallows cleartext traffic.
 5. **Biometric Crypto Binding**: Hardware keys can optionally require cryptographic biometric authentication (`BiometricPrompt`) for sensitive actions.
@@ -130,13 +130,97 @@ inline fun <R> withWipedChars(chars: CharArray, block: (CharArray) -> R): R {
 
 ---
 
-## 4. Envelope Encryption for ObjectBox & Blobs
+## 4. Local database encryption: findings and design
 
-For file blobs (email attachments) and ObjectBox database encryption:
+Owner decision (2026-10-10): the local database must be encrypted with a key
+held in the Android Keystore, and no document may say it is encrypted until it
+has run on a device.
 
-- A 256-bit AES data key is generated randomly.
-- The data key is encrypted using the hardware-backed Master Key and stored in a protected envelope.
-- At runtime, the data key is decrypted into a temporary byte buffer, loaded into ObjectBox native memory, and immediately wiped from JVM memory.
+### 4.1 What ObjectBox 4.0.3 offers (checked 2026-10-10)
+
+- `io.objectbox:objectbox-java:4.0.3`: `BoxStoreBuilder` has no encryption,
+  key, password or cipher method (all 34 public members listed with `javap`);
+  no class or string in the jar mentions encryption.
+- `io.objectbox:objectbox-linux:4.0.3` (the native library the JVM tests load):
+  no encryption-related string in the binary. A test
+  (`FactoryTest.theDatabaseFileHoldsStoredTextInTheClear`) writes a marker and
+  finds it in the clear in the database file.
+- The Android artifact `objectbox-android` is not in the build cache and was
+  not inspected; nothing public found suggests it differs. Public sources
+  (GitHub issues `objectbox-java#8` and `#641`) describe the same situation:
+  field encryption with `@Convert` is the suggested route. Not checked: whether
+  a commercial ObjectBox edition offers at-rest encryption; ask the vendor
+  before choosing a route.
+- The old draft in this folder (`initialBytes(dbKey)`, "ObjectBox supports
+  native AES-256-GCM encryption") was wrong: `initialBytes` loads initial
+  data, it is not a key. `Factory.create(dir, key)` ignored its `key`; the
+  parameter was removed.
+
+### 4.2 Decision and what is built (owner, 2026-10-10)
+
+"Platform encryption + encrypt sensitive fields": the file as a whole relies on
+Android file-based encryption and OS protection; the personal text columns
+are sealed by the SDK. Built and tested on the JVM (software `Provider`):
+
+- `crypto.cipher.Vault`: AES-256-GCM (`Envelope`) under keys from `Provider`.
+  Sealed layout `0xAD 0x4B | version | key id (4 bytes) | IV | ciphertext | tag`;
+  text is stored as `aduki:1:` + base64. Key id `n` is Provider alias
+  `aduki_data_n`; `rotate()` makes a new key current, older values still open
+  while their key exists, and any rewrite seals under the current key. Anything
+  not in the sealed format is legacy plaintext and reads unchanged; a tampered
+  value, an unknown key id or version throws `SealException` (fails closed).
+- `store.box.Sealing`: the process-wide vault and the converters
+  (`SealedText`, an ObjectBox `@Convert` on String columns). Owner decision
+  (2026-10-10, "we have no real app or data yet"): seal all personal text.
+  Sealed: `Message.subject/fromName/fromEmail/to/preview/blob`,
+  `Contact.name/email/phone/company/vcard`, `Appointment.location/notes`,
+  `Mailbox.name`, `Service.name/description`, and `Outbox.payload`. The outbox
+  payload is sealed by the storage (`Sealing.put` / `Sealing.opened`) because the
+  ObjectBox generator (4.0.3, kapt) emits invalid Java for a converted
+  byte-array column. `Sealing.reseal(store)` rewrites every row and rebuilds the
+  blind indexes.
+- Clear on purpose (structural, needed by sync and queries): hex and other ids,
+  UIDs, UIDVALIDITY, MODSEQ, sequence numbers, flags and keywords, counts,
+  sizes, timestamps, mailbox role, appointment status/method/times, tenant, host,
+  service and slug ids, ctag/etags, sync tokens.
+- Searching: `Contact.byEmail`/`byPhone` use a keyed blind index (`emailIndex`,
+  `phoneIndex`: HMAC-SHA256 of the normalised value under a per-field key,
+  HKDF-Expand from a random seed kept in `aduki-index.keys`, sealed under the
+  vault; the index key id is a prefix so a rotation can rebuild). A seed file is
+  used because Keystore keys cannot be exported to derive from. Free-text search
+  and name sorting run in memory over decrypted rows (cost: every row is read and
+  opened per change). `@Index` was removed from `Contact.name` and `email`.
+- The schema changed for 0.4.0: old databases must be deleted (no migration; no
+  data existed). The legacy plaintext read path is kept because it costs three
+  lines and the upgrade tests use it.
+- Wiring: `Aduki.builder().secureStore(provider)`, or `Factory.build(dir, vault)`;
+  on Android the Keystore `Provider` is the default when `secureStore` is not
+  called (`Vault.platform()`); on a plain JVM nothing is sealed unless asked.
+  With no vault installed values are written in clear and sealed values cannot
+  be read.
+- Cost of "legacy readable": a sealed-looking value written by something else is
+  not told apart from ours except by the magic header or the `aduki:1:` prefix.
+- LMDB copy-on-write can leave old (plaintext) pages in the file after a row is
+  rewritten; `reseal` does not scrub them. A fresh database sealed from the
+  start has none; a migrated one may, until the file is compacted.
+
+Unverified until a device run: that the Android Keystore generates and uses
+the key (the default Keystore spec refuses a caller-supplied IV, so `Provider`
+now sets `setRandomizedEncryptionRequired(false)` via reflection; untested),
+non-exportability, reinstall and backup behaviour, behaviour with a real
+`objectbox-android` artifact. On a plain JVM a `Provider` key lives only for the
+process, so JVM tests cannot show data surviving a restart.
+
+### 4.3 Routes considered
+
+| Route | State |
+|---|---|
+| Platform file-based encryption (Android FBE) | relied on for the rest of the file |
+| Field encryption of personal text columns | built (4.2) |
+| Encrypting indexed or searched columns (names, e-mail, phone) | built: blind index for exact lookups, in-memory filtering for free text (4.2) |
+| Replace the store with an encrypted engine (SQLCipher-style) | not planned |
+
+### 4.4 Envelope encryption sketch (the earlier draft, kept for the key wrapping)
 
 ```kotlin
 package pro.aduki.crypto.cipher
@@ -176,40 +260,16 @@ object EnvelopeCipher {
 
 ## 5. Transport Security & Certificate Pinning
 
-Aduki prohibits all cleartext network traffic and enforces public key pinning:
+Cleartext traffic is refused. Pinning is opt-in (decided 2026-10-10): the SDK
+ships no pins because none was ever verified against a live host and a wrong
+pin breaks every request. The app passes `Pin(host, hashes...)` to the builder
+(`Options.pins`); `docs/security/tls.md` has the `openssl` command that prints
+a hash. The earlier draft of this section listed pin values; they were
+placeholders and are removed.
 
-### Network Security Configuration (`res/xml/network_security_config.xml`)
-
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<network-security-config>
-    <domain-config cleartextTrafficPermitted="false">
-        <domain includeSubdomains="true">aduki.pro</domain>
-        <pin-set expiration="2027-12-31">
-            <!-- Primary SPKI Pin for mail.aduki.pro -->
-            <pin digest="SHA-256">WoiWRyIOVNa9ihaBciRSC7XHjliYS9VwUGOIud4PB18=</pin>
-            <!-- Backup Pin -->
-            <pin digest="SHA-256">k2/402iK90558661mndnnd901002872365287293847=</pin>
-        </pin-set>
-    </domain-config>
-</network-security-config>
-```
-
-### OkHttp CertificatePinner Integration
-
-```kotlin
-val pinner = CertificatePinner.Builder()
-    .add("mail.aduki.pro", "sha256/WoiWRyIOVNa9ihaBciRSC7XHjliYS9VwUGOIud4PB18=")
-    .add("grpc.aduki.pro", "sha256/WoiWRyIOVNa9ihaBciRSC7XHjliYS9VwUGOIud4PB18=")
-    .build()
-
-val okHttpClient = OkHttpClient.Builder()
-    .certificatePinner(pinner)
-    .connectionSpecs(listOf(ConnectionSpec.RESTRICTED_TLS))
-    .build()
-```
-
----
+Needs the server: once `mail.` and `id.` answer on 443, take the SPKI hashes of
+the live chain and of the backup key and record them here and in the app
+configuration (see `AI/PROGRESS.md`, "Needs server").
 
 ## 6. Device Integrity & Root Detection
 

@@ -9,11 +9,13 @@ import okhttp3.OkHttpClient
 import org.json.JSONObject
 import pro.aduki.core.config.Endpoints
 import pro.aduki.core.config.Options
+import pro.aduki.core.config.Pin
 import pro.aduki.net.http.Client as HttpClient
 import pro.aduki.net.http.Dpop
 import pro.aduki.net.http.Events
 import pro.aduki.net.http.Id
 import pro.aduki.net.http.Login
+import pro.aduki.net.http.Scheme
 import pro.aduki.net.http.Whoami
 import pro.aduki.core.models.Identity
 import pro.aduki.core.models.Tokens
@@ -29,6 +31,9 @@ import pro.aduki.state.repository.Mail as MailRepo
 import pro.aduki.state.repository.Appointment as AppointmentRepo
 import pro.aduki.net.http.Scheduling as NetScheduling
 import pro.aduki.net.http.Mail as NetMail
+import pro.aduki.net.http.Contacts as NetContacts
+import pro.aduki.sync.engine.ContactStorage
+import pro.aduki.sync.http.HttpContactTransport
 
 /**
  * Aduki is the primary entrypoint for the Android Kotlin SDK.
@@ -49,26 +54,30 @@ class Aduki internal constructor(
     contactEngine: ContactEngine? = null,
     scheduleEngine: ScheduleEngine? = null,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
-    private val dpop: Dpop? = null
+    private val dpop: Dpop? = null,
+    contactStorage: ContactStorage? = null
 ) {
     private fun activeAuthString(): String {
         return session.token() ?: if (token.isNotBlank()) token else apiKey
     }
 
+    // The `Key` scheme is for a credential that came in through `Builder.key`:
+    // true while no session token and no bare token take precedence over it.
+    private fun usingApiKey(): Boolean = session.token() == null && token.isBlank() && apiKey.isNotBlank()
+
+    // Null unless the app configured pins (opt-in; the SDK ships none).
+    private val pinner: okhttp3.CertificatePinner? by lazy {
+        if (options.secure) pro.aduki.crypto.tls.Pinning.pinner(options.pins) else null
+    }
+
     private val defaultClient: OkHttpClient by lazy {
-        val pinner = if (options.secure && !options.endpoint.contains("localhost") && !options.endpoint.contains("127.0.0.1")) {
-            pro.aduki.crypto.tls.Pinning.pinner()
-        } else {
-            null
-        }
-        val base = HttpClient.create(activeAuthString(), options.timeoutSeconds, pinner)
+        val base = HttpClient.create(activeAuthString(), options.timeoutSeconds, pinner, usingApiKey())
         base.newBuilder()
             .addInterceptor { chain ->
                 val auth = activeAuthString()
                 val request = if (auth.isNotBlank()) {
-                    val authHeader = if (auth.startsWith("hm_") || auth.startsWith("key_")) "Key $auth" else "Bearer $auth"
                     chain.request().newBuilder()
-                        .header("Authorization", authHeader)
+                        .header("Authorization", Scheme.header(auth, usingApiKey()))
                         .build()
                 } else {
                     chain.request()
@@ -158,16 +167,27 @@ class Aduki internal constructor(
             networkInterceptors().clear()
             authenticator(Authenticator.NONE)
             dpop?.let(::addInterceptor)
-        }?.build() ?: HttpClient.create("", options.timeoutSeconds).let { base ->
+        }?.build() ?: HttpClient.create("", options.timeoutSeconds, pinner).let { base ->
             if (dpop == null) base else base.newBuilder().addInterceptor(dpop).build()
         }
     }
 
+    /**
+     * Typed REST address book client on this client's authenticated connection.
+     * Build `HttpContactTransport(contactsApi)` from it for a contact engine.
+     */
+    val contactsApi: NetContacts by lazy { NetContacts(activeHttpClient(), options.endpoint) }
+
+    // An explicit engine wins; with only a storage the engine reads the
+    // address book over REST (`HttpContactTransport`).
+    private val contactSync: ContactEngine? =
+        contactEngine ?: contactStorage?.let { ContactEngine(it, HttpContactTransport(contactsApi)) }
+
     // Declared after the HTTP client above: property initializers run in
     // order, and `scheduling` needs the client while the object is built.
     val mail = Mail(this, manager, mailRepo, worker)
-    val contacts = Contacts(this, contactRepo, contactEngine)
-    val sync = Sync(this, mailboxEngine, contactEngine, worker, manager)
+    val contacts = Contacts(this, contactRepo, contactSync)
+    val sync = Sync(this, mailboxEngine, contactSync, worker, manager)
     val scheduling = Scheduling(this, appointmentRepo, scheduleEngine, NetScheduling(activeHttpClient(), options.endpoint))
 
     /**
@@ -210,7 +230,7 @@ class Aduki internal constructor(
     @Suppress("DEPRECATION")
     suspend fun totp(code: String): Boolean {
         val currentToken = activeAuthString()
-        return Login.totp(activeHttpClient(), options.endpoint, currentToken, code)
+        return Login.totp(activeHttpClient(), options.endpoint, currentToken, code, usingApiKey())
     }
 
     /**
@@ -312,9 +332,8 @@ class Aduki internal constructor(
         private var token: String = ""
         private var endpoint: String = Endpoints.REST
         private var identity: String = Endpoints.ID
-        private var grpcHost: String = Endpoints.GRPC_HOST
-        private var grpcPort: Int = Endpoints.GRPC_PORT
         private var secure: Boolean = true
+        private var pins: List<Pin> = emptyList()
         private var timeoutSeconds: Long = 15
         private var httpClient: OkHttpClient? = null
         private var manager: Manager? = null
@@ -326,16 +345,14 @@ class Aduki internal constructor(
         private var appointmentRepo: AppointmentRepo? = null
         private var scheduleEngine: ScheduleEngine? = null
         private var dpop: Dpop? = null
+        private var contactStorage: ContactStorage? = null
+        private var secureStore: pro.aduki.crypto.keystore.Provider? = null
 
         fun key(key: String) = apply { this.apiKey = key }
         fun token(token: String) = apply { this.token = token }
         fun endpoint(endpoint: String) = apply { this.endpoint = endpoint }
         /** The Aduki ID base used to renew and revoke sign-ins, e.g. `https://id.aduki.pro/v1`. */
         fun identity(identity: String) = apply { this.identity = identity }
-        fun grpc(host: String, port: Int = Endpoints.GRPC_PORT) = apply {
-            this.grpcHost = host
-            this.grpcPort = port
-        }
         /**
          * Binds sign-ins to a device key (DPoP, RFC 9449): Aduki ID and mail
          * calls carry a proof, and tokens bound to the key are sent as
@@ -343,6 +360,13 @@ class Aduki internal constructor(
          */
         fun dpop(key: pro.aduki.crypto.dpop.Key) = apply { this.dpop = Dpop(key) }
         fun secure(enabled: Boolean) = apply { this.secure = enabled }
+        /**
+         * Pins the TLS public keys of the given hosts on the default HTTP
+         * client. Off by default: the SDK ships no pins. Ignored when
+         * [secure] is false or a client is supplied through [http].
+         */
+        fun pins(pins: List<Pin>) = apply { this.pins = pins }
+        fun pins(vararg pins: Pin) = apply { this.pins = pins.toList() }
         fun timeout(seconds: Long) = apply { this.timeoutSeconds = seconds }
         fun http(client: OkHttpClient) = apply { this.httpClient = client }
         fun manager(manager: Manager) = apply { this.manager = manager }
@@ -353,6 +377,22 @@ class Aduki internal constructor(
             this.appointmentRepo = repo
             this.scheduleEngine = engine
         }
+        /**
+         * Syncs contacts into [storage] over REST (`GET /user/contacts`, full
+         * list reconcile): `client.contacts.sync()` and `client.sync.all()` then
+         * work without building an engine. With ObjectBox, `ContactEngine.storage(boxStore)`.
+         */
+        fun contactStorage(storage: ContactStorage) = apply { this.contactStorage = storage }
+        /**
+         * Seals the sensitive payload columns of the local database (see
+         * `Sealing`) with keys from [provider]. On Android with no call to this,
+         * the Android Keystore provider is used; on a plain JVM nothing is
+         * sealed unless this is called, and a `Provider` there keeps its keys
+         * in memory only, so use it for tests. The vault is process-wide and is
+         * installed by [build], before the database is opened. Android Keystore
+         * behaviour is unverified until a device run.
+         */
+        fun secureStore(provider: pro.aduki.crypto.keystore.Provider) = apply { this.secureStore = provider }
         fun engines(mailbox: MailboxEngine, contact: ContactEngine) = apply {
             this.mailboxEngine = mailbox
             this.contactEngine = contact
@@ -362,13 +402,14 @@ class Aduki internal constructor(
             require(apiKey.isNotBlank() || token.isNotBlank()) {
                 "Either API key or JWT token must not be blank"
             }
+            (secureStore?.let { pro.aduki.crypto.cipher.Vault(it) } ?: pro.aduki.crypto.cipher.Vault.platform())
+                ?.let { pro.aduki.store.box.Sealing.install(it) }
             val options = Options(
                 endpoint = endpoint,
                 identity = identity,
-                grpcHost = grpcHost,
-                grpcPort = grpcPort,
                 timeoutSeconds = timeoutSeconds,
-                secure = secure
+                secure = secure,
+                pins = pins
             )
             return Aduki(
                 apiKey = apiKey,
@@ -383,7 +424,8 @@ class Aduki internal constructor(
                 mailboxEngine = mailboxEngine,
                 contactEngine = contactEngine,
                 scheduleEngine = scheduleEngine,
-                dpop = dpop
+                dpop = dpop,
+                contactStorage = contactStorage
             )
         }
     }
@@ -403,9 +445,10 @@ class Aduki internal constructor(
             endpoint: String = Endpoints.REST,
             identity: String = Endpoints.ID,
             backup: String? = null,
-            dpop: pro.aduki.crypto.dpop.Key? = null
+            dpop: pro.aduki.crypto.dpop.Key? = null,
+            pins: List<Pin> = emptyList()
         ): Aduki {
-            val tempClient = HttpClient.create("", 15).let { base ->
+            val tempClient = HttpClient.create("", 15, pro.aduki.crypto.tls.Pinning.pinner(pins)).let { base ->
                 if (dpop == null) base else base.newBuilder().addInterceptor(Dpop(dpop)).build()
             }
             val tokens = Login.submit(tempClient, identity, handle, password, code, backup)
@@ -413,6 +456,7 @@ class Aduki internal constructor(
                 .apply { if (dpop != null) dpop(dpop) }
                 .endpoint(endpoint)
                 .identity(identity)
+                .pins(pins)
                 .token(tokens.token)
                 .build()
 

@@ -91,8 +91,8 @@ class Builder {
     fun endpoint(endpoint: String): Builder
     fun identity(identity: String): Builder
     fun dpop(key: Key): Builder
-    fun grpc(host: String, port: Int = Endpoints.GRPC_PORT): Builder
     fun secure(enabled: Boolean): Builder
+    fun pins(vararg pins: Pin): Builder
     fun timeout(seconds: Long): Builder
     fun http(client: OkHttpClient): Builder
     fun manager(manager: Manager): Builder
