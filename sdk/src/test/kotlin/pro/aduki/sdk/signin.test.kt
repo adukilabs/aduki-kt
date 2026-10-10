@@ -160,4 +160,32 @@ class SigninTest {
         assertTrue(client.refresh())
         assertEquals("rt_9", JSONObject(server.takeRequest().body.readUtf8()).getString("refresh"))
     }
+
+    @Test
+    fun watchRightsRenewsOnTheStreamEventAndStopsOnLogout() = runBlocking {
+        val client = client()
+        server.enqueue(
+            MockResponse().setResponseCode(200).setHeader("Content-Type", "text/event-stream")
+                .setBody("event: rights\ndata: {\"@type\":\"Rights\",\"epoch\":2}\n\n")
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"success":true,"data":{"access":"eyJ.new","refresh":"rt_2","expires":600}}"""
+            )
+        )
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "text/event-stream").setBody(": ping\n\n"))
+
+        client.watchRights(server.url("/").toString())
+
+        val stream = server.takeRequest(2, java.util.concurrent.TimeUnit.SECONDS)!!
+        assertEquals("/jmap/eventsource?types=*&ping=30", stream.path)
+        assertEquals("Bearer eyJ.old", stream.getHeader("Authorization"))
+        val renew = server.takeRequest(1, java.util.concurrent.TimeUnit.SECONDS)!!
+        assertEquals("/id/tokens", renew.path)
+        assertEquals("rt_1", JSONObject(renew.body.readUtf8()).getString("refresh"))
+        val reconnect = server.takeRequest(2, java.util.concurrent.TimeUnit.SECONDS)!!
+        assertEquals("the reconnect carries the new token", "Bearer eyJ.new", reconnect.getHeader("Authorization"))
+        assertEquals("eyJ.new", client.session.token())
+        client.unwatchRights()
+    }
 }

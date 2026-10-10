@@ -10,6 +10,7 @@ import org.json.JSONObject
 import pro.aduki.core.config.Endpoints
 import pro.aduki.core.config.Options
 import pro.aduki.net.http.Client as HttpClient
+import pro.aduki.net.http.Events
 import pro.aduki.net.http.Id
 import pro.aduki.net.http.Login
 import pro.aduki.net.http.Whoami
@@ -218,11 +219,40 @@ class Aduki internal constructor(
      * before the next request would be refused with `auth.stale`; anything
      * else is ignored. Returns whether a token was renewed.
      */
-    suspend fun rights(payload: String): Boolean {
+    suspend fun rights(payload: String): Boolean = applyRights(payload)
+
+    private fun applyRights(payload: String): Boolean {
         val type = runCatching { JSONObject(payload).optString("@type") }.getOrNull()
         if (type != "Rights") return false
         val stale = session.tokens.value?.token ?: return false
         return renew(stale) != null
+    }
+
+    private var watcher: Events? = null
+
+    /**
+     * Subscribes to the Mail JMAP EventSource (`{mail host}/jmap/eventsource`)
+     * and renews the access token on every `rights` event (plan K3). The
+     * stream reconnects by itself, with jitter backoff after failures, and a
+     * stale token is renewed on the next 401 whether or not a push arrived.
+     * [host] is the mail host root, by default the REST endpoint without
+     * its `/v1`. Calling it again replaces the previous subscription; stop it
+     * with [unwatchRights] (also done by [logout]).
+     */
+    fun watchRights(host: String = options.endpoint.removeSuffix("/").removeSuffix("/v1")) {
+        val http = activeHttpClient().newBuilder().readTimeout(90, java.util.concurrent.TimeUnit.SECONDS).build()
+        val events = Events(http, host, { payload -> applyRights(payload) })
+        synchronized(renewal) {
+            watcher?.stop()
+            watcher = events
+        }
+        scope.launch { events.run() }
+    }
+
+    /** Stops the subscription started by [watchRights]. */
+    fun unwatchRights() = synchronized(renewal) {
+        watcher?.stop()
+        watcher = null
     }
 
     /**
@@ -235,6 +265,8 @@ class Aduki internal constructor(
      * later call can retry; `session.clear()` forgets it locally instead.
      */
     suspend fun logout(): Boolean = synchronized(renewal) {
+        watcher?.stop()
+        watcher = null
         val current = session.tokens.value
         if (current == null) {
             session.clear()
