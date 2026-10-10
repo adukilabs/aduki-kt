@@ -64,7 +64,7 @@ Not started: K0 (Maven Central namespace), K4 (authenticator), K6 (passkeys), An
 - `Options.secure` only allows TLS pinning on the default HTTP client, and pinning is opt-in (`Options.pins`, none shipped); `Options.maxRetries` was removed.
 - `Circuit` is a standalone utility; nothing in the SDK wraps calls with it.
 - `Lifecycle.pause()` only flips a flag and calls listeners; the one internal listener flushes the outbox on resume.
-- Contacts sync has an engine (`ContactEngine`) but no HTTP `ContactTransport`; callers supply one.
+- Contacts sync: `HttpContactTransport` reads `GET /user/contacts` in full each time (no incremental REST route; rows carry no vCard). Tested with MockWebServer only, never against a server.
 - No benchmark harness exists; the benchmark numbers that used to be in the docs had no source and were removed.
 
 ## 3.4 Slice 4 scope

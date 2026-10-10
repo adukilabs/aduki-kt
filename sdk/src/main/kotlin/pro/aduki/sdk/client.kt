@@ -31,6 +31,9 @@ import pro.aduki.state.repository.Mail as MailRepo
 import pro.aduki.state.repository.Appointment as AppointmentRepo
 import pro.aduki.net.http.Scheduling as NetScheduling
 import pro.aduki.net.http.Mail as NetMail
+import pro.aduki.net.http.Contacts as NetContacts
+import pro.aduki.sync.engine.ContactStorage
+import pro.aduki.sync.http.HttpContactTransport
 
 /**
  * Aduki is the primary entrypoint for the Android Kotlin SDK.
@@ -51,7 +54,8 @@ class Aduki internal constructor(
     contactEngine: ContactEngine? = null,
     scheduleEngine: ScheduleEngine? = null,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
-    private val dpop: Dpop? = null
+    private val dpop: Dpop? = null,
+    contactStorage: ContactStorage? = null
 ) {
     private fun activeAuthString(): String {
         return session.token() ?: if (token.isNotBlank()) token else apiKey
@@ -168,11 +172,22 @@ class Aduki internal constructor(
         }
     }
 
+    /**
+     * Typed REST address book client on this client's authenticated connection.
+     * Build `HttpContactTransport(contactsApi)` from it for a contact engine.
+     */
+    val contactsApi: NetContacts by lazy { NetContacts(activeHttpClient(), options.endpoint) }
+
+    // An explicit engine wins; with only a storage the engine reads the
+    // address book over REST (`HttpContactTransport`).
+    private val contactSync: ContactEngine? =
+        contactEngine ?: contactStorage?.let { ContactEngine(it, HttpContactTransport(contactsApi)) }
+
     // Declared after the HTTP client above: property initializers run in
     // order, and `scheduling` needs the client while the object is built.
     val mail = Mail(this, manager, mailRepo, worker)
-    val contacts = Contacts(this, contactRepo, contactEngine)
-    val sync = Sync(this, mailboxEngine, contactEngine, worker, manager)
+    val contacts = Contacts(this, contactRepo, contactSync)
+    val sync = Sync(this, mailboxEngine, contactSync, worker, manager)
     val scheduling = Scheduling(this, appointmentRepo, scheduleEngine, NetScheduling(activeHttpClient(), options.endpoint))
 
     /**
@@ -330,6 +345,7 @@ class Aduki internal constructor(
         private var appointmentRepo: AppointmentRepo? = null
         private var scheduleEngine: ScheduleEngine? = null
         private var dpop: Dpop? = null
+        private var contactStorage: ContactStorage? = null
 
         fun key(key: String) = apply { this.apiKey = key }
         fun token(token: String) = apply { this.token = token }
@@ -360,6 +376,12 @@ class Aduki internal constructor(
             this.appointmentRepo = repo
             this.scheduleEngine = engine
         }
+        /**
+         * Syncs contacts into [storage] over REST (`GET /user/contacts`, full
+         * list reconcile): `client.contacts.sync()` and `client.sync.all()` then
+         * work without building an engine. With ObjectBox, `ContactEngine.storage(boxStore)`.
+         */
+        fun contactStorage(storage: ContactStorage) = apply { this.contactStorage = storage }
         fun engines(mailbox: MailboxEngine, contact: ContactEngine) = apply {
             this.mailboxEngine = mailbox
             this.contactEngine = contact
@@ -389,7 +411,8 @@ class Aduki internal constructor(
                 mailboxEngine = mailboxEngine,
                 contactEngine = contactEngine,
                 scheduleEngine = scheduleEngine,
-                dpop = dpop
+                dpop = dpop,
+                contactStorage = contactStorage
             )
         }
     }

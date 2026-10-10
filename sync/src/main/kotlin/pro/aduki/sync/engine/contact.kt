@@ -11,7 +11,13 @@ import pro.aduki.sync.reconcile.Reconcile
 data class ContactDelta(
     val changed: List<ContactEntity> = emptyList(),
     val removed: List<String> = emptyList(),
-    val ctag: String = ""
+    val ctag: String = "",
+    /**
+     * `changed` is the complete address book, not a delta: local contacts
+     * missing from it are removed. For transports whose server has no
+     * incremental route.
+     */
+    val full: Boolean = false
 )
 
 /**
@@ -41,20 +47,25 @@ class Contact(
     private val transport: ContactTransport
 ) {
 
-    constructor(store: BoxStore, transport: ContactTransport) : this(object : ContactStorage {
-        private val syncBox = store.boxFor(Sync::class.java)
-        private val contactBox = store.boxFor(ContactEntity::class.java)
+    constructor(store: BoxStore, transport: ContactTransport) : this(storage(store), transport)
 
-        override fun getSync(target: String): Sync? = syncBox.all.firstOrNull { it.target == target }
-        override fun putSync(sync: Sync) { syncBox.put(sync) }
-        override fun getContacts(): List<ContactEntity> = contactBox.all
-        override fun putContacts(contacts: List<ContactEntity>) { contactBox.put(contacts) }
-        override fun removeContacts(hexes: List<String>) {
-            val toRemove = contactBox.all.filter { it.hex in hexes }
-            contactBox.remove(toRemove)
+    companion object {
+        /** The ObjectBox-backed storage for [store]. */
+        fun storage(store: BoxStore): ContactStorage = object : ContactStorage {
+            private val syncBox = store.boxFor(Sync::class.java)
+            private val contactBox = store.boxFor(ContactEntity::class.java)
+
+            override fun getSync(target: String): Sync? = syncBox.all.firstOrNull { it.target == target }
+            override fun putSync(sync: Sync) { syncBox.put(sync) }
+            override fun getContacts(): List<ContactEntity> = contactBox.all
+            override fun putContacts(contacts: List<ContactEntity>) { contactBox.put(contacts) }
+            override fun removeContacts(hexes: List<String>) {
+                val toRemove = contactBox.all.filter { it.hex in hexes }
+                contactBox.remove(toRemove)
+            }
+            override fun <T> tx(block: () -> T): T = store.callInTx(block)
         }
-        override fun <T> tx(block: () -> T): T = store.callInTx(block)
-    }, transport)
+    }
 
     /**
      * Performs incremental delta sync for contacts in the given tenant.
@@ -64,8 +75,14 @@ class Contact(
         val delta = transport.fetch(tenant, syncRecord.token)
 
         return storage.tx {
-            if (delta.removed.isNotEmpty()) {
-                storage.removeContacts(delta.removed)
+            val removed = if (delta.full) {
+                val kept = delta.changed.map { it.hex }.toSet()
+                delta.removed + storage.getContacts().map { it.hex }.filter { it !in kept }
+            } else {
+                delta.removed
+            }
+            if (removed.isNotEmpty()) {
+                storage.removeContacts(removed)
             }
 
             if (delta.changed.isNotEmpty()) {

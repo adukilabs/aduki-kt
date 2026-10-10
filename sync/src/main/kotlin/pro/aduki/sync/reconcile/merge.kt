@@ -46,7 +46,8 @@ object Reconcile {
         return if (local.updated > server.updated) {
             local
         } else {
-            server.copy(id = local.id)
+            // A list row has no vCard: keep the one already stored.
+            server.copy(id = local.id, vcard = server.vcard.ifEmpty { local.vcard })
         }
     }
 }
