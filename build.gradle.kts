@@ -8,7 +8,17 @@ plugins {
 val release = "0.3.0"
 val domain = "pro.aduki"
 
+// Java 17 bytecode whichever JDK (17 to 22) runs Gradle; Kotlin 2.0.x cannot target above 22.
+val bytecode = 17
+
 subprojects {
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+        compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.fromTarget(bytecode.toString()))
+    }
+    tasks.withType<JavaCompile>().configureEach {
+        options.release.set(bytecode)
+    }
+
     apply(plugin = "maven-publish")
     apply(plugin = "signing")
 
