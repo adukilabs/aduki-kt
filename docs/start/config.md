@@ -8,7 +8,7 @@ The Aduki Android SDK is configured either interactively via `Aduki.login(...)` 
 
 ### `Options` Data Class
 
-Network and runtime parameters are held in the immutable `Options` data class (`maxRetries` is reserved: no SDK code reads it yet):
+Network and runtime parameters are held in the immutable `Options` data class:
 
 ```kotlin
 package pro.aduki.core.config
@@ -19,8 +19,7 @@ data class Options(
     val grpcHost: String = Endpoints.GRPC_HOST,
     val grpcPort: Int = Endpoints.GRPC_PORT,
     val timeoutSeconds: Long = 15,
-    val secure: Boolean = true,
-    val maxRetries: Int = 3
+    val secure: Boolean = true
 )
 ```
 

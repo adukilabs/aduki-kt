@@ -21,9 +21,9 @@ class LiveTest {
     }
 
     private fun liveApiKey(): String {
-        return System.getProperty("aduki.key")
-            ?: System.getenv("ADUKI_KEY")
-            ?: "hm_live_test_credential_hex"
+        val key = System.getProperty("aduki.key") ?: System.getenv("ADUKI_KEY")
+        assumeTrue("Skipping live tests: set ADUKI_KEY (or -Daduki.key)", !key.isNullOrBlank())
+        return key!!
     }
 
     private fun liveEndpoint(): String {
