@@ -58,13 +58,17 @@ import javax.crypto.SecretKey
 object KeyStoreProvider {
 
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-    private const val MASTER_ALIAS = "hermes_master_key"
+    private const val MASTER_ALIAS = "aduki_master_key"
+    private const val LEGACY_ALIAS = "hermes_master_key" // read-only fallback for pre-rename installs
 
     fun getOrCreateMasterKey(context: Context): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
 
         if (keyStore.containsAlias(MASTER_ALIAS)) {
             return keyStore.getKey(MASTER_ALIAS, null) as SecretKey
+        }
+        if (keyStore.containsAlias(LEGACY_ALIAS)) {
+            return keyStore.getKey(LEGACY_ALIAS, null) as SecretKey
         }
 
         val hasStrongBox = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&

@@ -16,7 +16,7 @@
 [![ObjectBox](https://img.shields.io/badge/ObjectBox-4.0.3-green.svg)](https://objectbox.io)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-An ultra-low latency, battery-efficient, offline-first Android Kotlin SDK engineered specifically for the [Aduki](https://github.com/aduki-org/hermes) communication platform.
+An ultra-low latency, battery-efficient, offline-first Android Kotlin SDK engineered specifically for the [Aduki](https://github.com/adukilabs/aduki-kt) communication platform.
 
 ---
 

@@ -14,6 +14,7 @@ import javax.crypto.SecretKey
 class Provider(private val strongbox: Boolean = true) {
     companion object {
         const val MASTER = "aduki_master"
+        const val LEGACY_MASTER = "hermes_master"
     }
 
     fun get(alias: String = MASTER): SecretKey
@@ -53,6 +54,14 @@ val spec = KeyGenParameterSpec.Builder(
     }
     .build()
 ```
+
+### Alias migration (`hermes_master` to `aduki_master`)
+
+New master keys are created under `aduki_master`. Installs that already hold a key under the old
+`hermes_master` alias are not orphaned: `get(MASTER)` returns the legacy entry when `aduki_master`
+does not exist yet. Hardware-backed keys cannot be exported, so the migration is lazy: the legacy
+entry stays in use until `remove(MASTER)` (which deletes both aliases), after which a fresh
+`aduki_master` key is created. The legacy alias is only ever read, never written.
 
 ### Isolation Hierarchy
 1. **StrongBox Keymaster (Android 9+)**: Physical tamper-resistant hardware security module (dedicated CPU, RAM, and flash).

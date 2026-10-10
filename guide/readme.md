@@ -1,6 +1,6 @@
 # Aduki Android Kotlin SDK
 
-An ultra-low latency, battery-efficient, offline-first mobile SDK for Android engineered for the [Aduki](https://github.com/aduki-org/hermes) communication platform.
+An ultra-low latency, battery-efficient, offline-first mobile SDK for Android engineered for the [Aduki](https://github.com/adukilabs/aduki-kt) communication platform.
 
 Built from first principles for high-throughput email, calendar, and contact workflows, this SDK completely discards traditional SQLite/Room ORM overhead in favor of **[ObjectBox](https://github.com/objectbox/objectbox-java)** — achieving true zero-copy binary reads, memory-mapped I/O (`mmap`), sub-millisecond query latencies, and device-level hardware-backed security via Android KeyStore.
 
@@ -93,7 +93,7 @@ dependencies {
 #### Option A: Interactive User Login (with optional 2FA / TOTP)
 ```kotlin
 // In your Login ViewModel or Activity
-val hermes = Aduki.login(
+val aduki = Aduki.login(
     email = "user@aduki.pro",
     password = "CorrectHorseBatteryStaple123!",
     totp = "123456" // optional 6-digit TOTP code
@@ -103,13 +103,13 @@ val hermes = Aduki.login(
 #### Option B: Headless / Daemon API Key
 ```kotlin
 class App : Application() {
-    lateinit var hermes: Aduki
+    lateinit var aduki: Aduki
         private set
 
     override fun onCreate() {
         super.onCreate()
 
-        hermes = Aduki.builder()
+        aduki = Aduki.builder()
             .key("hm_live_7f9b8c2d1e0a4b5c6d7e8f9a0b1c2d3e")
             .endpoint("https://hermers.aduki.pro/v1")
             .grpc("grpc.aduki.pro", 443)
@@ -124,7 +124,7 @@ class App : Application() {
 Bind your Jetpack Compose UI or ViewModel to live message streams:
 
 ```kotlin
-class InboxViewModel(private val hermes: Aduki) : ViewModel() {
+class InboxViewModel(private val aduki: Aduki) : ViewModel() {
 
     // Emits instantly from memory-mapped cache, updates automatically on sync
     val messages: StateFlow<List<Message>> = aduki.mail
