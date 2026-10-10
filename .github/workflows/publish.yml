@@ -27,11 +27,9 @@ jobs:
 
       - name: gradle
         uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: 8.7
 
       - name: test
-        run: gradle test
+        run: ./gradlew --no-daemon test
 
       - name: github
         env:
@@ -39,13 +37,13 @@ jobs:
           GITHUB_ACTOR: ${{ github.actor }}
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
           SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
-        run: gradle publishMavenPublicationToGithubRepository || echo "GitHub packages already published"
+        run: ./gradlew --no-daemon publishMavenPublicationToGithubRepository || echo "GitHub packages already published"
 
       - name: bundle
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
           SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
-        run: gradle bundle
+        run: ./gradlew --no-daemon bundle
 
       - name: central
         env:
