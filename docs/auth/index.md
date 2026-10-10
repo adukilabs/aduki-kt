@@ -1,6 +1,6 @@
 # Authentication & Session Architecture
 
-The Hermes Android SDK provides a defense-in-depth authentication layer supporting interactive multi-factor sessions and headless machine API keys.
+The Aduki Android SDK provides a defense-in-depth authentication layer supporting interactive multi-factor sessions and headless machine API keys.
 
 ---
 
@@ -17,7 +17,7 @@ The SDK strictly enforces separation between user identity sessions and service 
 | **Token Lifetime** | 10-minute access token (EdDSA JWT, audience `mail`), 30-day single-use refresh token | Indefinite until server revocation |
 | **Rotation Strategy** | Automatic on `401` via Aduki ID `POST /v1/tokens` | Manual key replacement via client re-instantiation |
 | **Local Persistence** | Android KeyStore envelope cipher (`AES-256-GCM`) | StrongBox / TEE sealed storage |
-| **Revocation** | Aduki ID `DELETE /v1/sessions/{hex}` | Hermes Admin Console key deletion |
+| **Revocation** | Aduki ID `DELETE /v1/sessions/{hex}` | Aduki Admin Console key deletion |
 
 ---
 
@@ -26,13 +26,13 @@ The SDK strictly enforces separation between user identity sessions and service 
 ```mermaid
 stateDiagram-v2
     [*] --> Unauthenticated
-    Unauthenticated --> LoggingIn: HermesClient.login(handle, pass, code)
+    Unauthenticated --> LoggingIn: Aduki.login(handle, pass, code)
     LoggingIn --> ActiveSession: 200 OK (Tokens received)
     LoggingIn --> Unauthenticated: 401 Unauthorized / Error
-    ActiveSession --> Refreshing: 401 / HermesClient.refresh()
+    ActiveSession --> Refreshing: 401 / Aduki.refresh()
     Refreshing --> ActiveSession: 200 OK (Tokens rotated)
     Refreshing --> Unauthenticated: 401 Unauthorized (Refresh expired)
-    ActiveSession --> Unauthenticated: HermesClient.logout() (DELETE /v1/sessions/{hex})
+    ActiveSession --> Unauthenticated: Aduki.logout() (DELETE /v1/sessions/{hex})
 ```
 
 ---
@@ -43,7 +43,7 @@ stateDiagram-v2
 Container for active access and refresh credentials returned from authentication endpoints:
 
 ```kotlin
-package pro.aduki.hermes.core.models
+package pro.aduki.core.models
 
 data class Tokens(
     val token: String = "",
@@ -62,7 +62,7 @@ data class Tokens(
 Resolved account retrieved via `GET /v1/user` (`scopes` and `tier` stay empty):
 
 ```kotlin
-package pro.aduki.hermes.state.repository
+package pro.aduki.state.repository
 
 data class Identity(
     val user: String = "",

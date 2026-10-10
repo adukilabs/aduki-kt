@@ -2,19 +2,19 @@
 
 > **Deprecated.** Sign-in moved to Aduki ID, which owns second factors: set up
 > an authenticator in the Account Center and pass its code to
-> `HermesClient.login(code = …)`. `HermesClient.totp` calls mail's
+> `Aduki.login(code = …)`. `Aduki.totp` calls mail's
 > `/v1/user/totp`, which is going away.
 
-Hermes implements RFC 6238 Time-based One-Time Passwords (TOTP) (SHA-1 / SHA-256 with 30-second time drift windows).
+Aduki implements RFC 6238 Time-based One-Time Passwords (TOTP) (SHA-1 / SHA-256 with 30-second time drift windows).
 
 ---
 
 ## 1. Method Specification
 
 ```kotlin
-package pro.aduki.hermes.sdk
+package pro.aduki.sdk
 
-suspend fun HermesClient.totp(code: String): Boolean
+suspend fun Aduki.totp(code: String): Boolean
 ```
 
 ### Parameters
@@ -33,8 +33,8 @@ suspend fun HermesClient.totp(code: String): Boolean
 | Exception | Condition |
 | :--- | :--- |
 | `IllegalArgumentException` | Thrown immediately before network dispatch if `code.length != 6` or if any character is non-numeric (`code.any { !it.isDigit() }`). |
-| `HermesException.Unauthorized` | HTTP `401 Unauthorized` — Active JWT session has expired or been revoked. |
-| `HermesException.Network` | Network connectivity error or server timeout. |
+| `AdukiException.Unauthorized` | HTTP `401 Unauthorized` — Active JWT session has expired or been revoked. |
+| `AdukiException.Network` | Network connectivity error or server timeout. |
 
 ---
 
@@ -53,7 +53,7 @@ Accept: application/json
 ```
 
 > [!NOTE]
-> The request body is a formatted JSON string literal (`"123456"`), not a JSON object, adhering to Hermes REST API specifications.
+> The request body is a formatted JSON string literal (`"123456"`), not a JSON object, adhering to Aduki REST API specifications.
 
 ### HTTP Response (200 OK / 204 No Content)
 
@@ -75,20 +75,20 @@ Content-Type: application/json; charset=utf-8
 sequenceDiagram
     autonumber
     participant App as Android UI
-    participant Client as HermesClient
-    participant Server as Hermes REST
+    participant Client as Aduki
+    participant Server as Aduki REST
 
     Note over App,Server: Step 1: Interactive Login with 2FA Challenge
-    App->>Client: HermesClient.login(email, pass, totp = null)
+    App->>Client: Aduki.login(email, pass, totp = null)
     Client->>Server: POST /v1/auth/login { email, password }
     Server-->>Client: 401 Unauthorized ("TOTP required")
-    Client-->>App: throws HermesException.Unauthorized
+    Client-->>App: throws AdukiException.Unauthorized
 
     Note over App,Server: Step 2: User Inputs 6-digit Code
-    App->>Client: HermesClient.login(email, pass, totp = "492810")
+    App->>Client: Aduki.login(email, pass, totp = "492810")
     Client->>Server: POST /v1/auth/login { email, password, totp: "492810" }
     Server-->>Client: 200 OK { token, refresh, expires }
-    Client-->>App: returns active HermesClient
+    Client-->>App: returns active Aduki
 
     Note over App,Server: Step 3: Account Security Management (In-App)
     App->>Client: client.totp("849201")
@@ -104,7 +104,7 @@ sequenceDiagram
 ```kotlin
 @Composable
 fun TotpConfirmationDialog(
-    client: HermesClient,
+    client: Aduki,
     onConfirmed: () -> Unit,
     onDismiss: () -> Unit
 ) {

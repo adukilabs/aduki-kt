@@ -29,12 +29,12 @@ are single-use: presenting a spent one revokes the session, so the SDK
 serializes renewals.
 
 A second factor is required. Accounts set it up in Aduki ID's Account Center;
-mail's `PATCH /v1/user/totp` (`HermesClient.totp`) is deprecated.
+mail's `PATCH /v1/user/totp` (`Aduki.totp`) is deprecated.
 
 ## Usage
 
 ```kotlin
-val client = HermesClient.login(
+val client = Aduki.login(
     handle = "ada@aduki.me",
     password = password,
     code = "123456"
@@ -45,4 +45,4 @@ client.logout()  // revokes the session at Aduki ID
 ```
 
 Point at other deployments with `endpoint = …` (mail) and `identity = …`
-(Aduki ID), or `HermesClient.builder().identity(…)`.
+(Aduki ID), or `Aduki.builder().identity(…)`.

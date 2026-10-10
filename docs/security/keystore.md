@@ -7,13 +7,13 @@ The `Provider` class (`crypto/keystore/provider.kt`) encapsulates cryptographic 
 ## 1. Class & Method Signatures
 
 ```kotlin
-package pro.aduki.hermes.crypto.keystore
+package pro.aduki.crypto.keystore
 
 import javax.crypto.SecretKey
 
 class Provider(private val strongbox: Boolean = true) {
     companion object {
-        const val MASTER = "hermes_master"
+        const val MASTER = "aduki_master"
     }
 
     fun get(alias: String = MASTER): SecretKey

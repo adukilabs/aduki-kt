@@ -1,15 +1,15 @@
 # Circuit Breaker & Fault Tolerance Reference
 
-To conserve device battery and eliminate unnecessary radio wakeups during network outages, the Hermes Android SDK wraps network operations in a non-blocking 3-state `Circuit` breaker.
+To conserve device battery and eliminate unnecessary radio wakeups during network outages, the Aduki Android SDK wraps network operations in a non-blocking 3-state `Circuit` breaker.
 
 ---
 
 ## 1. Class & Method Signatures
 
 ```kotlin
-package pro.aduki.hermes.core.retry
+package pro.aduki.core.retry
 
-import pro.aduki.hermes.core.errors.HermesException
+import pro.aduki.core.errors.AdukiException
 
 class Circuit(
     private val threshold: Int = 5,
@@ -53,7 +53,7 @@ stateDiagram-v2
 | State | Request Execution Behavior |
 | :--- | :--- |
 | **`CLOSED`** | Normal execution. All requests execute directly. Failures increment an atomic counter; any success resets the failure count to 0. |
-| **`OPEN`** | Fail-fast mode. Calls to `execute { ... }` immediately throw `HermesException.CircuitOpen` without executing the block or waking the radio modem. |
+| **`OPEN`** | Fail-fast mode. Calls to `execute { ... }` immediately throw `AdukiException.CircuitOpen` without executing the block or waking the radio modem. |
 | **`HALF_OPEN`** | Canary probing mode. Allows a single execution. If it succeeds, circuit resets to `CLOSED`. If it fails, circuit immediately returns to `OPEN`. |
 
 ---
@@ -67,13 +67,13 @@ try {
     val response = circuit.execute {
         transport.dispatch(payload)
     }
-} catch (e: HermesException.CircuitOpen) {
+} catch (e: AdukiException.CircuitOpen) {
     // Immediate fail-fast: device is offline or remote service is unresponsive
     // Outbox actions remain safely stored in local ObjectBox database
     showOfflineStatusBanner()
 } catch (e: Exception) {
     // Network or transport error — circuit counted this as a failure
-    Log.w("Hermes", "Call failed: ${e.message}")
+    Log.w("Aduki", "Call failed: ${e.message}")
 }
 ```
 

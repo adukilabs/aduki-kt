@@ -1,6 +1,6 @@
 # Proven Fastest Algorithms & Performance Specification
 
-This document details the algorithmic foundations and micro-optimizations that give the Hermes Android Kotlin SDK its sub-millisecond execution speeds and minimal battery footprint.
+This document details the algorithmic foundations and micro-optimizations that give the Aduki Android Kotlin SDK its sub-millisecond execution speeds and minimal battery footprint.
 
 ---
 
@@ -23,7 +23,7 @@ When computing cache keys, ETag comparisons, or detecting message body mutations
 The SDK integrates **xxHash64**, an extremely fast non-cryptographic hash algorithm executing near RAM bandwidth limits.
 
 ```kotlin
-package pro.aduki.hermes.core.memory
+package pro.aduki.core.memory
 
 object FastHash {
     private const val PRIME64_1 = -7046029254386353131L
@@ -75,7 +75,7 @@ object FastHash {
 
 ## 3. Network Backoff: Decorrelated Jitter
 
-Standard exponential backoff causes synchronized client retry waves ("thundering herds") when a server recovers. Hermes uses the proven **Decorrelated Jitter** algorithm (developed by AWS Architecture research), which breaks synchronization while minimizing total wait duration.
+Standard exponential backoff causes synchronized client retry waves ("thundering herds") when a server recovers. Aduki uses the proven **Decorrelated Jitter** algorithm (developed by AWS Architecture research), which breaks synchronization while minimizing total wait duration.
 
 ### Mathematical Definition
 
@@ -84,7 +84,7 @@ $$t_i = \min(t_{\max}, \text{Uniform}(t_{\text{base}}, t_{i-1} \times 3))$$
 ### Kotlin Implementation
 
 ```kotlin
-package pro.aduki.hermes.net.retry
+package pro.aduki.net.retry
 
 import kotlin.math.min
 import kotlin.random.Random
@@ -145,7 +145,7 @@ SELECT * FROM messages ORDER BY date DESC LIMIT 50 OFFSET 10000;
 
 Execution cost: $O(N)$ time complexity.
 
-In Hermes ObjectBox:
+In Aduki ObjectBox:
 
 - ObjectBox queries use native B-Tree index positions.
 - Navigating to page 200 executes via direct B-Tree traversal in $O(\log N)$ or cursor advancement in $O(1)$ time.

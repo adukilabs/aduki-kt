@@ -1,6 +1,6 @@
 # Configuration & Initialization Reference
 
-The Hermes Android SDK is configured either interactively via `HermesClient.login(...)` or fluently via `HermesClient.builder()`.
+The Aduki Android SDK is configured either interactively via `Aduki.login(...)` or fluently via `Aduki.builder()`.
 
 ---
 
@@ -11,7 +11,7 @@ The Hermes Android SDK is configured either interactively via `HermesClient.logi
 All network and runtime parameters are encapsulated in the immutable `Options` data class:
 
 ```kotlin
-package pro.aduki.hermes.core.config
+package pro.aduki.core.config
 
 data class Options(
     val endpoint: String = Endpoints.REST,
@@ -26,7 +26,7 @@ data class Options(
 ### `Endpoints` Constant Object
 
 ```kotlin
-package pro.aduki.hermes.core.config
+package pro.aduki.core.config
 
 object Endpoints {
     const val REST = "https://hermers.aduki.pro/v1"
@@ -40,7 +40,7 @@ object Endpoints {
 ## 2. Builder Method Signatures
 
 ```kotlin
-package pro.aduki.hermes.sdk
+package pro.aduki.sdk
 
 class Builder {
     fun key(key: String): Builder
@@ -55,7 +55,7 @@ class Builder {
     fun mail(repo: MailRepo): Builder
     fun contacts(repo: ContactRepo): Builder
     fun engines(mailbox: MailboxEngine, contact: ContactEngine): Builder
-    fun build(): HermesClient
+    fun build(): Aduki
 }
 ```
 
@@ -78,7 +78,7 @@ class Builder {
 
 ### Interactive Human Login
 ```kotlin
-val client = HermesClient.login(
+val client = Aduki.login(
     handle = "alice@aduki.me",
     password = "CorrectHorseBatteryStaple123!",
     code = "482019" // authenticator code; Aduki ID requires a second factor
@@ -87,7 +87,7 @@ val client = HermesClient.login(
 
 ### Headless Worker via API Key
 ```kotlin
-val client = HermesClient.builder()
+val client = Aduki.builder()
     .key("hm_live_7f9b8c2d1e0a4b5c6d7e8f9a0b1c2d3e")
     .endpoint("https://hermers.aduki.pro/v1")
     .grpc("grpc.aduki.pro", 443)
@@ -101,25 +101,25 @@ val client = HermesClient.builder()
 ## 4. Dependency Injection (Hilt / Dagger)
 
 ```kotlin
-package com.example.hermesapp.di
+package com.example.adukiapp.di
 
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
-import pro.aduki.hermes.sdk.HermesClient
+import pro.aduki.sdk.Aduki
 import javax.inject.Singleton
 
 @Module
 @InstallIn(SingletonComponent::class)
-object HermesModule {
+object AdukiModule {
 
     @Provides
     @Singleton
-    fun provideHermesClient(): HermesClient {
-        return HermesClient.builder()
-            .key(BuildConfig.HERMES_API_KEY)
-            .endpoint(BuildConfig.HERMES_ENDPOINT)
+    fun provideAduki(): Aduki {
+        return Aduki.builder()
+            .key(BuildConfig.ADUKI_API_KEY)
+            .endpoint(BuildConfig.ADUKI_ENDPOINT)
             .secure(true)
             .timeout(20)
             .build()

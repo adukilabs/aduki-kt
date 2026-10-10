@@ -1,7 +1,7 @@
 [book]
-title = "Hermes Android Kotlin SDK Book"
+title = "Aduki Android Kotlin SDK Book"
 authors = ["Aduki Org"]
-description = "Comprehensive developer guide and API reference for the high-performance Hermes Android Kotlin SDK."
+description = "Comprehensive developer guide and API reference for the high-performance Aduki Android Kotlin SDK."
 language = "en"
 src = "."
 

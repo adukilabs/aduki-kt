@@ -1,6 +1,6 @@
 # Offline Outbox & Retry Engine Reference
 
-The Hermes Android SDK guarantees zero data loss across network drops, crashes, and device reboots via an atomic write-ahead transactional outbox journal.
+The Aduki Android SDK guarantees zero data loss across network drops, crashes, and device reboots via an atomic write-ahead transactional outbox journal.
 
 ---
 
@@ -12,7 +12,7 @@ sequenceDiagram
     participant App as Client Call (send, flag, move, remove)
     participant Store as ObjectBox Store
     participant Worker as Outbox Worker
-    participant Server as Hermes REST API
+    participant Server as Aduki REST API
 
     App->>Store: Atomic Tx: Write Message (dirty) + Insert Outbox entry
     Store-->>App: Return optimistic Message
@@ -39,7 +39,7 @@ sequenceDiagram
 ### `Manager`
 
 ```kotlin
-package pro.aduki.hermes.sync.outbox
+package pro.aduki.sync.outbox
 
 class Manager(storage: Storage) {
     constructor(store: BoxStore)
@@ -77,7 +77,7 @@ class Worker(
 
 ### `HttpDispatcher`
 
-The REST implementation (`pro.aduki.hermes.sync.http`):
+The REST implementation (`pro.aduki.sync.http`):
 
 ```kotlin
 val manager = Manager(boxStore)
@@ -146,7 +146,7 @@ When transient errors occur, retry delays are computed using Amazon's **Decorrel
 $$t_{i+1} = \min(t_{\max}, \text{random}(t_{\min}, 3 \times t_i))$$
 
 ```kotlin
-package pro.aduki.hermes.core.retry
+package pro.aduki.core.retry
 
 object Jitter {
     fun nextDelay(currentDelayMs: Long, baseMs: Long = 1000L, maxMs: Long = 60000L): Long {

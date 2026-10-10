@@ -7,7 +7,7 @@ The `Mail` service (`client.mail`) provides high-level APIs for composing, query
 ## 1. Class & Method Signatures
 
 ```kotlin
-package pro.aduki.hermes.sdk
+package pro.aduki.sdk
 
 class Mail internal constructor(...) {
     suspend fun send(
@@ -164,7 +164,7 @@ fun unread(mailboxHex: String): StateFlow<Int>?
 ### `Message` Entity
 
 ```kotlin
-package pro.aduki.hermes.store.entities
+package pro.aduki.store.entities
 
 @Entity
 data class Message(
@@ -207,7 +207,7 @@ data class Message(
 ### `Mailbox` Entity
 
 ```kotlin
-package pro.aduki.hermes.store.entities
+package pro.aduki.store.entities
 
 @Entity
 data class Mailbox(
@@ -227,7 +227,7 @@ data class Mailbox(
 
 ## 4. REST Client: `client.mailApi`
 
-`pro.aduki.hermes.net.http.Mail` is the typed client for the Hermes REST mail endpoints, on the client's authenticated connection. Its calls are blocking, so run them off the main thread. The sync engine and the outbox use it through `HttpMailboxTransport` and `HttpDispatcher` (see [Sync Engine](sync.md) and [Offline Outbox](outbox.md)).
+`pro.aduki.net.http.Mail` is the typed client for the Aduki REST mail endpoints, on the client's authenticated connection. Its calls are blocking, so run them off the main thread. The sync engine and the outbox use it through `HttpMailboxTransport` and `HttpDispatcher` (see [Sync Engine](sync.md) and [Offline Outbox](outbox.md)).
 
 | Method | Endpoint | Returns |
 | :--- | :--- | :--- |
@@ -241,5 +241,5 @@ data class Mailbox(
 | `send(to, subject, text, cc, from, idempotencyKey)` | `POST /v1/user/mail/send` | server id of the sent copy |
 | `mailboxes(page, limit)` | `GET /v1/user/mailbox` | `Listing<MailboxRow>` |
 
-Errors are `HermesException.Auth` (401/403), `HermesException.Network` (transport failures, and other HTTP errors with `code`), and `HermesException.Protocol` (an unparseable response). The DTOs (`MessageRow`, `MailChanges`, `FlagUpdate`, `MailboxRow`, `Listing`, `Moved`, `Address`) live in `pro.aduki.hermes.core.models`.
+Errors are `AdukiException.Auth` (401/403), `AdukiException.Network` (transport failures, and other HTTP errors with `code`), and `AdukiException.Protocol` (an unparseable response). The DTOs (`MessageRow`, `MailChanges`, `FlagUpdate`, `MailboxRow`, `Listing`, `Moved`, `Address`) live in `pro.aduki.core.models`.
 

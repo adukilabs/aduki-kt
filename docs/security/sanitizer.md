@@ -1,13 +1,13 @@
 # Memory Sanitization Reference
 
-To defend against heap memory dumping and side-channel memory inspection, the Hermes Android SDK provides zeroization utilities that overwrite sensitive buffers (`Arrays.fill(0)`) immediately after consumption.
+To defend against heap memory dumping and side-channel memory inspection, the Aduki Android SDK provides zeroization utilities that overwrite sensitive buffers (`Arrays.fill(0)`) immediately after consumption.
 
 ---
 
 ## 1. Class & Function Signatures
 
 ```kotlin
-package pro.aduki.hermes.core.memory
+package pro.aduki.core.memory
 
 /**
  * Overwrites all bytes in the array with zeros.
@@ -31,7 +31,7 @@ inline fun <R> withWipedChars(chars: CharArray, block: (CharArray) -> R): R
 ```
 
 ```kotlin
-package pro.aduki.hermes.crypto.sanitizer
+package pro.aduki.crypto.sanitizer
 
 /**
  * AutoCloseable container that scrubs sensitive buffers upon close().

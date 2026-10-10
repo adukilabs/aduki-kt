@@ -1,6 +1,6 @@
 # Device-Level Security Specification
 
-This document details the device-level security architecture of the Hermes Android Kotlin SDK. The security model enforces **hardware-backed isolation**, **zero unencrypted persistence**, and **deterministic memory sanitization**.
+This document details the device-level security architecture of the Aduki Android Kotlin SDK. The security model enforces **hardware-backed isolation**, **zero unencrypted persistence**, and **deterministic memory sanitization**.
 
 ---
 
@@ -19,7 +19,7 @@ This document details the device-level security architecture of the Hermes Andro
                                │ Sensitive operation / Key use
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                Hermes Crypto Security Module                │
+│                Aduki Crypto Security Module                │
 │   ┌───────────────────────────────────────────────────────┐ │
 │   │ Memory Sanitizer (Zeroing mutable ByteArray/CharArray)│ │
 │   └──────────────────────────┬────────────────────────────┘ │
@@ -44,7 +44,7 @@ Keys generated in the Android KeyStore are non-exportable; the private or secret
 ### Key Generation Implementation
 
 ```kotlin
-package pro.aduki.hermes.crypto.keystore
+package pro.aduki.crypto.keystore
 
 import android.content.Context
 import android.content.pm.PackageManager
@@ -100,10 +100,10 @@ object KeyStoreProvider {
 
 Standard Kotlin `String` objects are immutable and stored in the JVM heap, leaving sensitive credentials exposed to memory dumps until non-deterministic garbage collection occurs.
 
-The Hermes SDK mandates **mutable arrays** for all sensitive data:
+The Aduki SDK mandates **mutable arrays** for all sensitive data:
 
 ```kotlin
-package pro.aduki.hermes.core.memory
+package pro.aduki.core.memory
 
 import java.util.Arrays
 
@@ -137,7 +137,7 @@ For file blobs (email attachments) and ObjectBox database encryption:
 - At runtime, the data key is decrypted into a temporary byte buffer, loaded into ObjectBox native memory, and immediately wiped from JVM memory.
 
 ```kotlin
-package pro.aduki.hermes.crypto.cipher
+package pro.aduki.crypto.cipher
 
 import java.security.SecureRandom
 import javax.crypto.Cipher
@@ -174,7 +174,7 @@ object EnvelopeCipher {
 
 ## 5. Transport Security & Certificate Pinning
 
-Hermes prohibits all cleartext network traffic and enforces public key pinning:
+Aduki prohibits all cleartext network traffic and enforces public key pinning:
 
 ### Network Security Configuration (`res/xml/network_security_config.xml`)
 

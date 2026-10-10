@@ -52,5 +52,5 @@
 
 # API Reference
 
-- [HermesClient](reference/client.md)
+- [Aduki](reference/client.md)
 - [Error Handling](reference/errors.md)

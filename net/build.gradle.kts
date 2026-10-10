@@ -18,11 +18,11 @@ dependencies {
     testImplementation(libs.okhttp.mockwebserver)
 }
 
-// The live tier (LiveTest) against a running server: HERMES_LIVE_URL,
-// HERMES_LIVE_EMAIL and HERMES_LIVE_PASSWORD. Without them it is skipped,
+// The live tier (LiveTest) against a running server: ADUKI_LIVE_URL,
+// ADUKI_LIVE_EMAIL and ADUKI_LIVE_PASSWORD. Without them it is skipped,
 // also in the regular `test` task.
 tasks.register<Test>("liveTest") {
-    description = "Runs the SDK against a live Hermes server (HERMES_LIVE_*)."
+    description = "Runs the SDK against a live Aduki server (ADUKI_LIVE_*)."
     group = "verification"
     testClassesDirs = sourceSets["test"].output.classesDirs
     classpath = sourceSets["test"].runtimeClasspath

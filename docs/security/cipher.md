@@ -7,7 +7,7 @@ The `Envelope` cipher (`crypto/cipher/envelope.kt`) provides authenticated encry
 ## 1. Class & Method Signatures
 
 ```kotlin
-package pro.aduki.hermes.crypto.cipher
+package pro.aduki.crypto.cipher
 
 import javax.crypto.SecretKey
 
@@ -71,7 +71,7 @@ try {
     println(String(decrypted))
 } catch (e: javax.crypto.AEADBadTagException) {
     // Cryptographic authentication failure — data has been tampered with or corrupted
-    Log.e("Hermes", "Tamper detected: ${e.message}")
+    Log.e("Aduki", "Tamper detected: ${e.message}")
 }
 ```
 

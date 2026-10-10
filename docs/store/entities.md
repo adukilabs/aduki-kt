@@ -1,13 +1,13 @@
 # ObjectBox FlatBuffers Entity Schemas Reference
 
-All data models in the Hermes Android SDK are compiled as **ObjectBox FlatBuffers tables**, guaranteeing zero-copy memory-mapped reads and sub-millisecond query latencies.
+All data models in the Aduki Android SDK are compiled as **ObjectBox FlatBuffers tables**, guaranteeing zero-copy memory-mapped reads and sub-millisecond query latencies.
 
 ---
 
 ## 1. `Message` Entity
 
 ```kotlin
-package pro.aduki.hermes.store.entities
+package pro.aduki.store.entities
 
 @Entity
 data class Message(
@@ -68,7 +68,7 @@ data class Message(
 Tracks mailbox folder metadata and RFC 7162 CONDSTORE sequence state.
 
 ```kotlin
-package pro.aduki.hermes.store.entities
+package pro.aduki.store.entities
 
 import io.objectbox.annotation.Entity
 import io.objectbox.annotation.Id
@@ -109,7 +109,7 @@ data class Mailbox(
 Stores address book contacts with memory-mapped search indexes.
 
 ```kotlin
-package pro.aduki.hermes.store.entities
+package pro.aduki.store.entities
 
 import io.objectbox.annotation.Entity
 import io.objectbox.annotation.Id
@@ -136,7 +136,7 @@ data class Contact(
 Persists pending offline write-ahead actions for reliable background transmission.
 
 ```kotlin
-package pro.aduki.hermes.store.entities
+package pro.aduki.store.entities
 
 import io.objectbox.annotation.Entity
 import io.objectbox.annotation.Id
@@ -160,7 +160,7 @@ data class Outbox(
 Persists synchronization cursor tokens and generation timestamps.
 
 ```kotlin
-package pro.aduki.hermes.store.entities
+package pro.aduki.store.entities
 
 import io.objectbox.annotation.Entity
 import io.objectbox.annotation.Id

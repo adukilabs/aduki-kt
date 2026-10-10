@@ -1,13 +1,13 @@
 # Lifecycle Management Reference
 
-The `Lifecycle` coordinator bridges Android system lifecycle states to Hermes SDK network polling, socket keepalives, and outbox synchronization.
+The `Lifecycle` coordinator bridges Android system lifecycle states to Aduki SDK network polling, socket keepalives, and outbox synchronization.
 
 ---
 
 ## 1. Class & Method Signatures
 
 ```kotlin
-package pro.aduki.hermes.sdk
+package pro.aduki.sdk
 
 class Lifecycle {
     fun active(): Boolean
@@ -17,12 +17,12 @@ class Lifecycle {
 }
 ```
 
-### Methods on `HermesClient`
-Direct facade shortcuts are available on `HermesClient`:
+### Methods on `Aduki`
+Direct facade shortcuts are available on `Aduki`:
 
 ```kotlin
-fun HermesClient.pause()   // Delegates to lifecycle.pause()
-fun HermesClient.resume()  // Delegates to lifecycle.resume()
+fun Aduki.pause()   // Delegates to lifecycle.pause()
+fun Aduki.resume()  // Delegates to lifecycle.resume()
 ```
 
 ---
@@ -59,7 +59,7 @@ Transitions SDK state to foreground. Reactivates network polling and triggers an
 fun resume()
 ```
 
-- **Automatic Flush Trigger**: `HermesClient` installs an internal listener that launches a coroutine (`SupervisorJob + Dispatchers.IO`) calling `client.sync.flush()` upon resume.
+- **Automatic Flush Trigger**: `Aduki` installs an internal listener that launches a coroutine (`SupervisorJob + Dispatchers.IO`) calling `client.sync.flush()` upon resume.
 - **Listeners**: Fires all callbacks registered via `listen` with `true`.
 
 ---
@@ -86,17 +86,17 @@ import android.app.Application
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
-import pro.aduki.hermes.sdk.HermesClient
+import pro.aduki.sdk.Aduki
 
 class App : Application(), DefaultLifecycleObserver {
 
-    lateinit var client: HermesClient
+    lateinit var client: Aduki
         private set
 
     override fun onCreate() {
         super.onCreate()
 
-        client = HermesClient.builder()
+        client = Aduki.builder()
             .key(BuildConfig.HERMES_API_KEY)
             .build()
 

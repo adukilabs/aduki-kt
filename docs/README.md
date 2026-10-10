@@ -1,12 +1,12 @@
-# Hermes Android Kotlin SDK
+# Aduki Android Kotlin SDK
 
-Welcome to the official developer reference manual for the **Hermes Android Kotlin SDK** — an ultra-low latency, battery-efficient, offline-first mobile library engineered specifically for the [Hermes](https://github.com/aduki-org/hermes) communication platform.
+Welcome to the official developer reference manual for the **Aduki Android Kotlin SDK** — an ultra-low latency, battery-efficient, offline-first mobile library engineered specifically for the [Aduki](https://github.com/aduki-org/aduki) communication platform.
 
 ---
 
 ## Architectural Philosophy
 
-Traditional mobile database ORMs like Android Room and SQLite suffer from substantial cursor allocations, serialization reflection, and main-thread blocking. The Hermes Android SDK re-architects mobile email and contact sync from the ground up:
+Traditional mobile database ORMs like Android Room and SQLite suffer from substantial cursor allocations, serialization reflection, and main-thread blocking. The Aduki Android SDK re-architects mobile email and contact sync from the ground up:
 
 1. **Pure ObjectBox FlatBuffers Persistence**: Eliminates SQLite overhead completely. Reads happen directly from memory-mapped (`mmap`) FlatBuffers binary files in sub-millisecond timeframes.
 2. **Hardware-Isolated Device Security**: Keys never touch disk unencrypted. Storage is sealed with AES-256-GCM envelope encryption anchored directly in the **Android KeyStore** (StrongBox Keymaster with TEE fallback).
@@ -19,7 +19,7 @@ Traditional mobile database ORMs like Android Room and SQLite suffer from substa
 
 ## Performance Benchmarks
 
-| Metric | Hermes Android (ObjectBox) | Traditional Room / SQLite | Advantage |
+| Metric | Aduki Android (ObjectBox) | Traditional Room / SQLite | Advantage |
 | :--- | :--- | :--- | :--- |
 | **Batch Insert (10,000 Messages)** | **142 ms** | 1,890 ms | **13.3x faster** |
 | **P99 Query Latency (Indexed)** | **0.48 ms** | 6.20 ms | **12.9x faster** |
@@ -37,4 +37,4 @@ Traditional mobile database ORMs like Android Room and SQLite suffer from substa
 - [ObjectBox FlatBuffers Storage](store/index.md)
 - [Mail & Contacts API](services/mail.md)
 - [Jetpack Compose UI Binding](reactive/compose.md)
-- [HermesClient Reference](reference/client.md)
+- [Aduki Reference](reference/client.md)

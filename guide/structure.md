@@ -1,12 +1,12 @@
 # Project Structure & Architecture
 
-This document specifies the module decomposition, package layout, and design conventions for the Hermes Android Kotlin SDK.
+This document specifies the module decomposition, package layout, and design conventions for the Aduki Android Kotlin SDK.
 
 ---
 
 ## Architecture Pattern: Layered Clean Architecture
 
-The SDK adopts a strictly decoupled, unidirectional layered architecture. Dependencies flow inward toward the domain layer. The UI layer (or client application) communicates exclusively through the public `HermesClient` facade.
+The SDK adopts a strictly decoupled, unidirectional layered architecture. Dependencies flow inward toward the domain layer. The UI layer (or client application) communicates exclusively through the public `Aduki` facade.
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
@@ -16,8 +16,8 @@ The SDK adopts a strictly decoupled, unidirectional layered architecture. Depend
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   Hermes SDK Public API                      │
-│     (HermesClient, MailManager, ContactManager, State)      │
+│                   Aduki SDK Public API                      │
+│     (Aduki, MailManager, ContactManager, State)      │
 └──────────────┬──────────────────────────────┬───────────────┘
                │                              │
                ▼                              ▼
@@ -60,14 +60,14 @@ KOTLIN/
 ### 1. `core` Module
 
 ```text
-core/src/main/kotlin/pro/aduki/hermes/core/
+core/src/main/kotlin/pro/aduki/core/
 ├── config/
 │   ├── options.kt            # Client configuration, base URLs, timeouts, retry counts
 │   └── endpoints.kt          # Production REST and gRPC endpoint constants
 ├── dispatchers/
 │   └── runners.kt            # Specialized CoroutineDispatchers (IO, DB, Crypto, Net)
 ├── errors/
-│   ├── types.kt              # Sealed HermesException hierarchy (Network, Auth, Storage)
+│   ├── types.kt              # Sealed AdukiException hierarchy (Network, Auth, Storage)
 │   └── codes.kt              # Standard error codes mapped from REST & gRPC status
 └── memory/
     ├── buffer.kt             # Direct byte buffer pooling using Okio ByteString
@@ -77,7 +77,7 @@ core/src/main/kotlin/pro/aduki/hermes/core/
 ### 2. `crypto` Module
 
 ```text
-crypto/src/main/kotlin/pro/aduki/hermes/crypto/
+crypto/src/main/kotlin/pro/aduki/crypto/
 ├── keystore/
 │   ├── provider.kt           # Hardware-backed Android KeyStore (StrongBox preferred, TEE fallback)
 │   └── keys.kt               # AES-256-GCM master key generation and rotation policies
@@ -91,7 +91,7 @@ crypto/src/main/kotlin/pro/aduki/hermes/crypto/
 ### 3. `store` Module (ObjectBox)
 
 ```text
-store/src/main/kotlin/pro/aduki/hermes/store/
+store/src/main/kotlin/pro/aduki/store/
 ├── box/
 │   ├── holder.kt             # Thread-safe BoxStore singleton and lifecycle management
 │   └── factory.kt            # Encrypted BoxStore factory backed by KeyStore keys
@@ -109,7 +109,7 @@ store/src/main/kotlin/pro/aduki/hermes/store/
 ### 4. `net` Module (Dual Transport)
 
 ```text
-net/src/main/kotlin/pro/aduki/hermes/net/
+net/src/main/kotlin/pro/aduki/net/
 ├── http/
 │   ├── client.kt             # OkHttp client builder with HTTP/2, pooling, and Brotli
 │   ├── auth.kt               # Key interceptor inserting "Authorization: Key hm_live_..."
@@ -126,7 +126,7 @@ net/src/main/kotlin/pro/aduki/hermes/net/
 ### 5. `sync` Module
 
 ```text
-sync/src/main/kotlin/pro/aduki/hermes/sync/
+sync/src/main/kotlin/pro/aduki/sync/
 ├── engine/
 │   ├── mail.kt               # RFC 7162 CONDSTORE/MODSEQ incremental synchronizer
 │   └── contact.kt            # Contact delta synchronization via ctag / timestamp
@@ -140,7 +140,7 @@ sync/src/main/kotlin/pro/aduki/hermes/sync/
 ### 6. `state` Module
 
 ```text
-state/src/main/kotlin/pro/aduki/hermes/state/
+state/src/main/kotlin/pro/aduki/state/
 ├── repository/
 │   ├── mail.kt               # MailRepository exposing StateFlow<List<Message>>
 │   ├── contact.kt            # ContactRepository exposing StateFlow<List<Contact>>
@@ -152,18 +152,18 @@ state/src/main/kotlin/pro/aduki/hermes/state/
 ### 7. `sdk` Module (Public Interface)
 
 ```text
-sdk/src/main/kotlin/pro/aduki/hermes/sdk/
-├── client.kt                 # HermesClient entrypoint with builder pattern
-├── mail.kt                   # hermes.mail surface (send, list, flag, search)
-├── contacts.kt               # hermes.contacts surface (create, list, update)
-└── identity.kt               # hermes.me cached identity accessor
+sdk/src/main/kotlin/pro/aduki/sdk/
+├── client.kt                 # Aduki entrypoint with builder pattern
+├── mail.kt                   # aduki.mail surface (send, list, flag, search)
+├── contacts.kt               # aduki.contacts surface (create, list, update)
+└── identity.kt               # aduki.me cached identity accessor
 ```
 
 ---
 
 ## Naming & Style Conventions
 
-Following the core Hermes codebase conventions:
+Following the core Aduki codebase conventions:
 
 1. **One-Word First**:
    - Entities: `Message`, `Mailbox`, `Contact`, `Outbox`, `Sync`.

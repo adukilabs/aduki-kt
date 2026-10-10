@@ -1,6 +1,6 @@
 # ObjectBox Database Specification
 
-This document details the local persistence architecture of the Hermes Android Kotlin SDK. SQLite and Room are completely replaced by **ObjectBox** to achieve true zero-copy binary access, deterministic performance, and ACID durability.
+This document details the local persistence architecture of the Aduki Android Kotlin SDK. SQLite and Room are completely replaced by **ObjectBox** to achieve true zero-copy binary access, deterministic performance, and ACID durability.
 
 ---
 
@@ -70,7 +70,7 @@ From 0.2.0 on, `default.json` is committed. Keep it under version control so lat
 Maintains folder hierarchies, IMAP/JMAP metadata, and CONDSTORE sequence numbers.
 
 ```kotlin
-package pro.aduki.hermes.store.entities
+package pro.aduki.store.entities
 
 import io.objectbox.annotation.Entity
 import io.objectbox.annotation.Id
@@ -100,7 +100,7 @@ data class Mailbox(
 Stores address book contacts with search-optimized indexes.
 
 ```kotlin
-package pro.aduki.hermes.store.entities
+package pro.aduki.store.entities
 
 import io.objectbox.annotation.Entity
 import io.objectbox.annotation.Id
@@ -132,7 +132,7 @@ data class Contact(
 Atomic action journal powering the offline-first mutation engine.
 
 ```kotlin
-package pro.aduki.hermes.store.entities
+package pro.aduki.store.entities
 
 import io.objectbox.annotation.Entity
 import io.objectbox.annotation.Id
@@ -172,13 +172,13 @@ ObjectBox uses native B-Trees directly integrated with the memory-mapped storage
 ObjectBox includes a native C++ data observer that notifies subscribers only when the queried dataset changes, avoiding false UI refreshes:
 
 ```kotlin
-package pro.aduki.hermes.store.queries
+package pro.aduki.store.queries
 
 import io.objectbox.Box
 import io.objectbox.kotlin.flow
 import kotlinx.coroutines.flow.Flow
-import pro.aduki.hermes.store.entities.Message
-import pro.aduki.hermes.store.entities.Message_
+import pro.aduki.store.entities.Message
+import pro.aduki.store.entities.Message_
 
 class MessageQueries(private val box: Box<Message>) {
 
@@ -207,10 +207,10 @@ class MessageQueries(private val box: Box<Message>) {
 To prevent disk thrashing and maximize write throughput, all operations execute within batched transactions:
 
 ```kotlin
-package pro.aduki.hermes.store.queries
+package pro.aduki.store.queries
 
 import io.objectbox.BoxStore
-import pro.aduki.hermes.store.entities.Message
+import pro.aduki.store.entities.Message
 
 class MessageBatchWriter(private val store: BoxStore) {
 
@@ -231,12 +231,12 @@ class MessageBatchWriter(private val store: BoxStore) {
 ObjectBox supports native database encryption using AES-256-GCM. The SDK configures the encryption key using hardware derived secrets from the Android KeyStore:
 
 ```kotlin
-package pro.aduki.hermes.store.box
+package pro.aduki.store.box
 
 import android.content.Context
 import io.objectbox.BoxStore
 import io.objectbox.MyObjectBox
-import pro.aduki.hermes.crypto.keystore.KeyStoreProvider
+import pro.aduki.crypto.keystore.KeyStoreProvider
 
 object StoreFactory {
 

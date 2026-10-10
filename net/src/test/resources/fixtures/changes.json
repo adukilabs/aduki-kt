@@ -17,7 +17,7 @@
       "internaldate": "2026-09-26T09:02:20.658460",
       "preview": "Are you free for lunch on Friday?",
       "from": {"name": "Bob Example", "email": "bob@example.com"},
-      "to": [{"name": "Alice", "email": "alice@hermes.test"}],
+      "to": [{"name": "Alice", "email": "alice@aduki.test"}],
       "has_attachment": true,
       "mailbox": {"hex": "M0X1A2B3C4D5E6F", "name": "INBOX"},
       "total": 0,
