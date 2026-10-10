@@ -23,7 +23,7 @@ class Id(
     private val base: String = Endpoints.ID,
     private val clock: () -> Long = System::currentTimeMillis
 ) {
-    private class Cached(val token: String, val until: Long)
+    private class Cached(val token: String, val until: Long, val expires: String)
 
     private val lock = Any()
     private val cache = HashMap<String, Cached>()
@@ -69,6 +69,16 @@ class Id(
     fun token(audience: String = Endpoints.AUDIENCE): String = synchronized(lock) {
         val hit = cache[audience]
         if (hit != null && hit.until > clock()) hit.token else renew(audience, null)
+    }
+
+    /**
+     * Renews the [audience] token now, unless another caller already replaced
+     * [stale] with a live one. Returns the current pair: access token,
+     * rotated refresh token, lifetime and session.
+     */
+    fun rotate(audience: String = Endpoints.AUDIENCE, stale: String? = null): Tokens = synchronized(lock) {
+        val token = renew(audience, stale)
+        Tokens(token, refresh, cache[audience]?.expires.orEmpty(), session)
     }
 
     /**
@@ -141,6 +151,6 @@ class Id(
     private fun store(audience: String, tokens: Tokens) {
         val seconds = tokens.expires.toLongOrNull() ?: 0L
         // Renew 30 s early so a token is not refused in flight.
-        cache[audience] = Cached(tokens.token, clock() + (seconds - 30).coerceAtLeast(0) * 1000)
+        cache[audience] = Cached(tokens.token, clock() + (seconds - 30).coerceAtLeast(0) * 1000, tokens.expires)
     }
 }

@@ -125,4 +125,39 @@ class SigninTest {
         assertNull("identity calls carry no mail token", server.takeRequest().getHeader("Authorization"))
         assertEquals("Bearer eyJ.new", server.takeRequest().getHeader("Authorization"))
     }
+
+    @Test
+    fun refusedRefreshIsDroppedAndNeverSentAgain() = runBlocking {
+        val client = client()
+        server.enqueue(MockResponse().setResponseCode(401)) // mail refuses the token
+        server.enqueue(MockResponse().setResponseCode(401)) // Aduki ID refuses the refresh
+        assertNull(client.me())
+        assertEquals("", client.session.refresh())
+        val before = server.requestCount
+
+        assertFalse(client.refresh())
+        assertEquals("a spent refresh token is not presented again", before, server.requestCount)
+    }
+
+    @Test
+    fun renewalGoesThroughTheIdClientAndKeepsLifetime() = runBlocking {
+        val client = client()
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"success":true,"data":{"access":"eyJ.new","refresh":"rt_2","expires":600}}"""
+            )
+        )
+        assertTrue(client.refresh())
+        assertEquals("600", client.session.tokens.value!!.expires)
+        // A sign-in replaced from outside is picked up by the next renewal.
+        client.session.update(Tokens(token = "eyJ.x", refresh = "rt_9", expires = "600", session = "00000000000000cd"))
+        server.takeRequest()
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"success":true,"data":{"access":"eyJ.y","refresh":"rt_10","expires":600}}"""
+            )
+        )
+        assertTrue(client.refresh())
+        assertEquals("rt_9", JSONObject(server.takeRequest().body.readUtf8()).getString("refresh"))
+    }
 }

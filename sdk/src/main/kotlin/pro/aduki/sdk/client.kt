@@ -10,6 +10,7 @@ import org.json.JSONObject
 import pro.aduki.core.config.Endpoints
 import pro.aduki.core.config.Options
 import pro.aduki.net.http.Client as HttpClient
+import pro.aduki.net.http.Id
 import pro.aduki.net.http.Login
 import pro.aduki.net.http.Whoami
 import pro.aduki.core.models.Identity
@@ -98,23 +99,37 @@ class Aduki internal constructor(
 
     private val renewal = Any()
 
+    // The Aduki ID client (K2) owns renewal: one serialized refresh rotation,
+    // a spent refresh token is dropped and never presented again. `session`
+    // stays the observable copy and the source of truth for sign-ins adopted
+    // from outside (`Aduki.login`, `session.update`).
+    private val id: Id by lazy { Id(identityClient, options.identity) }
+
+    // Makes [id] hold what [session] holds; must hold [renewal].
+    private fun align(current: Tokens) {
+        if (id.refreshToken() != current.refresh || id.session() != current.session) id.adopt(current)
+    }
+
     /**
      * Renews the access token unless another caller already replaced [stale].
-     * Serialized: refresh tokens rotate, and presenting a spent one twice
-     * makes Aduki ID revoke the whole session.
      */
     private fun renew(stale: String?): String? = synchronized(renewal) {
         val current = session.tokens.value ?: return null
         if (stale != null && current.token != stale) return current.token
         if (current.refresh.isBlank()) return null
+        align(current)
         try {
-            val fresh = Login.refresh(identityClient, options.identity, current.refresh)
+            val fresh = id.rotate(Endpoints.AUDIENCE, current.token)
             session.update(fresh.copy(session = current.session))
             fresh.token
         } catch (e: pro.aduki.core.errors.AdukiException.Auth) {
             // A 2xx that failed validation spent the refresh token: keep the
             // rotated one if it came back, else drop it (reuse revokes the session).
             session.update(current.copy(refresh = e.refresh))
+            null
+        } catch (e: pro.aduki.core.errors.AdukiException.Unauthorized) {
+            // Refused: spent, expired or revoked. Never present it again.
+            session.update(current.copy(refresh = ""))
             null
         } catch (_: Exception) {
             null
@@ -225,14 +240,15 @@ class Aduki internal constructor(
             session.clear()
             return false
         }
-        val outcome = Login.logout(identityClient, options.identity, current.session, current.refresh)
-        if (outcome.revoked || outcome.refresh.isBlank()) {
-            session.clear()
-        } else {
+        align(current)
+        val revoked = id.signOut()
+        if (id.signedIn()) {
             // Still signed in remotely: keep the retry credential.
-            session.update(current.copy(refresh = outcome.refresh))
+            session.update(current.copy(refresh = id.refreshToken()))
+        } else {
+            session.clear()
         }
-        outcome.revoked
+        revoked
     }
 
     /**
