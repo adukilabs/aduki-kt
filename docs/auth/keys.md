@@ -31,7 +31,7 @@ package pro.aduki.sdk
 
 val client = Aduki.builder()
     .key("hm_live_7f9b8c2d1e0a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a")
-    .endpoint("https://hermers.aduki.pro/v1")
+    .endpoint("https://mail.aduki.pro/v1")
     .timeout(30)
     .secure(true)
     .build()
@@ -61,7 +61,7 @@ On all outbound HTTP requests, the SDK interceptor inspects the credential and a
 
 ```http
 GET /v1/user HTTP/1.1
-Host: hermers.aduki.pro
+Host: mail.aduki.pro
 Authorization: Key hm_live_7f9b8c2d1e0a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a
 Accept: application/json
 ```

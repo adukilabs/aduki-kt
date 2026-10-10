@@ -59,16 +59,12 @@ object KeyStoreProvider {
 
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
     private const val MASTER_ALIAS = "aduki_master_key"
-    private const val LEGACY_ALIAS = "hermes_master_key" // read-only fallback for pre-rename installs
 
     fun getOrCreateMasterKey(context: Context): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
 
         if (keyStore.containsAlias(MASTER_ALIAS)) {
             return keyStore.getKey(MASTER_ALIAS, null) as SecretKey
-        }
-        if (keyStore.containsAlias(LEGACY_ALIAS)) {
-            return keyStore.getKey(LEGACY_ALIAS, null) as SecretKey
         }
 
         val hasStrongBox = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
@@ -188,7 +184,7 @@ Aduki prohibits all cleartext network traffic and enforces public key pinning:
     <domain-config cleartextTrafficPermitted="false">
         <domain includeSubdomains="true">aduki.pro</domain>
         <pin-set expiration="2027-12-31">
-            <!-- Primary SPKI Pin for hermers.aduki.pro -->
+            <!-- Primary SPKI Pin for mail.aduki.pro -->
             <pin digest="SHA-256">WoiWRyIOVNa9ihaBciRSC7XHjliYS9VwUGOIud4PB18=</pin>
             <!-- Backup Pin -->
             <pin digest="SHA-256">k2/402iK90558661mndnnd901002872365287293847=</pin>
@@ -201,7 +197,7 @@ Aduki prohibits all cleartext network traffic and enforces public key pinning:
 
 ```kotlin
 val pinner = CertificatePinner.Builder()
-    .add("hermers.aduki.pro", "sha256/WoiWRyIOVNa9ihaBciRSC7XHjliYS9VwUGOIud4PB18=")
+    .add("mail.aduki.pro", "sha256/WoiWRyIOVNa9ihaBciRSC7XHjliYS9VwUGOIud4PB18=")
     .add("grpc.aduki.pro", "sha256/WoiWRyIOVNa9ihaBciRSC7XHjliYS9VwUGOIud4PB18=")
     .build()
 

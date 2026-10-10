@@ -29,7 +29,7 @@ subprojects {
                     pom {
                         name.set(project.name)
                         description.set("Aduki Android Kotlin SDK - ${project.name} module")
-                        url.set("https://github.com/adukilabs/hermers-kt")
+                        url.set("https://github.com/adukilabs/aduki-kt")
                         licenses {
                             license {
                                 name.set("The Apache License, Version 2.0")
@@ -44,9 +44,9 @@ subprojects {
                             }
                         }
                         scm {
-                            connection.set("scm:git:git://github.com/adukilabs/hermers-kt.git")
-                            developerConnection.set("scm:git:ssh://github.com:adukilabs/hermers-kt.git")
-                            url.set("https://github.com/adukilabs/hermers-kt")
+                            connection.set("scm:git:git://github.com/adukilabs/aduki-kt.git")
+                            developerConnection.set("scm:git:ssh://github.com:adukilabs/aduki-kt.git")
+                            url.set("https://github.com/adukilabs/aduki-kt")
                         }
                     }
                 }
@@ -55,7 +55,7 @@ subprojects {
             repositories {
                 maven {
                     name = "github"
-                    url = uri("https://maven.pkg.github.com/adukilabs/hermers-kt")
+                    url = uri("https://maven.pkg.github.com/adukilabs/aduki-kt")
                     credentials {
                         username = project.findProperty("gpr.user") as String? ?: System.getenv("GITHUB_ACTOR")
                         password = project.findProperty("gpr.key") as String? ?: System.getenv("GITHUB_TOKEN")

@@ -32,27 +32,14 @@ class ProviderTest {
     @Test
     fun testMasterAliasIsAduki() {
         assertEquals("aduki_master", Provider.MASTER)
-        assertEquals("hermes_master", Provider.LEGACY_MASTER)
     }
 
     @Test
-    fun testMasterFallsBackToLegacyAlias() {
-        val p = Provider()
-        p.remove(Provider.MASTER)
-        val legacy = p.get(Provider.LEGACY_MASTER)
-        // An install that only has the old alias keeps getting its existing key.
-        assertEquals(legacy, p.get(Provider.MASTER))
-        assertEquals(legacy, p.get())
-        p.remove(Provider.MASTER)
-    }
-
-    @Test
-    fun testNewMasterKeyUsesNewAlias() {
+    fun testMasterKeyPersists() {
         val p = Provider()
         p.remove(Provider.MASTER)
         val key = p.get(Provider.MASTER)
-        assertEquals(key, p.get(Provider.MASTER))
-        assertEquals(false, p.has(Provider.LEGACY_MASTER))
+        assertEquals(key, p.get())
         p.remove(Provider.MASTER)
     }
 }

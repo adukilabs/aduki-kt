@@ -15,12 +15,6 @@ class Provider(private val type: String = "AndroidKeyStore") {
         /** Alias used for newly created master keys. */
         const val MASTER = "aduki_master"
 
-        /**
-         * Pre-rename alias. Existing installs hold their key under it; it is still read
-         * (never written) so those keys are not orphaned. Hardware keys are not exportable,
-         * so migration is lazy: [get] keeps returning the legacy entry until it is removed.
-         */
-        const val LEGACY_MASTER = "hermes_master"
         private val cache = ConcurrentHashMap<String, SecretKey>()
     }
 
@@ -32,16 +26,11 @@ class Provider(private val type: String = "AndroidKeyStore") {
             val keyStore = KeyStore.getInstance(type).apply { load(null) }
             if (keyStore.containsAlias(alias)) {
                 keyStore.getKey(alias, null) as SecretKey
-            } else if (alias == MASTER && keyStore.containsAlias(LEGACY_MASTER)) {
-                keyStore.getKey(LEGACY_MASTER, null) as SecretKey
             } else {
                 create(alias)
             }
         } catch (_: Exception) {
             // JVM fallback for unit tests and local execution
-            if (alias == MASTER && !cache.containsKey(MASTER)) {
-                cache[LEGACY_MASTER]?.let { return it }
-            }
             cache.getOrPut(alias) { createSoftware(alias) }
         }
     }
@@ -82,14 +71,10 @@ class Provider(private val type: String = "AndroidKeyStore") {
      */
     fun remove(alias: String) {
         cache.remove(alias)
-        if (alias == MASTER) cache.remove(LEGACY_MASTER)
         try {
             val keyStore = KeyStore.getInstance(type).apply { load(null) }
             if (keyStore.containsAlias(alias)) {
                 keyStore.deleteEntry(alias)
-            }
-            if (alias == MASTER && keyStore.containsAlias(LEGACY_MASTER)) {
-                keyStore.deleteEntry(LEGACY_MASTER)
             }
         } catch (_: Exception) {
             // Ignored on software fallback

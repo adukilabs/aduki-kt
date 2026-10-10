@@ -9,7 +9,7 @@ import okhttp3.TlsVersion
  */
 object Pinning {
 
-    const val REST_HOST = "hermers.aduki.pro"
+    const val REST_HOST = "mail.aduki.pro"
     const val GRPC_HOST = "grpc.aduki.pro"
 
     // Primary SPKI SHA-256 pin

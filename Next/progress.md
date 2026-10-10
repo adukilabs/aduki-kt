@@ -34,10 +34,10 @@ All have unit tests; there is a live test (`live.test.kt`) in `net` and `sdk`.
 
 | Phase | Item | State |
 |---|---|---|
-| P2 | package names | done in code (K1): packages `pro.aduki.*`, `Aduki`, `AdukiException`, deprecated `typealias` shims in `pro.aduki.hermes`; Maven group `pro.aduki` set in the build, but the namespace is not yet verified (K0) and the relocation POM for `io.github.adukilabs:sdk` is not done |
+| P2 | package names | done in code (K1): packages `pro.aduki.*`, `Aduki`, `AdukiException`, no compatibility shims; Maven group `pro.aduki` set in the build, but the namespace is not yet verified (K0) and the relocation POM for `io.github.adukilabs:sdk` is not done |
 | P2 | Aduki ID sign-in (`POST /v1/sessions`, audience `mail`), 401 renewal, revoking sign-out | done |
 | P4 | `Center` client: link, switcher, unlink, device key register, unlock | done |
-| P4 | `rights` push handling: renew the access token on `{"@type":"Rights"}` | done (`HermesClient.rights`); no SSE/stream subscriber feeds it yet (the source is the Aduki Mail JMAP EventSource, plan K3) |
+| P4 | `rights` push handling: renew the access token on `{"@type":"Rights"}` | done (`Aduki.rights`); no SSE/stream subscriber feeds it yet (the source is the Aduki Mail JMAP EventSource, plan K3) |
 | P4 | Android authenticator (`AccountManager`, multiple accounts) | missing; no Android module exists |
 | P4 | access tokens carry no center data (test) | not asserted in the SDK tests |
 | P9 | DPoP (proof signing, `jti`, nonce) | missing; no references in code. Server side accepts `EdDSA` proofs only today, which no hardware Keystore can produce on most devices (plan K5) |

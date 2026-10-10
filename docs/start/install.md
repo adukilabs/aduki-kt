@@ -31,7 +31,7 @@ dependencyResolutionManagement {
 
         // Optional GitHub Packages repository:
         // maven {
-        //     url = uri("https://maven.pkg.github.com/adukilabs/hermers-kt")
+        //     url = uri("https://maven.pkg.github.com/adukilabs/aduki-kt")
         //     credentials {
         //         username = providers.gradleProperty("gpr.user").orNull ?: System.getenv("GITHUB_ACTOR")
         //         password = providers.gradleProperty("gpr.key").orNull ?: System.getenv("GITHUB_TOKEN")
@@ -75,7 +75,7 @@ dependencies {
     implementation("pro.aduki:sdk:0.2.0")
 
     // Or via JitPack mirror:
-    // implementation("com.github.adukilabs.hermers-kt:sdk:v0.2.0")
+    // implementation("com.github.adukilabs.aduki-kt:sdk:v0.2.0")
 
     // ObjectBox Zero-Copy Persistent Engine
     implementation("io.objectbox:objectbox-kotlin:4.0.3")

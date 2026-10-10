@@ -73,7 +73,7 @@ class ClientTest {
     fun testBuilder() {
         val client = Aduki.builder()
             .key("hm_live_validkey123")
-            .endpoint("https://hermers.aduki.pro/v1")
+            .endpoint("https://mail.aduki.pro/v1")
             .grpc("grpc.aduki.pro", 443)
             .timeout(30)
             .secure(true)
@@ -81,7 +81,7 @@ class ClientTest {
 
         assertNotNull(client)
         assertEquals("hm_live_validkey123", client.apiKey)
-        assertEquals("https://hermers.aduki.pro/v1", client.options.endpoint)
+        assertEquals("https://mail.aduki.pro/v1", client.options.endpoint)
         assertEquals("grpc.aduki.pro", client.options.grpcHost)
         assertEquals(443, client.options.grpcPort)
         assertEquals(30L, client.options.timeoutSeconds)
@@ -96,7 +96,7 @@ class ClientTest {
     fun testInteractiveTokenBuilder() {
         val client = Aduki.builder()
             .token("jwt_sample_token_123")
-            .endpoint("https://hermers.aduki.pro/v1")
+            .endpoint("https://mail.aduki.pro/v1")
             .build()
 
         assertNotNull(client)

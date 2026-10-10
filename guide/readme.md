@@ -111,7 +111,7 @@ class App : Application() {
 
         aduki = Aduki.builder()
             .key("hm_live_7f9b8c2d1e0a4b5c6d7e8f9a0b1c2d3e")
-            .endpoint("https://hermers.aduki.pro/v1")
+            .endpoint("https://mail.aduki.pro/v1")
             .grpc("grpc.aduki.pro", 443)
             .secure(true) // Hardware-backed KeyStore encryption
             .build()

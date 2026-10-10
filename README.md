@@ -2,11 +2,7 @@
 
 > Plans and progress: [`Next/README.md`](Next/README.md).
 
-> Formerly the Aduki Android Kotlin SDK (`adukilabs/hermers-kt`). The
-> repository is now `adukilabs/aduki-kt`. Packages moved from
-> `pro.aduki.hermes.*` to `pro.aduki.*`, `HermesClient` is `Aduki` and
-> `HermesException` is `AdukiException` (deprecated aliases remain for one
-> minor release). The Maven group is `pro.aduki`; the Aduki ID client and the
+> The Maven group is `pro.aduki`; the Aduki ID client and the
 > Account Center authenticator follow in phases P2 and P4 of
 > `aduki/Next/plan.md`.
 
@@ -61,7 +57,7 @@ dependencyResolutionManagement {
 
 // app/build.gradle.kts
 dependencies {
-    implementation("com.github.adukilabs.hermers-kt:sdk:v0.3.0")
+    implementation("com.github.adukilabs.aduki-kt:sdk:v0.3.0")
     implementation("io.objectbox:objectbox-android:4.0.3")
 }
 ```
@@ -91,7 +87,7 @@ Log.d("Aduki", "Logged in as ${identity?.user} in tenant ${identity?.tenant}")
 ```kotlin
 val client = Aduki.builder()
     .key("hm_live_7f9b8c2d1e0a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a")
-    .endpoint("https://hermers.aduki.pro/v1")
+    .endpoint("https://mail.aduki.pro/v1")
     .timeout(30)
     .secure(true)
     .build()
