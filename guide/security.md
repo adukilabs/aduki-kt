@@ -1,6 +1,6 @@
 # Device-Level Security Specification
 
-> Design note (internal). Written before parts of it were built; it states intent, and its performance numbers are unmeasured targets. Where it disagrees with the code (database encryption, StrongBox, circuit breaker use, gRPC use), the code and `progress.md` section 3.3 win.
+> Design note (internal). Written before parts of it were built; it states intent, and its performance numbers are unmeasured targets. Where it disagrees with the code (database encryption, StrongBox, circuit breaker use, gRPC use), the code and `progress.md` section 3.3 win. gRPC was dropped (D-HOST-5, 2026-10-10): every mention of it below is history.
 
 This document details the device-level security architecture of the Aduki Android Kotlin SDK. The security model enforces **hardware-backed isolation**, **zero unencrypted persistence**, and **deterministic memory sanitization**.
 
@@ -176,40 +176,16 @@ object EnvelopeCipher {
 
 ## 5. Transport Security & Certificate Pinning
 
-Aduki prohibits all cleartext network traffic and enforces public key pinning:
+Cleartext traffic is refused. Pinning is opt-in (decided 2026-10-10): the SDK
+ships no pins because none was ever verified against a live host and a wrong
+pin breaks every request. The app passes `Pin(host, hashes...)` to the builder
+(`Options.pins`); `docs/security/tls.md` has the `openssl` command that prints
+a hash. The earlier draft of this section listed pin values; they were
+placeholders and are removed.
 
-### Network Security Configuration (`res/xml/network_security_config.xml`)
-
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<network-security-config>
-    <domain-config cleartextTrafficPermitted="false">
-        <domain includeSubdomains="true">aduki.pro</domain>
-        <pin-set expiration="2027-12-31">
-            <!-- Primary SPKI Pin for mail.aduki.pro -->
-            <pin digest="SHA-256">WoiWRyIOVNa9ihaBciRSC7XHjliYS9VwUGOIud4PB18=</pin>
-            <!-- Backup Pin -->
-            <pin digest="SHA-256">k2/402iK90558661mndnnd901002872365287293847=</pin>
-        </pin-set>
-    </domain-config>
-</network-security-config>
-```
-
-### OkHttp CertificatePinner Integration
-
-```kotlin
-val pinner = CertificatePinner.Builder()
-    .add("mail.aduki.pro", "sha256/WoiWRyIOVNa9ihaBciRSC7XHjliYS9VwUGOIud4PB18=")
-    .add("grpc.aduki.pro", "sha256/WoiWRyIOVNa9ihaBciRSC7XHjliYS9VwUGOIud4PB18=")
-    .build()
-
-val okHttpClient = OkHttpClient.Builder()
-    .certificatePinner(pinner)
-    .connectionSpecs(listOf(ConnectionSpec.RESTRICTED_TLS))
-    .build()
-```
-
----
+Needs the server: once `mail.` and `id.` answer on 443, take the SPKI hashes of
+the live chain and of the backup key and record them here and in the app
+configuration (see `AI/PROGRESS.md`, "Needs server").
 
 ## 6. Device Integrity & Root Detection
 

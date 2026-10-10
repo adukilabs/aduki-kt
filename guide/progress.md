@@ -22,7 +22,7 @@ OkHttp, coroutines, org.json. Maven group `pro.aduki` (was `io.github.adukilabs`
 |---|---|
 | `core` | models (tokens, center, identity, mail, schedule), config (endpoints, options), memory (pool, ring, wipe, hash), retry (circuit, jitter), errors (`AdukiException`) |
 | `crypto` | Android Keystore provider (`aduki_master`, no StrongBox request), AES-256-GCM `Envelope`, `Guard` sanitizer, TLS pinning (`Pinning`), DPoP `Key` interface with `Software` P-256 / Ed25519 keys |
-| `net` | HTTP: login (submit, refresh, logout, totp), `Id` (K2), `Center` (link, fetch, unlink, register, unlock), `Events` (K3), `Dpop` (K5), `Oidc` (K7), mail, scheduling, whoami, REST envelope reader, bearer interceptor; gRPC channel and metadata (not used by the `Aduki` facade) |
+| `net` | HTTP: login (submit, refresh, logout, totp), `Id` (K2), `Center` (link, fetch, unlink, register, unlock), `Events` (K3), `Dpop` (K5), `Oidc` (K7), mail, scheduling, whoami, REST envelope reader, bearer interceptor (`Scheme` picks the `Authorization` scheme) |
 | `store` | ObjectBox entities (message, mailbox, contact, appointment, slot, service, outbox, sync), batch queries, box holder |
 | `sync` | mailbox, contact, schedule engines; outbox manager and worker; HTTP transport and dispatcher; merge reconcile |
 | `state` | repositories (mail, contact, appointment, session) |
@@ -61,10 +61,9 @@ Not started: K0 (Maven Central namespace), K4 (authenticator), K6 (passkeys), An
 ## 3.3 Known code facts that docs must not overstate
 
 - `Factory.create(dir, key)` ignores `key`: the ObjectBox database is **not encrypted**. `Envelope` and `Provider` are building blocks no SDK code path calls; session tokens live in memory (`Session` StateFlows), not in a store.
-- `Options.secure` only switches TLS pinning on the default HTTP client (off for `localhost`/`127.0.0.1`); `Options.maxRetries` is read by nothing.
-- `Circuit` is a standalone utility; nothing in the SDK wraps calls with it. The `Channel` gRPC factory is not used by `Aduki`.
+- `Options.secure` only allows TLS pinning on the default HTTP client, and pinning is opt-in (`Options.pins`, none shipped); `Options.maxRetries` was removed.
+- `Circuit` is a standalone utility; nothing in the SDK wraps calls with it.
 - `Lifecycle.pause()` only flips a flag and calls listeners; the one internal listener flushes the outbox on resume.
-- `Pinning` holds two SPKI pins whose values were never confirmed against the live certificate (the backup looks like a placeholder).
 - Contacts sync has an engine (`ContactEngine`) but no HTTP `ContactTransport`; callers supply one.
 - No benchmark harness exists; the benchmark numbers that used to be in the docs had no source and were removed.
 

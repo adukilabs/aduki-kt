@@ -16,10 +16,9 @@ package pro.aduki.core.config
 data class Options(
     val endpoint: String = Endpoints.REST,
     val identity: String = Endpoints.ID,
-    val grpcHost: String = Endpoints.GRPC_HOST,
-    val grpcPort: Int = Endpoints.GRPC_PORT,
     val timeoutSeconds: Long = 15,
-    val secure: Boolean = true
+    val secure: Boolean = true,
+    val pins: List<Pin> = emptyList() // TLS pins; none by default
 )
 ```
 
@@ -32,8 +31,6 @@ object Endpoints {
     const val REST = "https://mail.aduki.pro/v1"
     const val ID = "https://id.aduki.pro/v1"
     const val AUDIENCE = "mail"
-    const val GRPC_HOST = "grpc.aduki.pro"
-    const val GRPC_PORT = 443
 }
 ```
 
@@ -50,8 +47,8 @@ class Builder {
     fun endpoint(endpoint: String): Builder
     fun identity(identity: String): Builder
     fun dpop(key: pro.aduki.crypto.dpop.Key): Builder
-    fun grpc(host: String, port: Int = Endpoints.GRPC_PORT): Builder
     fun secure(enabled: Boolean): Builder
+    fun pins(vararg pins: Pin): Builder
     fun timeout(seconds: Long): Builder
     fun http(client: OkHttpClient): Builder
     fun manager(manager: Manager): Builder
@@ -68,11 +65,11 @@ class Builder {
 
 | Method | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `key` | `key` | `String` | `""` | Static API key, sent as `Authorization: Key <key>` (see [API keys](../auth/keys.md)). |
+| `key` | `key` | `String` | `""` | API key, sent as `Authorization: Key <key>` (only on this path; every other credential is `Bearer`) (see [API keys](../auth/keys.md)). |
 | `token` | `token` | `String` | `""` | Pre-existing JWT access token for user sessions. |
 | `endpoint` | `endpoint` | `String` | `Endpoints.REST` | Base REST API URL. |
-| `grpc` | `host`, `port`| `String`, `Int` | `grpc.aduki.pro`, `443` | Target gRPC host and TLS port. |
-| `secure` | `enabled` | `Boolean` | `true` | Turns TLS certificate pinning on for the default HTTP client (pinning is skipped for `localhost` and `127.0.0.1`). It does not encrypt local storage. |
+| `secure` | `enabled` | `Boolean` | `true` | Allows TLS pinning on the default HTTP client when pins are configured. It does not pin anything by itself and does not encrypt local storage. |
+| `pins` | `pins` | `Pin...` | none | Opt-in TLS pins per host ([TLS](../security/tls.md)); the SDK ships no pins. |
 | `timeout` | `seconds` | `Long` | `15` | OkHttp socket connect, read, and write timeout in seconds. |
 | `http` | `client` | `OkHttpClient` | `null` | Optional custom OkHttpClient instance. |
 | `identity` | `identity` | `String` | `https://id.aduki.pro/v1` | Aduki ID base used to renew and revoke sign-ins. |
@@ -94,9 +91,8 @@ val client = Aduki.login(
 ### Headless Worker via API Key
 ```kotlin
 val client = Aduki.builder()
-    .key(apiKey) // a key starting hm_ or key_
+    .key(apiKey) // sent as Authorization: Key
     .endpoint("https://mail.aduki.pro/v1")
-    .grpc("grpc.aduki.pro", 443)
     .timeout(30)
     .secure(true)
     .build()

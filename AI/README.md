@@ -11,7 +11,7 @@ A client SDK for the Aduki platform, written as plain Kotlin/JVM Gradle modules 
 | `core` | models, errors (`AdukiException`), config (`Endpoints`, `Options`), retry (`Jitter`, `Circuit`), memory (`wipe`) |
 | `crypto` | `keystore.Provider`, `cipher.Envelope` (AES-256-GCM), `sanitizer.Guard`, `tls.Pinning`, `dpop.Key` and `Software` |
 | `store` | ObjectBox entities, `box.Factory`, `queries.Batch` |
-| `net` | `http`: `Id`, `Login`, `Center`, `Mail`, `Scheduling`, `Whoami`, `Events` (rights stream), `Dpop`, `Oidc`, `Envelope` (REST envelope reader); `grpc`: `Channel`, `Credentials` |
+| `net` | `http`: `Id`, `Login`, `Center`, `Mail`, `Scheduling`, `Whoami`, `Events` (rights stream), `Dpop`, `Oidc`, `Envelope` (REST envelope reader), `Scheme` (Authorization header) |
 | `sync` | mailbox, contact and schedule engines; outbox `Manager` and `Worker`; `http.HttpMailboxTransport`, `http.HttpDispatcher`; `reconcile` |
 | `state` | repositories exposing `StateFlow` (mail, contact, appointment, session) |
 | `sdk` | the `Aduki` facade, `Mail`, `Contacts`, `Sync`, `Scheduling`, `Lifecycle` |
@@ -20,7 +20,7 @@ Packages are `pro.aduki.<module>`; Maven group `pro.aduki`, version in the root 
 
 ## Where it sits in the platform
 
-It is a client of: Aduki ID (`https://id.aduki.pro/v1`: sessions, tokens, Account Center, OIDC), Aduki Mail (`https://mail.aduki.pro/v1` REST and `/jmap/eventsource`), gRPC at `grpc.aduki.pro:443`. Other products (store, files, space, chat) have no client here. The contracts it implements are specs in the `aduki` repo (`aduki/guide/spec.md` is the registry); see `CONTEXT.md`.
+It is a client of: Aduki ID (`https://id.aduki.pro/v1`: sessions, tokens, Account Center, OIDC), Aduki Mail (`https://mail.aduki.pro/v1` REST and `/jmap/eventsource`) (no gRPC: the `grpc.` host was dropped, D-HOST-5). Other products (store, files, space, chat) have no client here. The contracts it implements are specs in the `aduki` repo (`aduki/guide/spec.md` is the registry); see `CONTEXT.md`.
 
 ## Repo map
 

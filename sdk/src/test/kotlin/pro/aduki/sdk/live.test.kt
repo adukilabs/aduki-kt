@@ -32,12 +32,6 @@ class LiveTest {
             ?: Endpoints.REST
     }
 
-    private fun liveGrpcHost(): String {
-        return System.getProperty("aduki.grpc.host")
-            ?: System.getenv("ADUKI_GRPC_HOST")
-            ?: Endpoints.GRPC_HOST
-    }
-
     @Before
     fun requireServer() {
         assumeTrue("Skipping Tier 5 live server tests: aduki.live is not enabled", isLiveEnabled())
@@ -60,14 +54,13 @@ class LiveTest {
     }
 
     /**
-     * T5-LIVE-02: Live gRPC Connection Handshake
+     * T5-LIVE-02: Client builds against the live endpoint
      */
     @Test
     fun connect() = runBlocking {
         val client = Aduki.builder()
             .key(liveApiKey())
             .endpoint(liveEndpoint())
-            .grpc(liveGrpcHost(), Endpoints.GRPC_PORT)
             .build()
 
         assertNotNull(client)

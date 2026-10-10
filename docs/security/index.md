@@ -9,7 +9,7 @@ exact API.
 | Key storage | `Provider`: an AES-256 master key (alias `aduki_master`) in the Android Keystore, with a software fallback off Android | [Keystore](keystore.md) |
 | Encryption | `Envelope`: AES-256-GCM with a random 12-byte IV per message | [Cipher](cipher.md) |
 | Memory | `wipe()`, `Guard`: overwrite secrets after use | [Sanitization](sanitizer.md) |
-| Transport | SPKI certificate pinning for the production hosts, TLS 1.3/1.2 connection spec | [TLS](tls.md) |
+| Transport | Opt-in SPKI certificate pinning with your own pins (none shipped), TLS 1.3/1.2 connection spec | [TLS](tls.md) |
 | Device keys | `dpop.Key`: sign-only device keys for [DPoP](../auth/dpop.md) | [DPoP](../auth/dpop.md) |
 
 ## What is not done for you

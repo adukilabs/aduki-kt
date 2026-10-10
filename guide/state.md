@@ -1,6 +1,6 @@
 # State Management & Synchronization Specification
 
-> Design note (internal). Written before parts of it were built; it states intent, and its performance numbers are unmeasured targets. Where it disagrees with the code (database encryption, StrongBox, circuit breaker use, gRPC use), the code and `progress.md` section 3.3 win.
+> Design note (internal). Written before parts of it were built; it states intent, and its performance numbers are unmeasured targets. Where it disagrees with the code (database encryption, StrongBox, circuit breaker use, gRPC use), the code and `progress.md` section 3.3 win. gRPC was dropped (D-HOST-5, 2026-10-10): every mention of it below is history.
 
 This document details the reactive state management architecture, offline-first persistent outbox engine, and CONDSTORE / MODSEQ incremental synchronization algorithms for the Aduki Android Kotlin SDK.
 

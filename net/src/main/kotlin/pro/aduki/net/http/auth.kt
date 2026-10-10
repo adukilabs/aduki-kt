@@ -4,19 +4,14 @@ import okhttp3.Interceptor
 import okhttp3.Response
 
 /**
- * Auth interceptor attaching API key or Bearer JWT token to all HTTP requests.
+ * Auth interceptor attaching an API key (`Key`, only when [apiKey] is set) or a Bearer token to all HTTP requests.
  */
-class Auth(private val supplier: () -> String) : Interceptor {
+class Auth(private val apiKey: Boolean = false, private val supplier: () -> String) : Interceptor {
 
-    constructor(key: String) : this({ key })
+    constructor(key: String, apiKey: Boolean = false) : this(apiKey, { key })
 
     override fun intercept(chain: Interceptor.Chain): Response {
-        val token = supplier().trim()
-        val authHeader = when {
-            token.isEmpty() -> ""
-            token.startsWith("hm_") || token.startsWith("key_") -> "Key $token"
-            else -> "Bearer $token"
-        }
+        val authHeader = Scheme.header(supplier(), apiKey)
 
         val builder = chain.request().newBuilder()
             .header("Accept", "application/json")

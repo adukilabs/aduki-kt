@@ -80,10 +80,8 @@ dependencies {
     implementation("io.objectbox:objectbox-kotlin:4.0.3")
     implementation("io.objectbox:objectbox-android:4.0.3")
 
-    // Network & gRPC Transports
+    // Network
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("io.grpc:grpc-okhttp:1.64.0")
-    implementation("io.grpc:grpc-kotlin-stub:1.4.1")
 
     // Kotlin Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
@@ -100,7 +98,7 @@ If your application only needs specific subsystems, you can import individual mo
 | **State** | `pro.aduki:state:0.3.0` | Repositories exposing `StateFlow` |
 | **Sync** | `pro.aduki:sync:0.3.0` | RFC 7162 CONDSTORE synchronizer & Outbox |
 | **Store** | `pro.aduki:store:0.3.0` | ObjectBox entities |
-| **Net** | `pro.aduki:net:0.3.0` | HTTP clients (Aduki ID, mail, scheduling), gRPC channel |
+| **Net** | `pro.aduki:net:0.3.0` | HTTP clients (Aduki ID, mail, scheduling) |
 | **Crypto** | `pro.aduki:crypto:0.3.0` | Keystore provider, AES-256-GCM cipher, TLS pinning, DPoP keys |
 | **Core** | `pro.aduki:core:0.3.0` | models, errors, Jitter, Circuit, memory helpers |
 

@@ -13,14 +13,15 @@ object Client {
     fun create(
         key: String,
         timeout: Long = 15,
-        pinner: CertificatePinner? = null
+        pinner: CertificatePinner? = null,
+        apiKey: Boolean = false
     ): OkHttpClient {
         val builder = OkHttpClient.Builder()
             .connectionPool(ConnectionPool(maxIdleConnections = 8, keepAliveDuration = 5, TimeUnit.MINUTES))
             .connectTimeout(timeout, TimeUnit.SECONDS)
             .readTimeout(timeout, TimeUnit.SECONDS)
             .writeTimeout(timeout, TimeUnit.SECONDS)
-            .addInterceptor(Auth(key))
+            .addInterceptor(Auth(key, apiKey))
             .retryOnConnectionFailure(true)
 
         if (pinner != null) {

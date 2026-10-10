@@ -34,7 +34,7 @@ implementations on a plain JVM.
 | :--- | :--- |
 | `core` | models, errors, configuration, retry primitives (`Jitter`, `Circuit`), memory helpers |
 | `crypto` | Keystore provider, AES-256-GCM `Envelope`, `Guard`, TLS pinning, DPoP keys |
-| `net` | HTTP clients (`Id`, `Login`, `Center`, `Mail`, `Scheduling`, `Events`, `Dpop`, `Oidc`) and a gRPC channel factory |
+| `net` | HTTP clients (`Id`, `Login`, `Center`, `Mail`, `Scheduling`, `Events`, `Dpop`, `Oidc`) |
 | `store` | ObjectBox entities and batch transactions |
 | `sync` | mailbox, contact and schedule sync engines; the outbox |
 | `state` | repositories that expose `StateFlow` |

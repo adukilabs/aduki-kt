@@ -30,7 +30,7 @@ class AuthTest {
 
         val apiKey = "hm_live_abc123xyz789"
         val client = OkHttpClient.Builder()
-            .addInterceptor(Auth(apiKey))
+            .addInterceptor(Auth(apiKey, apiKey = true))
             .build()
 
         val request = Request.Builder()
@@ -45,5 +45,23 @@ class AuthTest {
         assertEquals("Key $apiKey", recorded.getHeader("Authorization"))
         assertEquals("application/json", recorded.getHeader("Accept"))
         assertEquals("Aduki-Android/1.0.0", recorded.getHeader("User-Agent"))
+    }
+
+    @Test
+    fun theSchemeFollowsTheFlagNotThePrefix() {
+        assertEquals("Key hm_abc", Scheme.header("hm_abc", apiKey = true))
+        assertEquals("Key tok", Scheme.header(" tok ", apiKey = true))
+        assertEquals("Bearer hm_abc", Scheme.header("hm_abc"))
+        assertEquals("Bearer key_abc", Scheme.header("key_abc"))
+        assertEquals("Bearer eyJ.x.y", Scheme.header("eyJ.x.y"))
+        assertEquals("", Scheme.header("  ", apiKey = true))
+    }
+
+    @Test
+    fun aKeyShapedValueIsBearerUnlessMarkedAsAKey() {
+        server.enqueue(MockResponse().setBody("{}"))
+        val client = OkHttpClient.Builder().addInterceptor(Auth("hm_looks_like_a_key")).build()
+        client.newCall(Request.Builder().url(server.url("/user")).build()).execute().close()
+        assertEquals("Bearer hm_looks_like_a_key", server.takeRequest().getHeader("Authorization"))
     }
 }

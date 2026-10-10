@@ -9,11 +9,13 @@ import okhttp3.OkHttpClient
 import org.json.JSONObject
 import pro.aduki.core.config.Endpoints
 import pro.aduki.core.config.Options
+import pro.aduki.core.config.Pin
 import pro.aduki.net.http.Client as HttpClient
 import pro.aduki.net.http.Dpop
 import pro.aduki.net.http.Events
 import pro.aduki.net.http.Id
 import pro.aduki.net.http.Login
+import pro.aduki.net.http.Scheme
 import pro.aduki.net.http.Whoami
 import pro.aduki.core.models.Identity
 import pro.aduki.core.models.Tokens
@@ -55,20 +57,23 @@ class Aduki internal constructor(
         return session.token() ?: if (token.isNotBlank()) token else apiKey
     }
 
+    // The `Key` scheme is for a credential that came in through `Builder.key`:
+    // true while no session token and no bare token take precedence over it.
+    private fun usingApiKey(): Boolean = session.token() == null && token.isBlank() && apiKey.isNotBlank()
+
+    // Null unless the app configured pins (opt-in; the SDK ships none).
+    private val pinner: okhttp3.CertificatePinner? by lazy {
+        if (options.secure) pro.aduki.crypto.tls.Pinning.pinner(options.pins) else null
+    }
+
     private val defaultClient: OkHttpClient by lazy {
-        val pinner = if (options.secure && !options.endpoint.contains("localhost") && !options.endpoint.contains("127.0.0.1")) {
-            pro.aduki.crypto.tls.Pinning.pinner()
-        } else {
-            null
-        }
-        val base = HttpClient.create(activeAuthString(), options.timeoutSeconds, pinner)
+        val base = HttpClient.create(activeAuthString(), options.timeoutSeconds, pinner, usingApiKey())
         base.newBuilder()
             .addInterceptor { chain ->
                 val auth = activeAuthString()
                 val request = if (auth.isNotBlank()) {
-                    val authHeader = if (auth.startsWith("hm_") || auth.startsWith("key_")) "Key $auth" else "Bearer $auth"
                     chain.request().newBuilder()
-                        .header("Authorization", authHeader)
+                        .header("Authorization", Scheme.header(auth, usingApiKey()))
                         .build()
                 } else {
                     chain.request()
@@ -158,7 +163,7 @@ class Aduki internal constructor(
             networkInterceptors().clear()
             authenticator(Authenticator.NONE)
             dpop?.let(::addInterceptor)
-        }?.build() ?: HttpClient.create("", options.timeoutSeconds).let { base ->
+        }?.build() ?: HttpClient.create("", options.timeoutSeconds, pinner).let { base ->
             if (dpop == null) base else base.newBuilder().addInterceptor(dpop).build()
         }
     }
@@ -210,7 +215,7 @@ class Aduki internal constructor(
     @Suppress("DEPRECATION")
     suspend fun totp(code: String): Boolean {
         val currentToken = activeAuthString()
-        return Login.totp(activeHttpClient(), options.endpoint, currentToken, code)
+        return Login.totp(activeHttpClient(), options.endpoint, currentToken, code, usingApiKey())
     }
 
     /**
@@ -312,9 +317,8 @@ class Aduki internal constructor(
         private var token: String = ""
         private var endpoint: String = Endpoints.REST
         private var identity: String = Endpoints.ID
-        private var grpcHost: String = Endpoints.GRPC_HOST
-        private var grpcPort: Int = Endpoints.GRPC_PORT
         private var secure: Boolean = true
+        private var pins: List<Pin> = emptyList()
         private var timeoutSeconds: Long = 15
         private var httpClient: OkHttpClient? = null
         private var manager: Manager? = null
@@ -332,10 +336,6 @@ class Aduki internal constructor(
         fun endpoint(endpoint: String) = apply { this.endpoint = endpoint }
         /** The Aduki ID base used to renew and revoke sign-ins, e.g. `https://id.aduki.pro/v1`. */
         fun identity(identity: String) = apply { this.identity = identity }
-        fun grpc(host: String, port: Int = Endpoints.GRPC_PORT) = apply {
-            this.grpcHost = host
-            this.grpcPort = port
-        }
         /**
          * Binds sign-ins to a device key (DPoP, RFC 9449): Aduki ID and mail
          * calls carry a proof, and tokens bound to the key are sent as
@@ -343,6 +343,13 @@ class Aduki internal constructor(
          */
         fun dpop(key: pro.aduki.crypto.dpop.Key) = apply { this.dpop = Dpop(key) }
         fun secure(enabled: Boolean) = apply { this.secure = enabled }
+        /**
+         * Pins the TLS public keys of the given hosts on the default HTTP
+         * client. Off by default: the SDK ships no pins. Ignored when
+         * [secure] is false or a client is supplied through [http].
+         */
+        fun pins(pins: List<Pin>) = apply { this.pins = pins }
+        fun pins(vararg pins: Pin) = apply { this.pins = pins.toList() }
         fun timeout(seconds: Long) = apply { this.timeoutSeconds = seconds }
         fun http(client: OkHttpClient) = apply { this.httpClient = client }
         fun manager(manager: Manager) = apply { this.manager = manager }
@@ -365,10 +372,9 @@ class Aduki internal constructor(
             val options = Options(
                 endpoint = endpoint,
                 identity = identity,
-                grpcHost = grpcHost,
-                grpcPort = grpcPort,
                 timeoutSeconds = timeoutSeconds,
-                secure = secure
+                secure = secure,
+                pins = pins
             )
             return Aduki(
                 apiKey = apiKey,
@@ -403,9 +409,10 @@ class Aduki internal constructor(
             endpoint: String = Endpoints.REST,
             identity: String = Endpoints.ID,
             backup: String? = null,
-            dpop: pro.aduki.crypto.dpop.Key? = null
+            dpop: pro.aduki.crypto.dpop.Key? = null,
+            pins: List<Pin> = emptyList()
         ): Aduki {
-            val tempClient = HttpClient.create("", 15).let { base ->
+            val tempClient = HttpClient.create("", 15, pro.aduki.crypto.tls.Pinning.pinner(pins)).let { base ->
                 if (dpop == null) base else base.newBuilder().addInterceptor(Dpop(dpop)).build()
             }
             val tokens = Login.submit(tempClient, identity, handle, password, code, backup)
@@ -413,6 +420,7 @@ class Aduki internal constructor(
                 .apply { if (dpop != null) dpop(dpop) }
                 .endpoint(endpoint)
                 .identity(identity)
+                .pins(pins)
                 .token(tokens.token)
                 .build()
 
