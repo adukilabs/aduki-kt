@@ -1,6 +1,7 @@
 package pro.aduki.sync.engine
 
 import io.objectbox.BoxStore
+import pro.aduki.store.box.Sealing
 import pro.aduki.store.entities.Contact as ContactEntity
 import pro.aduki.store.entities.Sync
 import pro.aduki.sync.reconcile.Reconcile
@@ -58,7 +59,7 @@ class Contact(
             override fun getSync(target: String): Sync? = syncBox.all.firstOrNull { it.target == target }
             override fun putSync(sync: Sync) { syncBox.put(sync) }
             override fun getContacts(): List<ContactEntity> = contactBox.all
-            override fun putContacts(contacts: List<ContactEntity>) { contactBox.put(contacts) }
+            override fun putContacts(contacts: List<ContactEntity>) { contactBox.put(contacts.map(Sealing::reindex)) }
             override fun removeContacts(hexes: List<String>) {
                 val toRemove = contactBox.all.filter { it.hex in hexes }
                 contactBox.remove(toRemove)

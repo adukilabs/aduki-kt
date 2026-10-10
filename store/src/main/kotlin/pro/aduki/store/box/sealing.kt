@@ -5,6 +5,8 @@ import io.objectbox.converter.PropertyConverter
 import pro.aduki.crypto.cipher.Vault
 import pro.aduki.store.entities.Appointment
 import pro.aduki.store.entities.Contact
+import pro.aduki.store.entities.Mailbox
+import pro.aduki.store.entities.Service
 import pro.aduki.store.entities.Message
 import pro.aduki.store.entities.Outbox
 
@@ -13,11 +15,14 @@ import pro.aduki.store.entities.Outbox
  * instantiates converters itself, so they cannot take a key argument).
  *
  * With no vault installed, values are written in the clear and sealed values
- * cannot be read (they fail closed). Only the sensitive payload columns are
- * sealed: `Message.preview`, `Message.blob`, `Contact.vcard`, `Contact.company`,
- * `Appointment.notes`, and `Outbox.payload` (through the outbox storage, not a converter: the ObjectBox generator cannot convert a byte-array column). Names, subjects, e-mail addresses,
- * hexes, flags, timestamps and every indexed column stay in the clear so
- * queries and sync work; the rest of the file relies on OS protection.
+ * cannot be read (they fail closed). Sealed: every personal text column
+ * (message subject, sender, recipients, preview, blob; contact name, e-mail,
+ * phone, company, vCard; appointment location and notes; mailbox and service
+ * names and descriptions) and the outbox payload (through the outbox storage,
+ * not a converter: the ObjectBox generator cannot convert a byte-array
+ * column). Clear: ids, hexes, uids, flags, keywords, timestamps, counters,
+ * sequence numbers, roles, statuses and tenant/host/service ids. Contacts also
+ * carry keyed blind indexes of e-mail and phone for exact lookups.
  */
 object Sealing {
     @Volatile
@@ -35,6 +40,33 @@ object Sealing {
         box.put(all)
         return all.size
     }
+
+    /**
+     * Blind index of [value] for [field] (`email`, `phone`), or "" when there is
+     * nothing to index, no vault is installed or its index keys are not attached
+     * (a store was not opened yet): callers then fall back to scanning.
+     */
+    fun index(field: String, value: String): String {
+        val v = vault ?: return ""
+        if (!v.indexAttached()) return ""
+        val n = normalise(field, value)
+        return if (n.isEmpty()) "" else v.blind(field, n)
+    }
+
+    private fun normalise(field: String, value: String): String = when (field) {
+        "phone" -> value.filter { it.isDigit() || it == '+' }
+        else -> value.trim().lowercase()
+    }
+
+    /** Recomputes the blind indexes of [c] from its current e-mail and phone. */
+    fun reindex(c: Contact): Contact {
+        c.emailIndex = index("email", c.email)
+        c.phoneIndex = index("phone", c.phone)
+        return c
+    }
+
+    /** Whether lookups through the blind index are usable. */
+    fun indexed(): Boolean = vault?.indexAttached() == true
 
     /** Bytes ready to store: sealed when a vault is installed. */
     fun seal(plain: ByteArray): ByteArray = vault?.sealBytes(plain) ?: plain
@@ -71,8 +103,13 @@ object Sealing {
      * key are sealed under the current key. Returns the number of rows rewritten.
      */
     fun reseal(store: BoxStore): Int {
-        var count = resave(store, Message::class.java) + resave(store, Contact::class.java) +
-            resave(store, Appointment::class.java)
+        var count = resave(store, Message::class.java) + resave(store, Appointment::class.java) +
+            resave(store, Mailbox::class.java) + resave(store, Service::class.java)
+        val contacts = store.boxFor(Contact::class.java)
+        val all = contacts.all
+        all.forEach(::reindex)
+        contacts.put(all)
+        count += all.size
         val outbox = store.boxFor(Outbox::class.java)
         for (entry in outbox.all) {
             entry.payload = open(entry.payload)

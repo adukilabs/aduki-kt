@@ -18,10 +18,10 @@ data class Message(
     @Index var mailbox: String = "",
     @Index var uid: Long = 0,
     @Index var threadId: String = "",
-    var subject: String = "",
-    var fromName: String = "",
-    var fromEmail: String = "",
-    var to: String = "", // Comma-delimited recipients for FlatBuffers efficiency
+    @Convert(converter = SealedText::class, dbType = String::class) var subject: String = "",
+    @Convert(converter = SealedText::class, dbType = String::class) var fromName: String = "",
+    @Convert(converter = SealedText::class, dbType = String::class) var fromEmail: String = "",
+    @Convert(converter = SealedText::class, dbType = String::class) var to: String = "", // Comma-delimited recipients for FlatBuffers efficiency
     @Convert(converter = SealedText::class, dbType = String::class) var preview: String = "",
     @Convert(converter = SealedText::class, dbType = String::class) var blob: String = "",
     var size: Long = 0,

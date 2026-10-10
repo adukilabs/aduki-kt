@@ -1,8 +1,10 @@
 package pro.aduki.store.entities
 
+import io.objectbox.annotation.Convert
 import io.objectbox.annotation.Entity
 import io.objectbox.annotation.Id
 import io.objectbox.annotation.Index
+import pro.aduki.store.box.SealedText
 
 /**
  * Service represents a meeting type or booking template.
@@ -14,8 +16,8 @@ data class Service(
     @Index var tenant: String = "",
     @Index var user: String = "",
     @Index var slug: String = "",
-    var name: String = "",
-    var description: String = "",
+    @Convert(converter = SealedText::class, dbType = String::class) var name: String = "",
+    @Convert(converter = SealedText::class, dbType = String::class) var description: String = "",
     var duration: Int = 30,
     var buffer: Int = 0,
     var notice: Int = 60,

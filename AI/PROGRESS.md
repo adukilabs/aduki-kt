@@ -27,7 +27,7 @@ Written 2026-10-10 from `git log` and a read of the code. Update 2026-10-10 (bra
 ### 3. K0: Maven Central namespace `pro.aduki` (owner action)
 
 - The owner adds the DNS TXT record on `aduki.pro` that Sonatype Central asks for and verifies the namespace in the Central portal. Decision D-KT-1 (group move) is made; the verification is not done as far as the repo shows.
-- Then: signing key and `SIGNING_KEY`, `SIGNING_PASSWORD`, `SONATYPE_USERNAME`, `SONATYPE_PASSWORD` as repository secrets; tag `v0.3.0` (or newer); `publish.yml` uploads the bundle. Verify: `https://central.sonatype.com/artifact/pro.aduki/sdk` shows the version and a clean Gradle project resolves `pro.aduki:sdk:<version>`.
+- Then: signing key and `SIGNING_KEY`, `SIGNING_PASSWORD`, `SONATYPE_USERNAME`, `SONATYPE_PASSWORD` as repository secrets; tag `v0.4.0` (or newer); `publish.yml` uploads the bundle. Verify: `https://central.sonatype.com/artifact/pro.aduki/sdk` shows the version and a clean Gradle project resolves `pro.aduki:sdk:<version>`.
 - The README and docs say "check releases for the published version"; before verification the badge claim "Maven Central 0.3.0" (removed from the root README in this PR) was unproven.
 - **Relocation POM** for `io.github.adukilabs:sdk` pointing to `pro.aduki:sdk` (plan K1, owner decision D-KT-1): not done; needs write access to the old group's namespace on Central. Verify: resolving the old coordinates redirects with a relocation warning.
 
@@ -60,7 +60,7 @@ Fixed on `code/phase1-fixes` (see `CHANGELOG.md`):
 - TLS pinning is opt-in (`Options.pins`, `Builder.pins`), no built-in pins. Tested against a local TLS server only.
 - The `Authorization` scheme is chosen by one helper (`net.http.Scheme`): `Key` only for a credential given to `Builder.key(...)`, `Bearer` otherwise, no prefix sniffing. The server (`aduki` `crates/api/src/helpers/auth.rs`) accepts both schemes for both credential kinds and tells them apart by token shape.
 - Contacts: `HttpContactTransport` (full-list reconcile over `GET /user/contacts`; the server's JMAP `Contact/changes` is not used), `net.http.Contacts`, `Builder.contactStorage`. MockWebServer tests only; never run against a server.
-- ObjectBox 4.0.3 has no encryption option (jar, native library and a plaintext-on-disk test). Owner decision: platform encryption plus sealed sensitive fields. Built: `crypto.cipher.Vault` and `store.box.Sealing` seal `Message.preview/blob`, `Contact.vcard/company`, `Appointment.notes` and the outbox payload (`guide/security.md` section 4, `docs/security/vault.md`). The database file is NOT encrypted as a whole; indexed metadata is in the clear; nothing may claim more.
+- ObjectBox 4.0.3 has no encryption option (jar, native library and a plaintext-on-disk test). Owner decision: platform encryption plus sealed sensitive fields. Built: `crypto.cipher.Vault` and `store.box.Sealing` seal all personal text columns (message subject/sender/recipients/preview/blob, contact name/email/phone/company/vcard, appointment location/notes, mailbox and service names, outbox payload); ids, flags, timestamps, counters and roles stay clear; contacts have keyed blind indexes; free-text search is in memory (`guide/security.md` section 4, `docs/security/vault.md`). The database file is NOT encrypted as a whole; nothing may claim more. Schema changed for 0.4.0: old databases must be deleted.
 
 Still open:
 
@@ -89,5 +89,5 @@ Still open:
 - D-KT-3 (the `rights` source for clients without a Mail audience): the owner chose SSE in the foreground; the `Events` stream is that (K3).
 - D-KT-5 (Android items K4, K6, Keystore K5 are verified only on a device or CI emulator): decided; infrastructure missing.
 - GitHub Pages deploy of the book: remove or keep (item 10).
-- Version: the changes in `CHANGELOG.md` are breaking; `release` is still 0.3.0. Bump (0.4.0) when the release is cut.
-- Database encryption: decided (platform + sealed fields). Open: whether to sign off the unsealed metadata list (names, subjects, addresses, phones).
+- Version: `release` is 0.4.0 (breaking changes in `CHANGELOG.md`); tag when releasing.
+- Database encryption: decided (platform + sealed fields). Open: none; structural metadata in the clear is listed in `docs/security/vault.md`.

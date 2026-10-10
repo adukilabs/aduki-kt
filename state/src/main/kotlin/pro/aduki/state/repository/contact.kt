@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import java.util.concurrent.ConcurrentHashMap
 import pro.aduki.store.entities.Contact as ContactEntity
+import pro.aduki.store.box.Sealing
 import pro.aduki.store.entities.Contact_
 
 /**
@@ -19,6 +20,12 @@ import pro.aduki.store.entities.Contact_
 interface ContactSource {
     fun contacts(): Flow<List<ContactEntity>>
     fun get(hex: String): ContactEntity?
+
+    /** Exact lookup by e-mail address (case-insensitive); null when none. */
+    fun byEmail(email: String): ContactEntity? = null
+
+    /** Exact lookup by phone number (digits and `+` compared); null when none. */
+    fun byPhone(phone: String): ContactEntity? = null
 }
 
 /**
@@ -34,7 +41,7 @@ class Contact(
             private val box = store.boxFor(ContactEntity::class.java)
 
             override fun contacts(): Flow<List<ContactEntity>> = callbackFlow {
-                val query = box.query().order(Contact_.name).build()
+                val query = box.query().build() // names are sealed: sorted in memory
                 val sub = query.subscribe().observer { data ->
                     trySend(data)
                 }
@@ -43,6 +50,22 @@ class Contact(
 
             override fun get(hex: String): ContactEntity? =
                 box.query(Contact_.hex.equal(hex)).build().findFirst()
+
+            // Through the keyed blind index when the vault is attached; otherwise
+            // a scan over the decrypted rows (every contact is read and opened).
+            override fun byEmail(email: String): ContactEntity? {
+                val key = Sealing.index("email", email)
+                if (key.isNotEmpty()) return box.query(Contact_.emailIndex.equal(key)).build().findFirst()
+                val q = email.trim().lowercase()
+                return if (q.isEmpty()) null else box.all.firstOrNull { it.email.trim().lowercase() == q }
+            }
+
+            override fun byPhone(phone: String): ContactEntity? {
+                val key = Sealing.index("phone", phone)
+                if (key.isNotEmpty()) return box.query(Contact_.phoneIndex.equal(key)).build().findFirst()
+                val q = phone.filter { it.isDigit() || it == '+' }
+                return if (q.isEmpty()) null else box.all.firstOrNull { c -> c.phone.filter { it.isDigit() || it == '+' } == q }
+            }
         },
         scope = scope
     )
@@ -94,6 +117,12 @@ class Contact(
      * Looks up a contact synchronously by hex.
      */
     fun get(hex: String): ContactEntity? = source.get(hex)
+
+    /** The contact with exactly this e-mail address, or null. */
+    fun byEmail(email: String): ContactEntity? = source.byEmail(email)
+
+    /** The contact with exactly this phone number, or null. */
+    fun byPhone(phone: String): ContactEntity? = source.byPhone(phone)
 }
 
 typealias ContactRepository = Contact

@@ -12,7 +12,7 @@ sync, and a reactive state layer. Maven group `pro.aduki`; Apache 2.0.
 
 ```kotlin
 // build.gradle.kts
-implementation("pro.aduki:sdk:0.3.0")
+implementation("pro.aduki:sdk:0.4.0")
 implementation("io.objectbox:objectbox-android:4.0.3")
 
 // Sign in at Aduki ID; the 10-minute token is renewed automatically

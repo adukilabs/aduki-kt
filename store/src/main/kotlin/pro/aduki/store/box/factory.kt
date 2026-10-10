@@ -22,6 +22,8 @@ object Factory {
      */
     fun create(dir: File, vault: Vault? = null): BoxStoreBuilder {
         if (vault != null) Sealing.install(vault)
+        // Index keys live next to the database, sealed under the vault.
+        Sealing.vault()?.attachIndex(File(dir.also { it.mkdirs() }, "aduki-index.keys"))
         return MyObjectBox.builder().directory(dir)
     }
 

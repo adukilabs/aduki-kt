@@ -15,8 +15,8 @@ exact API.
 ## What is not done for you
 
 - The SDK does not encrypt the local ObjectBox database as a whole; it seals
-  only the sensitive payload columns ([Vault](vault.md)) and leaves indexed
-  metadata in the clear. The Android Keystore part is unverified until a device
+  personal text columns ([Vault](vault.md)) and leaves structural metadata (ids,
+  flags, timestamps, counters) in the clear. The Android Keystore part is unverified until a device
   run.
 - Access and refresh tokens are held in memory only; the SDK never writes them
   to disk.

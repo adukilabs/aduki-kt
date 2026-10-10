@@ -62,21 +62,76 @@ class FactoryTest {
     }
 
     @Test
-    fun sealedColumnsAreNotInTheDatabaseFileAndIndexedOnesAre() {
+    fun noPersonalPlaintextIsInTheDatabaseDirectoryAndStructuralColumnsAre() {
         val folder = dir.newFolder("sealed")
+        val secrets = listOf(
+            "SecretName-51aa", "secret-51aa@example.com", "+254700515151", "SecretCompany-51aa",
+            "SecretVcard-51aa", "SecretSubject-51aa", "SecretFrom-51aa", "SecretTo-51aa@example.org",
+            "SecretPreview-51aa", "SecretBlob-51aa", "SecretPayload-51aa", "SecretBox-51aa", "SecretPlace-51aa"
+        )
         Factory.build(folder, newVault()).use { store ->
             store.boxFor(Contact::class.java).put(
-                Contact(hex = "c1", name = "ClearName-51aa", email = "clear-51aa@example.com",
+                Contact(hex = "clearhex-51aa", name = "SecretName-51aa", email = "secret-51aa@example.com", phone = "+254700515151",
                     company = "SecretCompany-51aa", vcard = "BEGIN:VCARD\nNOTE:SecretVcard-51aa")
             )
-            store.boxFor(Message::class.java).put(Message(hex = "m1", subject = "ClearSubject-51aa", preview = "SecretPreview-51aa", blob = "SecretBlob-51aa"))
+            store.boxFor(Message::class.java).put(Message(hex = "msg-51aa", subject = "SecretSubject-51aa", fromName = "SecretFrom-51aa",
+                fromEmail = "secret-51aa@example.com", to = "SecretTo-51aa@example.org", preview = "SecretPreview-51aa", blob = "SecretBlob-51aa"))
+            store.boxFor(Mailbox::class.java).put(Mailbox(hex = "box-51aa", name = "SecretBox-51aa", role = "inbox"))
+            store.boxFor(pro.aduki.store.entities.Appointment::class.java).put(pro.aduki.store.entities.Appointment(hex = "appt-51aa", location = "SecretPlace-51aa"))
             Sealing.put(store.boxFor(Outbox::class.java), Outbox(hex = "o1", action = "send", payload = "SecretPayload-51aa".toByteArray()))
         }
-        for (secret in listOf("SecretCompany-51aa", "SecretVcard-51aa", "SecretPreview-51aa", "SecretBlob-51aa", "SecretPayload-51aa")) {
-            assertFalse("$secret is on disk", diskHas(folder, secret))
+        for (secret in secrets) assertFalse("$secret is on disk", diskHas(folder, secret))
+        // Blind indexes reveal no plaintext either (checked above through the e-mail and phone), and
+        // the structural columns stay readable.
+        assertTrue(diskHas(folder, "clearhex-51aa"))
+        assertTrue(diskHas(folder, "msg-51aa"))
+        assertTrue(diskHas(folder, "inbox"))
+    }
+
+    @Test
+    fun exactLookupWorksThroughTheBlindIndexAndTheIndexIsKeyed() {
+        val folder = dir.newFolder("index")
+        val vault = newVault()
+        Factory.build(folder, vault).use { store ->
+            val box = store.boxFor(Contact::class.java)
+            box.put(Contact(hex = "a", name = "Ada", email = "Ada@Example.com", phone = "+254 700 000 001"))
+            box.put(Contact(hex = "b", name = "Bob", email = "bob@example.com", phone = "+254700000002"))
+            assertTrue(Sealing.indexed())
+            val key = Sealing.index("email", " ADA@example.com ")
+            assertTrue(key.matches(Regex("1:[0-9a-f]{64}")))
+            assertEquals("a", box.query(pro.aduki.store.entities.Contact_.emailIndex.equal(key)).build().findFirst()?.hex)
+            val phoneKey = Sealing.index("phone", "+254-700-000-002")
+            assertEquals("b", box.query(pro.aduki.store.entities.Contact_.phoneIndex.equal(phoneKey)).build().findFirst()?.hex)
+            // Same value in two fields gives unrelated index values.
+            assertFalse(Sealing.index("email", "x@example.com") == Sealing.index("phone", "x@example.com"))
+            // Another vault's index key gives different values for the same address.
+            val other = Vault(Provider(), "store_${UUID.randomUUID()}_").also { it.attachIndex(File(folder, "other.keys")) }
+            assertFalse(key == other.blind("email", "ada@example.com"))
         }
-        assertTrue(diskHas(folder, "ClearName-51aa"))
-        assertTrue(diskHas(folder, "ClearSubject-51aa"))
+    }
+
+    @Test
+    fun rotatingTheIndexKeyIsRebuiltByReseal() {
+        val folder = dir.newFolder("rotidx")
+        val vault = newVault()
+        Factory.build(folder, vault).use { store ->
+            val box = store.boxFor(Contact::class.java)
+            box.put(Contact(hex = "a", email = "ada@example.com"))
+            val before = box.all.single().emailIndex
+            assertEquals(2, vault.rotateIndex())
+            val after = Sealing.index("email", "ada@example.com")
+            assertTrue(after.startsWith("2:"))
+            assertFalse(before == after)
+            Sealing.reseal(store)
+            assertEquals(after, box.all.single().emailIndex)
+        }
+        // The seeds survive a reopen with a vault on the same keys.
+        Sealing.install(vault)
+        Factory.build(folder).use { store ->
+            assertEquals(2, vault.indexId())
+            assertEquals("a", store.boxFor(Contact::class.java).query(
+                pro.aduki.store.entities.Contact_.emailIndex.equal(Sealing.index("email", "ada@example.com"))).build().findFirst()?.hex)
+        }
     }
 
     @Test

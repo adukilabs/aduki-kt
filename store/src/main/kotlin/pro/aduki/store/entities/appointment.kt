@@ -23,7 +23,7 @@ data class Appointment(
     var uid: String = "",
     var sequence: Int = 0,
     var method: String = "REQUEST",
-    var location: String = "",
+    @Convert(converter = SealedText::class, dbType = String::class) var location: String = "",
     @Convert(converter = SealedText::class, dbType = String::class) var notes: String = "",
     var cancelled: Long = 0L,
     var rescheduled: String = "",

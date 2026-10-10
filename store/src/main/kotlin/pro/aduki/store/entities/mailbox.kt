@@ -1,8 +1,10 @@
 package pro.aduki.store.entities
 
+import io.objectbox.annotation.Convert
 import io.objectbox.annotation.Entity
 import io.objectbox.annotation.Id
 import io.objectbox.annotation.Index
+import pro.aduki.store.box.SealedText
 
 /**
  * Mailbox represents an email folder with CONDSTORE sequence tracking.
@@ -11,7 +13,7 @@ import io.objectbox.annotation.Index
 data class Mailbox(
     @Id var id: Long = 0,
     @Index var hex: String = "",
-    var name: String = "",
+    @Convert(converter = SealedText::class, dbType = String::class) var name: String = "",
     var role: String = "", // inbox, sent, trash, archive, drafts
     var uidnext: Long = 0,
     var uidvalidity: Long = 0,

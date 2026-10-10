@@ -1,12 +1,14 @@
 # Changelog
 
-The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (`AI/SKILLS/release.md`); the entries below are not released yet.
+The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (`AI/SKILLS/release.md`).
 
-## Unreleased
+## 0.4.0 (not released yet; `release` is set to it)
+
+Schema changed: personal text columns are now sealed and `Contact` gained two index columns, so **an existing local database from 0.3.x must be deleted** (there is no migration; no real data existed). The old plaintext read path is kept only so rows written without a vault still read.
 
 Added:
 
-- Sealed columns: `Vault` (AES-256-GCM, versioned format with a key id for rotation, legacy plaintext readable) and `Sealing`; `Message.preview`, `Message.blob`, `Contact.vcard`, `Contact.company`, `Appointment.notes` and the outbox payload are sealed when a vault is installed (`Aduki.Builder.secureStore(provider)`, `Factory.build(dir, vault)`, the Keystore provider by default on Android). Indexed metadata stays in the clear; the database file as a whole is not encrypted. Android Keystore behaviour is unverified.
+- Sealed columns: `Vault` (AES-256-GCM, versioned format with a key id for rotation) and `Sealing`. Sealed when a vault is installed: message subject, sender name and address, recipients, preview, blob; contact name, e-mail, phone, company, vCard; appointment location and notes; mailbox and service names and descriptions; the outbox payload. `@Index` was removed from `Contact.name` and `Contact.email`; lists sort in memory. Contacts carry keyed blind indexes (`emailIndex`, `phoneIndex`, HMAC-SHA256 under a per-field key from a sealed seed) for `Contact.byEmail` and `byPhone`; free-text search stays in memory over decrypted rows (`Aduki.Builder.secureStore(provider)`, `Factory.build(dir, vault)`, the Keystore provider by default on Android). Ids, flags, keywords, timestamps, counters, roles and statuses stay in the clear; the database file as a whole is not encrypted. Android Keystore behaviour is unverified.
 - `HttpContactTransport`, `net.http.Contacts`, `Builder.contactStorage`.
 
 Breaking:

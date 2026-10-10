@@ -9,7 +9,7 @@ This document details the device-level security architecture of the Aduki Androi
 ## 1. Security Architecture Principles
 
 1. **Hardware-Enforced Cryptography**: Secrets are bound to dedicated secure hardware (StrongBox Keymaster chip or Trusted Execution Environment - TEE).
-2. **Sealed payload columns** (not full-database encryption): message previews and bodies refs, contact vCards, outbox payloads and appointment notes are AES-256-GCM sealed; indexed metadata is in the clear; see section 4. Session tokens are held in memory only. Device-unverified.
+2. **Sealed payload columns** (not full-database encryption): all personal text columns (messages, contacts, appointments, mailbox and service names) and outbox payloads are AES-256-GCM sealed; structural metadata (ids, flags, timestamps, counters) is in the clear; see section 4. Session tokens are held in memory only. Device-unverified.
 3. **In-Memory Zeroization**: Sensitive buffers (passwords, tokens, database keys) are stored in mutable arrays and zeroed immediately after use to protect against heap dump analysis.
 4. **Transport Hardening**: Enforces TLS 1.3, strict SPKI certificate pinning, and disallows cleartext traffic.
 5. **Biometric Crypto Binding**: Hardware keys can optionally require cryptographic biometric authentication (`BiometricPrompt`) for sensitive actions.
@@ -159,7 +159,7 @@ has run on a device.
 ### 4.2 Decision and what is built (owner, 2026-10-10)
 
 "Platform encryption + encrypt sensitive fields": the file as a whole relies on
-Android file-based encryption and OS protection; the sensitive payload columns
+Android file-based encryption and OS protection; the personal text columns
 are sealed by the SDK. Built and tested on the JVM (software `Provider`):
 
 - `crypto.cipher.Vault`: AES-256-GCM (`Envelope`) under keys from `Provider`.
@@ -170,17 +170,29 @@ are sealed by the SDK. Built and tested on the JVM (software `Provider`):
   not in the sealed format is legacy plaintext and reads unchanged; a tampered
   value, an unknown key id or version throws `SealException` (fails closed).
 - `store.box.Sealing`: the process-wide vault and the converters
-  (`SealedText`, an ObjectBox `@Convert` on String columns). Sealed columns:
-  `Message.preview`, `Message.blob`, `Contact.vcard`, `Contact.company`,
-  `Appointment.notes`, and `Outbox.payload`. The outbox payload is sealed by
-  the storage (`Sealing.put` / `Sealing.opened`) because the ObjectBox
-  generator (4.0.3, kapt) emits invalid Java for a converted byte-array column.
-  `Sealing.reseal(store)` rewrites every row (legacy plaintext and old keys
-  upgrade to the current key).
-- Left in the clear on purpose, so queries and sync work: names, subjects,
-  e-mail addresses, phones, from/to, hexes, uids, flags, timestamps, thread ids,
-  appointment times and status, every `@Index` column. These rely on OS
-  protection only.
+  (`SealedText`, an ObjectBox `@Convert` on String columns). Owner decision
+  (2026-10-10, "we have no real app or data yet"): seal all personal text.
+  Sealed: `Message.subject/fromName/fromEmail/to/preview/blob`,
+  `Contact.name/email/phone/company/vcard`, `Appointment.location/notes`,
+  `Mailbox.name`, `Service.name/description`, and `Outbox.payload`. The outbox
+  payload is sealed by the storage (`Sealing.put` / `Sealing.opened`) because the
+  ObjectBox generator (4.0.3, kapt) emits invalid Java for a converted
+  byte-array column. `Sealing.reseal(store)` rewrites every row and rebuilds the
+  blind indexes.
+- Clear on purpose (structural, needed by sync and queries): hex and other ids,
+  UIDs, UIDVALIDITY, MODSEQ, sequence numbers, flags and keywords, counts,
+  sizes, timestamps, mailbox role, appointment status/method/times, tenant, host,
+  service and slug ids, ctag/etags, sync tokens.
+- Searching: `Contact.byEmail`/`byPhone` use a keyed blind index (`emailIndex`,
+  `phoneIndex`: HMAC-SHA256 of the normalised value under a per-field key,
+  HKDF-Expand from a random seed kept in `aduki-index.keys`, sealed under the
+  vault; the index key id is a prefix so a rotation can rebuild). A seed file is
+  used because Keystore keys cannot be exported to derive from. Free-text search
+  and name sorting run in memory over decrypted rows (cost: every row is read and
+  opened per change). `@Index` was removed from `Contact.name` and `email`.
+- The schema changed for 0.4.0: old databases must be deleted (no migration; no
+  data existed). The legacy plaintext read path is kept because it costs three
+  lines and the upgrade tests use it.
 - Wiring: `Aduki.builder().secureStore(provider)`, or `Factory.build(dir, vault)`;
   on Android the Keystore `Provider` is the default when `secureStore` is not
   called (`Vault.platform()`); on a plain JVM nothing is sealed unless asked.
@@ -204,8 +216,8 @@ process, so JVM tests cannot show data surviving a restart.
 | Route | State |
 |---|---|
 | Platform file-based encryption (Android FBE) | relied on for the rest of the file |
-| Field encryption of sensitive payload columns | built (4.2) |
-| Encrypting indexed or searched columns (names, subjects, addresses) | not done: it breaks queries; would need in-memory filtering or a blind index |
+| Field encryption of personal text columns | built (4.2) |
+| Encrypting indexed or searched columns (names, e-mail, phone) | built: blind index for exact lookups, in-memory filtering for free text (4.2) |
 | Replace the store with an encrypted engine (SQLCipher-style) | not planned |
 
 ### 4.4 Envelope encryption sketch (the earlier draft, kept for the key wrapping)

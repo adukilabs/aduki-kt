@@ -14,7 +14,7 @@ Facts from the repository on 2026-10-10 (git log of `code/slice-4`). Update in t
 ## 1. Build layout
 
 Gradle multi-project, plain `kotlin("jvm")` modules (no Android plugin yet), ObjectBox 4.0.3,
-OkHttp, coroutines, org.json. Maven group `pro.aduki` (was `io.github.adukilabs`); `release = "0.3.0"` in the root `build.gradle.kts`.
+OkHttp, coroutines, org.json. Maven group `pro.aduki` (was `io.github.adukilabs`); `release = "0.4.0"` in the root `build.gradle.kts`.
 
 ## 2. Modules
 
@@ -60,7 +60,7 @@ Not started: K0 (Maven Central namespace), K4 (authenticator), K6 (passkeys), An
 
 ## 3.3 Known code facts that docs must not overstate
 
-- The ObjectBox database file is **not encrypted as a whole**: ObjectBox 4.0.3 has no encryption option. Sensitive payload columns are sealed by `Vault`/`Sealing` (`security.md` section 4); indexed metadata is in the clear; Android Keystore behaviour is unverified (device run pending). Session tokens live in memory, not in a store.
+- The ObjectBox database file is **not encrypted as a whole**: ObjectBox 4.0.3 has no encryption option. All personal text columns are sealed by `Vault`/`Sealing` (`security.md` section 4); structural metadata is in the clear; Android Keystore behaviour is unverified (device run pending). Session tokens live in memory, not in a store.
 - `Options.secure` only allows TLS pinning on the default HTTP client, and pinning is opt-in (`Options.pins`, none shipped); `Options.maxRetries` was removed.
 - `Circuit` is a standalone utility; nothing in the SDK wraps calls with it.
 - `Lifecycle.pause()` only flips a flag and calls listeners; the one internal listener flushes the outbox on resume.

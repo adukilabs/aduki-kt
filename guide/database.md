@@ -231,7 +231,8 @@ class MessageBatchWriter(private val store: BoxStore) {
 ## 6. Sealed columns (no full-database encryption)
 
 ObjectBox 4.0.3 has no encryption option, so the file is not encrypted as a
-whole (the earlier draft, `initialBytes(dbKey)`, was wrong). Sensitive payload
-columns are sealed with `Vault` (AES-256-GCM, versioned, key id for rotation);
-indexed metadata stays in the clear. What is sealed, how legacy rows upgrade,
+whole (the earlier draft, `initialBytes(dbKey)`, was wrong). All personal text columns
+are sealed with `Vault` (AES-256-GCM, versioned, key id for rotation); structural
+columns (ids, flags, timestamps, counters, roles) stay in the clear; exact lookups
+use keyed blind indexes and free-text search runs in memory. What is sealed, how legacy rows upgrade,
 and what is unverified: `security.md` section 4.

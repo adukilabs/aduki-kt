@@ -42,6 +42,75 @@ class Vault(
 
     private fun alias(id: Int) = "$prefix$id"
 
+    // ---- Blind index ------------------------------------------------------
+    // Android Keystore keys cannot be read out, so index keys are not derived
+    // from them: a random seed per index key id is kept in a file, sealed under
+    // the vault. Per-field keys come from the seed by HKDF-Expand (HMAC-SHA256)
+    // with a field label, so the same value in two fields gives two unrelated
+    // index values.
+    private var indexFile: java.io.File? = null
+    private val seeds = java.util.TreeMap<Int, ByteArray>()
+
+    /** Loads (or creates) the index seeds kept in [file]; call before [blind]. */
+    @Synchronized
+    fun attachIndex(file: java.io.File) {
+        if (indexFile == file) return
+        seeds.clear()
+        if (file.exists()) {
+            String(open(file.readBytes()), Charsets.UTF_8).lineSequence().filter { it.isNotBlank() }.forEach {
+                val (id, hex) = it.split(":")
+                seeds[id.toInt()] = hex.chunked(2).map { h -> h.toInt(16).toByte() }.toByteArray()
+            }
+        }
+        indexFile = file
+        if (seeds.isEmpty()) newSeed() else persist()
+    }
+
+    fun indexAttached(): Boolean = indexFile != null
+
+    /** The id of the current index key. */
+    @Synchronized
+    fun indexId(): Int = seeds.lastKey()
+
+    /** Adds a new index key and makes it current; callers then rebuild their indexes. */
+    @Synchronized
+    fun rotateIndex(): Int = newSeed()
+
+    private fun newSeed(): Int {
+        val id = (if (seeds.isEmpty()) 0 else seeds.lastKey()) + 1
+        seeds[id] = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+        persist()
+        return id
+    }
+
+    private fun persist() {
+        val text = seeds.entries.joinToString("\n") { (id, k) -> "$id:" + k.joinToString("") { "%02x".format(it) } }
+        val file = indexFile ?: return
+        val tmp = java.io.File(file.path + ".tmp")
+        tmp.writeBytes(seal(text.toByteArray(Charsets.UTF_8)))
+        if (!tmp.renameTo(file)) { file.writeBytes(tmp.readBytes()); tmp.delete() }
+    }
+
+    /**
+     * Deterministic, keyed index value of [value] for [field]: `<index key id>:<hex HMAC-SHA256>`.
+     * Equal values give equal index values (equality leaks by design); the value
+     * cannot be recovered or guessed without the index seed, which is sealed.
+     * The caller normalises [value] first.
+     */
+    @Synchronized
+    fun blind(field: String, value: String): String {
+        check(indexFile != null) { "Index keys not attached" }
+        val id = seeds.lastKey()
+        val key = mac(seeds.getValue(id), ("aduki-index-v1/" + field).toByteArray() + byteArrayOf(1))
+        return "$id:" + mac(key, value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+    }
+
+    private fun mac(key: ByteArray, data: ByteArray): ByteArray {
+        val m = javax.crypto.Mac.getInstance("HmacSHA256")
+        m.init(javax.crypto.spec.SecretKeySpec(key, "HmacSHA256"))
+        return m.doFinal(data)
+    }
+
     /** The id of the key new values are sealed under. */
     fun keyId(): Int = current
 
