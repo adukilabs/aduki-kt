@@ -16,6 +16,7 @@
 - [DPoP](auth/dpop.md)
 - [OIDC Client](auth/oidc.md)
 - [Account Center & Unlock](auth/center.md)
+- [Passkeys](auth/passkeys.md)
 - [API Keys](auth/keys.md)
 - [Two-Factor TOTP (deprecated)](auth/totp.md)
 
@@ -40,6 +41,7 @@
 - [Mail Service](services/mail.md)
 - [Contacts Service](services/contacts.md)
 - [Scheduling Service](services/scheduling.md)
+- [Space client (draft)](services/space.md)
 - [Sync Engine](services/sync.md)
 - [Offline Outbox](services/outbox.md)
 - [Lifecycle Manager](services/lifecycle.md)

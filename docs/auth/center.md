@@ -11,6 +11,7 @@ The calls are blocking (run them off the main thread). Each takes an HTTP client
 | `Center.fetch` | `GET /center` | `Switcher?` (`null` when no center exists) |
 | `Center.unlink` | `DELETE /links` | `Boolean` |
 | `Center.register` | `POST /credentials` | credential id |
+| `Center.revoke` | `DELETE /credentials/{id}` | `Boolean` (false when already gone) |
 | `Center.unlock` | `POST /credentials/{id}/challenges` then `/credentials/{id}/unlock` | `List<Unlocked>` |
 
 ## Device unlock

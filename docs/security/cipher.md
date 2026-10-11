@@ -12,7 +12,10 @@ object Envelope {
 ## Format
 
 `encrypt` returns `IV (12 bytes) || ciphertext || tag (16 bytes)`. The IV is
-fresh from `SecureRandom` on every call. The transformation is
+the one the cipher generates (a fresh random 12 bytes on every call; the Android
+Keystore refuses a caller-supplied IV, so the cipher is initialised without one
+and `Cipher.getIV()` is stored). The layout is unchanged, so blobs written
+earlier still decrypt. The transformation is
 `AES/GCM/NoPadding` with a 128-bit tag.
 
 `decrypt` requires at least 28 bytes (`IllegalArgumentException` otherwise) and

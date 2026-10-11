@@ -25,6 +25,19 @@ file-based encryption). Do not describe the SDK as encrypting the database.
 Old pages of a database rewritten in place may still hold older values until
 the file is compacted.
 
+### Migrating a database that held plaintext
+
+`Sealing.reseal(store)` rewrites every row sealed, but ObjectBox (LMDB) is
+copy-on-write: the pages that held the old plaintext rows can stay in the file,
+and the SDK does not scrub or compact them. If the plaintext must not remain on
+disk, do not reseal in place: **delete the old database directory** (the
+`data.mdb` and `lock.mdb` files and `aduki-index.keys` next to them) and let the
+SDK sync into a fresh, sealed-from-the-start database. Mail, contacts and
+schedule are server state that sync again; unsent outbox entries exist only in
+the local file, so flush the outbox (or accept losing it) before deleting.
+A database created with a vault installed from the first run never held
+plaintext.
+
 ## Searching sealed columns
 
 - **Exact lookup** (`Contact.byEmail`, `Contact.byPhone`): a keyed blind index.
@@ -69,8 +82,8 @@ cannot be read.
 
 ## Verified and not verified
 
-Tested on the JVM with the software Provider: round trip, the database file
+Tested on the JVM with the software Provider and with a test double that, like the Keystore, refuses a caller-supplied IV: round trip, the database file
 holds no plaintext of a sealed column, tampering and unknown keys fail, rotation
 reads old keys, legacy plaintext rows upgrade. **Not verified: the Android
-Keystore** (key creation, use with the supplied IV, non-exportability, reinstall
+Keystore** (key creation and use with the Keystore-generated IV, non-exportability, reinstall
 and backup behaviour). Do not rely on it on a device until it has been run there.
