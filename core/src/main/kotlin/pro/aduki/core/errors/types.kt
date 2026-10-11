@@ -22,6 +22,21 @@ sealed class AdukiException(
     class Unauthorized(message: String, cause: Throwable? = null) :
         AdukiException(message, cause)
 
+    /**
+     * A failure envelope from an Aduki service (ADK-NET-001 section 4): the HTTP
+     * [status], the stable dotted [kind] (`entity.conflict`, `sod.refused`,
+     * `rate.limited`, ...), the human [message], the raw `details` JSON object
+     * text when present, and the `Retry-After` seconds when the server sent
+     * them. A 401 is [Unauthorized] instead.
+     */
+    class Api(
+        val status: Int,
+        val kind: String,
+        message: String,
+        val details: String? = null,
+        val retryAfter: Long? = null
+    ) : AdukiException("$kind: $message")
+
     /** The person refused an authorization (device grant `access_denied`). */
     class Denied(message: String, cause: Throwable? = null) :
         AdukiException(message, cause)

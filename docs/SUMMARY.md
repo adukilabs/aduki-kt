@@ -41,6 +41,7 @@
 - [Mail Service](services/mail.md)
 - [Contacts Service](services/contacts.md)
 - [Scheduling Service](services/scheduling.md)
+- [Space client (draft)](services/space.md)
 - [Sync Engine](services/sync.md)
 - [Offline Outbox](services/outbox.md)
 - [Lifecycle Manager](services/lifecycle.md)
