@@ -40,6 +40,7 @@ class MainActivity : Activity() {
     private val key by lazy { AndroidKey.open() }
     private val http = OkHttpClient()
     private var activeHex: String? = null
+    private val totp by lazy { android.widget.EditText(this).apply { hint = "authenticator code"; inputType = android.text.InputType.TYPE_CLASS_NUMBER } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -60,6 +61,10 @@ class MainActivity : Activity() {
             add("6 Passkey: step-up") { passkey("stepup") }
             add("7 Passkey: sign in") { passkey("signin") }
             add("8 DPoP call to Space (GET settings)") { space() }
+            // UNVERIFIED (not compiled: no Android SDK when written): ES256 center unlock, steps 11 and 12 of ANDROID-TESTS.md
+            addView(totp)
+            add("9 Device key: register ES256 credential (type a fresh authenticator code above)") { deviceRegister() }
+            add("10 Device key: unlock with it (challenge, sign, unlock)") { deviceUnlock() }
             addView(log)
         }
         setContentView(ScrollView(this).apply { addView(column) })
@@ -138,6 +143,26 @@ class MainActivity : Activity() {
             id.adopt(tokens)
             val reply = Space(client, id).settings()
             "HTTP ${reply.status}, bound jkt=${dpop.thumbprint()}"
+        }
+    }
+
+    private fun deviceRegister() {
+        val code = totp.text.toString()
+        scope.launch {
+            run("device register") {
+                val current = activeHex ?: accounts.list().firstOrNull()?.hex ?: return@run "no account"
+                val bearer = accounts.tokens(current)?.token ?: return@run "no token"
+                val device = AndroidKey.open(AndroidKey.DEVICE)
+                val credential = accounts.registerDevice(http, identity, bearer, android.os.Build.MODEL, code, center = true, key = device)
+                "credential=$credential alg=${device.alg} point=${device.devicePublic().size} bytes level=${device.protection().level}"
+            }
+        }
+    }
+
+    private fun deviceUnlock() = scope.launch {
+        run("device unlock") {
+            val opened = accounts.unlockWithDevice(http, identity)
+            "unlocked=$opened"
         }
     }
 }
