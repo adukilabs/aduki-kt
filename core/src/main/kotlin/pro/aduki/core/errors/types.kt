@@ -22,6 +22,14 @@ sealed class AdukiException(
     class Unauthorized(message: String, cause: Throwable? = null) :
         AdukiException(message, cause)
 
+    /** The person refused an authorization (device grant `access_denied`). */
+    class Denied(message: String, cause: Throwable? = null) :
+        AdukiException(message, cause)
+
+    /** A device code ran out (`expired_token` or the local deadline): start again. */
+    class Expired(message: String, cause: Throwable? = null) :
+        AdukiException(message, cause)
+
     class Storage(message: String, cause: Throwable? = null) :
         AdukiException(message, cause)
 

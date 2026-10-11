@@ -9,6 +9,7 @@ Schema changed: personal text columns are now sealed and `Contact` gained two in
 Added:
 
 - Sealed columns: `Vault` (AES-256-GCM, versioned format with a key id for rotation) and `Sealing`. Sealed when a vault is installed: message subject, sender name and address, recipients, preview, blob; contact name, e-mail, phone, company, vCard; appointment location and notes; mailbox and service names and descriptions; the outbox payload. `@Index` was removed from `Contact.name` and `Contact.email`; lists sort in memory. Contacts carry keyed blind indexes (`emailIndex`, `phoneIndex`, HMAC-SHA256 under a per-field key from a sealed seed) for `Contact.byEmail` and `byPhone`; free-text search stays in memory over decrypted rows (`Aduki.Builder.secureStore(provider)`, `Factory.build(dir, vault)`, the Keystore provider by default on Android). Ids, flags, keywords, timestamps, counters, roles and statuses stay in the clear; the database file as a whole is not encrypted. Android Keystore behaviour is unverified.
+- Device authorization grant client (RFC 8628) in `Oidc`: `startDevice`, `pollDevice`, `awaitDevice` (polling, `slow_down`, expiry, error mapping); `AdukiException.Denied` and `AdukiException.Expired`; `Oidc.Discovery.device`. Fake-server tests only; never run against Aduki ID.
 - `HttpContactTransport`, `net.http.Contacts`, `Builder.contactStorage`.
 
 Breaking:

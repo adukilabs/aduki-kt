@@ -40,6 +40,10 @@ Keep `begin` (its `state`, `nonce` and PKCE `verifier`) until the redirect.
 | `userinfo(grant)` | userinfo claims; sent with the `DPoP` scheme when the token is bound |
 | `revoke(token)` | revokes a token (a refresh token takes its family) |
 
+| `startDevice(scope)` | device authorization grant (RFC 8628), step 1: returns a `DeviceCode` with `userCode`, `verificationUri` and the polling `interval` |
+| `pollDevice(code)` | one poll: `Pending`, `SlowDown(next)` (interval plus 5 s) or `Done(grant)` |
+| `awaitDevice(code)` | polls until the person decides; see below |
+
 An authorization code is single use: a failed exchange cannot be retried;
 start a new `begin`.
 
@@ -51,3 +55,25 @@ refetch on an unknown `kid`); `iss`, `aud`, `azp`, `exp` and `iat` (30 s skew),
 `AdukiException.Protocol`; `access_denied`, `invalid_grant`, `invalid_client`
 and `invalid_token` map to `AdukiException.Unauthorized`; other HTTP failures
 to `AdukiException.Network`.
+
+## Device authorization grant (RFC 8628)
+
+For televisions, consoles and command-line tools with no browser. The client
+must be allowed to use the grant at Aduki ID (`device: true` on the client).
+
+```kotlin
+val oidc = Oidc(http, "https://id.aduki.pro", "my-client", redirect = "unused")
+val code = oidc.startDevice(listOf("openid", "offline_access"))
+show(code.userCode, code.verificationUri)          // or a QR of code.verificationUriComplete
+val grant = oidc.awaitDevice(code)                  // blocks; run it off the main thread
+```
+
+`awaitDevice` waits `interval` seconds before each poll, adds 5 seconds on
+every `slow_down`, never waits past the local deadline (`expires_in`), retries
+up to three consecutive network failures, 429 and 5xx answers, and validates
+the id token like `finish`. Outcomes: `AdukiException.Denied` (the person
+refused), `AdukiException.Expired` (deadline, `expired_token` or the `cancelled`
+callback), `AdukiException.Unauthorized` (`invalid_grant`, `invalid_client`),
+`AdukiException.Network` (other failures). `pollDevice` is the single-step form
+for callers that run their own timer. The redirect argument of `Oidc` is not
+used by this grant.

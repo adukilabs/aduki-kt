@@ -49,7 +49,9 @@ class Oidc(
         val token: String,
         val userinfo: String,
         val jwks: String,
-        val revocation: String?
+        val revocation: String?,
+        /** `device_authorization_endpoint` (RFC 8628), null when the provider has none. */
+        val device: String? = null
     )
 
     /** An authorization request in flight: keep [verifier], [state] and [nonce] until the redirect. */
@@ -84,7 +86,8 @@ class Oidc(
             token = json.getString("token_endpoint"),
             userinfo = json.getString("userinfo_endpoint"),
             jwks = json.getString("jwks_uri"),
-            revocation = json.optString("revocation_endpoint").ifBlank { null }
+            revocation = json.optString("revocation_endpoint").ifBlank { null },
+            device = json.optString("device_authorization_endpoint").ifBlank { null }
         ).also { found = it }
     }
 
@@ -159,6 +162,127 @@ class Oidc(
         return Grant(g.access, g.type, g.expires, g.scope, g.refresh, claims)
     }
 
+
+    /**
+     * A device authorization in flight (RFC 8628): show [userCode] and
+     * [verificationUri] (or [verificationUriComplete], e.g. as a QR code) to
+     * the person and keep [deviceCode] secret. [interval] is the current
+     * polling interval in seconds; [expiresAt] is the local deadline in epoch
+     * milliseconds.
+     */
+    class DeviceCode(
+        val deviceCode: String,
+        val userCode: String,
+        val verificationUri: String,
+        val verificationUriComplete: String?,
+        val expiresAt: Long,
+        val interval: Long
+    )
+
+    /** One poll of the device grant: still [Pending], told to [SlowDown], or [Done]. */
+    sealed class Poll {
+        object Pending : Poll()
+        /** Poll again with [next], whose interval is 5 seconds longer. */
+        class SlowDown(val next: DeviceCode) : Poll()
+        class Done(val grant: Grant) : Poll()
+    }
+
+    /**
+     * Starts the device authorization grant: `POST device_authorization_endpoint`
+     * with the client's authentication. [scope] must include `openid`. The
+     * client must be allowed to use the grant at Aduki ID, else this throws
+     * (`unauthorized_client`).
+     */
+    fun startDevice(scope: List<String> = listOf("openid")): DeviceCode {
+        require("openid" in scope) { "scope must include openid" }
+        val endpoint = discover().device ?: throw AdukiException.Protocol("Provider has no device authorization endpoint")
+        val form = FormBody.Builder().add("scope", scope.joinToString(" "))
+        val json = JSONObject(send(authenticated(Request.Builder().url(endpoint), form).build()))
+        val device = json.optString("device_code")
+        val user = json.optString("user_code")
+        val uri = json.optString("verification_uri")
+        if (device.isBlank() || user.isBlank() || uri.isBlank()) {
+            throw AdukiException.Protocol("Incomplete device authorization response")
+        }
+        val lifetime = json.optLong("expires_in", 0)
+        if (lifetime <= 0) throw AdukiException.Protocol("Device authorization response has no expires_in")
+        return DeviceCode(
+            device, user, uri,
+            json.optString("verification_uri_complete").ifBlank { null },
+            clock() + lifetime * 1000,
+            json.optLong("interval", DEVICE_INTERVAL).coerceAtLeast(1)
+        )
+    }
+
+    /**
+     * Polls the token endpoint once. `authorization_pending` is [Poll.Pending],
+     * `slow_down` is [Poll.SlowDown] (interval plus 5 seconds), `access_denied`
+     * throws [AdukiException.Denied], `expired_token` or a passed deadline
+     * throws [AdukiException.Expired], anything else (`invalid_grant`,
+     * `invalid_client`, ...) throws [AdukiException.Unauthorized] or
+     * [AdukiException.Network]. Never polls after the local deadline.
+     */
+    fun pollDevice(code: DeviceCode): Poll {
+        if (clock() >= code.expiresAt) throw AdukiException.Expired("Device code expired")
+        val form = FormBody.Builder().add("grant_type", DEVICE_GRANT).add("device_code", code.deviceCode)
+        val request = authenticated(Request.Builder().url(discover().token), form).build()
+        val signed = if (dpop != null) request.newBuilder().header("DPoP", dpop.proof("POST", request.url.toString())).build() else request
+        val body = try {
+            send(signed, device = true)
+        } catch (e: DeviceRefused) {
+            return when (e.error) {
+                "authorization_pending" -> Poll.Pending
+                "slow_down" -> Poll.SlowDown(DeviceCode(
+                    code.deviceCode, code.userCode, code.verificationUri, code.verificationUriComplete,
+                    code.expiresAt, code.interval + 5
+                ))
+                "access_denied" -> throw AdukiException.Denied("The person refused the request")
+                "expired_token" -> throw AdukiException.Expired("Device code expired")
+                else -> throw e.mapped()
+            }
+        }
+        val result = parseGrant(JSONObject(body), null)
+        val claims = result.second?.let { validate(it, null, result.first.access) }
+        val g = result.first
+        return Poll.Done(Grant(g.access, g.type, g.expires, g.scope, g.refresh, claims))
+    }
+
+    /**
+     * Polls until the person decides, waiting [DeviceCode.interval] seconds
+     * between polls (growing by 5 on each `slow_down`) through [sleep]
+     * (milliseconds; inject a fake in tests). Gives up with
+     * [AdukiException.Expired] at the deadline; checks [cancelled] before each
+     * wait and throws [AdukiException.Expired] if it is true. Up to
+     * [MAX_TRANSIENT] consecutive network or 5xx failures are retried.
+     */
+    fun awaitDevice(
+        code: DeviceCode,
+        sleep: (Long) -> Unit = Thread::sleep,
+        cancelled: () -> Boolean = { false }
+    ): Grant {
+        var current = code
+        var failures = 0
+        while (true) {
+            if (cancelled()) throw AdukiException.Expired("Cancelled")
+            // No point waiting past the deadline.
+            if (clock() + current.interval * 1000 >= current.expiresAt) throw AdukiException.Expired("Device code expired")
+            sleep(current.interval * 1000)
+            if (cancelled()) throw AdukiException.Expired("Cancelled")
+            try {
+                when (val poll = pollDevice(current)) {
+                    is Poll.Done -> return poll.grant
+                    is Poll.SlowDown -> current = poll.next
+                    Poll.Pending -> Unit
+                }
+                failures = 0
+            } catch (e: AdukiException.Network) {
+                val status = e.code
+                val transient = status == null || status == 429 || status >= 500
+                if (!transient || ++failures > MAX_TRANSIENT) throw e
+            }
+        }
+    }
+
     /** The userinfo claims for [grant]'s access token (sent with the `DPoP` scheme when bound). */
     fun userinfo(grant: Grant): JSONObject {
         val endpoint = discover().userinfo
@@ -190,7 +314,10 @@ class Oidc(
         val builder = Request.Builder().url(discover().token)
         val request = authenticated(builder, form).let { it.build() }
         val withProof = if (dpop != null) request.newBuilder().header("DPoP", dpop.proof("POST", request.url.toString())).build() else request
-        val json = JSONObject(send(withProof))
+        return parseGrant(JSONObject(send(withProof)), spending)
+    }
+
+    private fun parseGrant(json: JSONObject, spending: String?): Pair<Raw, String?> {
         // Read the rotated refresh token first: the old one is spent on a 2xx.
         val rotated = json.optString("refresh_token").ifBlank { null }
         val access = json.optString("access_token")
@@ -220,7 +347,7 @@ class Oidc(
     }
 
     // OAuth endpoints answer {error, error_description}, not the REST envelope.
-    private fun send(request: Request): String =
+    private fun send(request: Request, device: Boolean = false): String =
         try {
             client.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
@@ -228,6 +355,7 @@ class Oidc(
                 val json = runCatching { JSONObject(body) }.getOrNull()
                 val error = json?.optString("error").orEmpty()
                 val text = json?.optString("error_description").orEmpty()
+                if (device && response.code == 400 && error in DEVICE_ERRORS) throw DeviceRefused(error, response.code, text)
                 val message = if (error.isBlank()) "HTTP ${response.code}" else "$error${if (text.isBlank()) "" else ": $text"}"
                 when {
                     error == "invalid_grant" || error == "invalid_client" || error == "invalid_token" || response.code == 401 ->
@@ -300,8 +428,17 @@ class Oidc(
 
     private fun JSONArray?.has(value: String) = this != null && (0 until length()).any { optString(it) == value }
 
+    // A 400 carrying one of the RFC 8628 §3.5 errors, for the poller to interpret.
+    private class DeviceRefused(val error: String, val code: Int, val text: String) : RuntimeException(error) {
+        fun mapped(): AdukiException = AdukiException.Unauthorized("$error${if (text.isBlank()) "" else ": $text"}")
+    }
+
     private companion object {
         const val SKEW = 30L
+        const val DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
+        const val DEVICE_INTERVAL = 5L
+        const val MAX_TRANSIENT = 3
+        val DEVICE_ERRORS = setOf("authorization_pending", "slow_down", "access_denied", "expired_token")
         val PREFIX = byteArrayOf(0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00)
     }
 }
