@@ -25,3 +25,9 @@ The calls are blocking (run them off the main thread). Each takes an HTTP client
 
 Credentials stay trusted for 60 days after last use. Once that window lapses, the
 user must sign in with their password again.
+
+## Android authenticator
+
+The `android` module keeps the linked accounts as separate `AccountManager` entries under the type `pro.aduki.account` (`Accounts.reconcile`, `AdukiAuthenticator`; see [Android module](../start/android.md)). When Aduki ID removes a link (tenant `links = deny`, forced unlink), `Accounts.refresh` drops the entry and its tokens. The center token is stored in a separate sealed file and sent to Aduki ID only.
+
+Device credentials are Ed25519 at Aduki ID today and the Android Keystore signs P-256, so a Keystore key cannot be registered for center unlock until Aduki ID accepts `ES256` credentials.

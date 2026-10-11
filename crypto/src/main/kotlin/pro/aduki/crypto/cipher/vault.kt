@@ -21,7 +21,8 @@ class SealException(message: String, cause: Throwable? = null) : RuntimeExceptio
  * sealed format is treated as legacy plaintext by [openText] and [openBytes]
  * and returned unchanged.
  *
- * Android Keystore behaviour is UNVERIFIED: it has not run on a device.
+ * Android Keystore behaviour was verified on an API 34 emulator (software-backed keys, instrumented
+ * tests in the `android` module); hardware-backed keys and StrongBox are not verified.
  */
 class Vault(
     private val provider: Provider = Provider(),

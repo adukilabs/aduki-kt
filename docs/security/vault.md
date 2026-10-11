@@ -84,6 +84,9 @@ cannot be read.
 
 Tested on the JVM with the software Provider and with a test double that, like the Keystore, refuses a caller-supplied IV: round trip, the database file
 holds no plaintext of a sealed column, tampering and unknown keys fail, rotation
-reads old keys, legacy plaintext rows upgrade. **Not verified: the Android
-Keystore** (key creation and use with the Keystore-generated IV, non-exportability, reinstall
-and backup behaviour). Do not rely on it on a device until it has been run there.
+reads old keys, legacy plaintext rows upgrade. Also run on an Android 14
+emulator with the real `AndroidKeyStore` provider (software-backed, no secure hardware): keys are
+created in the Keystore (not the fallback), the Keystore-generated IV is used and never repeated,
+sealed text and bytes round trip, rotation keeps old values readable, tampering fails, the blind-index
+seed file is sealed, and keys and sealed data survive a force-stop of the app. **Not verified:**
+hardware-backed keys and StrongBox, reinstall and backup behaviour, other Android versions.

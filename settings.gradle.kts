@@ -58,4 +58,5 @@ val withAndroid = providers.gradleProperty("aduki.android").orNull == "true" ||
     providers.environmentVariable("ADUKI_ANDROID").orNull == "1"
 if (withAndroid) {
     include(":android")
+    include(":sample")
 }

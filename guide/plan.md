@@ -3,7 +3,7 @@ Spec-ID: ADK-KT-003
 Title: aduki-kt plan
 Category: KT
 Status: Draft
-Version: 4
+Version: 5
 Depends-on: ADK-KT-002, ADK-AUTH-001, ADK-AUTH-002, ADK-AUTH-003
 ---
 
@@ -43,10 +43,7 @@ This VPS has no JDK, no Gradle and no Android SDK (`dev.md`, checked
 | K1, K2, K3, K5 (protocol parts), K7 | plain JVM modules and MockWebServer tests | the VPS after installing a JDK 17 (`--no-daemon`, one build at a time, not beside cargo), or CI |
 | K4, K6, the Keystore parts of K5 | needs Android (`AccountManager`, Keystore, Credential Manager) | a device or a CI emulator; their exit criteria are **not** claimed from the VPS (decide D-KT-5) |
 
-The `crypto` module holds the Android Keystore provider inside a plain
-`kotlin("jvm")` module, so the Android-only classes compile against stubs or
-are not exercised by JVM tests: K4 starts by introducing the Android Gradle
-modules and moving the Keystore provider into one.
+The `crypto` module keeps the Keystore `Provider` (reflection, JVM fallback) so the JVM modules and their tests stay unchanged; the Android classes are in the `android` module (`AndroidKey`, `Accounts`, `SignIn`, `PasskeyFlow`), which joins the build only with `-Paduki.android=true`. The Android build runs on a box with the Android SDK; an emulator without KVM boots in about 5 minutes (software CPU).
 
 ## 2. Rules
 
@@ -65,10 +62,11 @@ module is not started.
 
 ## 4. Status (2026-10-10)
 
-K1, K2 (wired into `Aduki`), K3, the protocol part of K5 and K7 (plus the device grant) are in code; the protocol part of K6 (`Passkeys`) and a Space client draft are in code (JVM, fake server); K0, K4 (Android authenticator), the Credential Manager step of K6 and the Keystore part of K5 are open. Details and merge state: `progress.md`; what remains to verify: `../AI/PROGRESS.md`.
+K1, K2 (wired into `Aduki`), K3, the protocol part of K5 and K7 (plus the device grant) are in code; the protocol part of K6 (`Passkeys`) and a Space client draft are in code (JVM, fake server); K4 (Android authenticator), the Credential Manager step of K6 and the Keystore `Key` of K5 are now built in the `android` module (Robolectric tests, Keystore tests on an API 34 emulator with software-backed keys; hardware Keystore, StrongBox, real Credential Manager and the real servers are not verified, manual list in `ANDROID-TESTS.md`); K0 is open. Details and merge state: `progress.md`; what remains to verify: `../AI/PROGRESS.md`.
 
 ## 5. Changelog
 
+- v5 (2026-10-11): section 1.1: the Android module exists (opt-in `-Paduki.android=true`, `minSdk` 26, AGP 8.13.2 with Gradle 9.5.1); K4, K5 Keystore key, K6 Credential Manager step and K7 Custom Tabs are built there; an emulator runs here without KVM (about 5 minutes to boot).
 - v4 (2026-10-11): protocol parts built on the JVM: K6 `Passkeys` client, device authorization grant in `Oidc` (owner decision 2026-10-10: build), Space client draft; K7 text now says no certification (PKCE mandatory, no conformance suite).
 
 - v3: paths moved from `Next/` to `guide/`; status section.

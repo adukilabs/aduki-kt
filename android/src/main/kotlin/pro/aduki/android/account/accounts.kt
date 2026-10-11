@@ -3,6 +3,7 @@ package pro.aduki.android.account
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Context
+import android.os.Bundle
 import okhttp3.OkHttpClient
 import pro.aduki.core.models.Linked
 import pro.aduki.core.models.Switcher
@@ -165,12 +166,15 @@ class Accounts(
         center.clear()
     }
 
-    private fun create(linked: Linked, centerId: String): Boolean {
-        val account = Account(linked.handle, TYPE)
-        if (!manager.addAccountExplicitly(account, null, null)) return false
-        write(account, linked, centerId)
-        return true
-    }
+    private fun create(linked: Linked, centerId: String): Boolean =
+        // one Binder call with all user data: AccountManager calls are slow on weak devices
+        manager.addAccountExplicitly(Account(linked.handle, TYPE), null, Bundle().apply {
+            putString(HEX, linked.hex)
+            putString(CENTER, centerId)
+            putString(PERSONAL, linked.personal.toString())
+            linked.tenant?.let { putString(TENANT, it) }
+            putString(UNLOCK, linked.unlock)
+        })
 
     private fun write(account: Account, linked: Linked, centerId: String) {
         manager.setUserData(account, HEX, linked.hex)
@@ -193,9 +197,8 @@ class Accounts(
         )
     }
 
+    // Removing the account deletes its password, auth tokens and user data with it.
     private fun drop(entry: Entry) {
-        manager.peekAuthToken(entry.account, ACCESS)?.let { manager.invalidateAuthToken(TYPE, it) }
-        manager.setPassword(entry.account, null)
         manager.removeAccountExplicitly(entry.account)
     }
 

@@ -80,11 +80,15 @@ Still open:
 
 ## Needs credentials/owner
 
-- Android work (K4 `pro.aduki.account` module with `AccountManager`, switcher and `links = deny` removal within 1 s on a device; K6 Credential Manager; Keystore `Key` for DPoP; K7 Custom Tabs): needs the Android SDK, an emulator or device and a decision on the Android Gradle layout; not startable here.
-- B14 and the sealed columns on a real Android Keystore (key creation, Keystore-generated IV, non-exportability): a device run.
+- Android (branch `code/kt-android`): built and tested on the JVM (Robolectric) and on an API 34 emulator with software-backed keys: K4 authenticator, K5 `AndroidKey`, K6 Credential Manager wiring, K7 Custom Tabs, B14 and sealed columns on the real Keystore provider. Still needs a phone, see "Android tests on a phone" below: hardware Keystore and StrongBox, a real passkey ceremony, Custom Tabs against the hosted `id.aduki.pro` (needs an OIDC client registered with redirect `pro.aduki.sample:/callback` and a Digital Asset Links file for passkeys), the end-to-end `links = deny` removal time, Android 8 to 13.
+- Aduki ID side for Android: accept `ES256` device credentials (`POST /v1/credentials`, center unlock are Ed25519 only), otherwise the Keystore key cannot be a center-unlock credential.
 - A device-enabled OIDC client at `id.aduki.pro` (`device: true`) to run the device grant live; a test account with an authenticator and a registered passkey for `Passkeys`; a Space tenant with the `space` app and a DPoP-capable test account for `Space`.
 - Maven Central namespace, signing key and secrets (item 3), relocation POM, the GitHub Pages decision (item 10): owner.
 - `Circuit` and `Lifecycle.pause()` (wire or delete) and the `Aduki` entry for the Space client: design decisions, not taken here.
+
+## Android tests on a phone (owner, after hosting)
+
+The step-by-step list, expected results and what to paste back are in `guide/ANDROID-TESTS.md` (the lead folds it into `REQ/tests.md`). Summary: build `:sample:assembleDebug -Paduki.android=true -PadukiClient=<client> `, `adb install`, run buttons 1 to 8 (key info and survival, Custom Tabs sign-in, switcher, center refresh and `links = deny` removal, passkey register, step-up and sign-in, DPoP call to Space), then `:android:connectedDebugAndroidTest` and the two-phase restart test. Skipped honestly on the build machine: hardware Keystore, StrongBox, real Credential Manager and Play services, a real id server.
 
 ## Needs server
 

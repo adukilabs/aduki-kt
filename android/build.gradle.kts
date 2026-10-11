@@ -46,7 +46,7 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.androidx.core)
     implementation(libs.androidx.browser)
-    implementation(libs.androidx.credentials)
+    api(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play)
 
     testImplementation(libs.junit)
