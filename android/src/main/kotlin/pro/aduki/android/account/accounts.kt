@@ -8,7 +8,10 @@ import okhttp3.OkHttpClient
 import pro.aduki.core.models.Linked
 import pro.aduki.core.models.Switcher
 import pro.aduki.core.models.Tokens
+import pro.aduki.core.errors.AdukiException
 import pro.aduki.crypto.cipher.Vault
+import pro.aduki.crypto.dpop.Key
+import pro.aduki.android.keystore.AndroidKey
 import pro.aduki.net.http.Center
 
 /**
@@ -95,7 +98,7 @@ class Accounts(
         val gone = list().filter { it.hex != current && it.center.isNotEmpty() }
         gone.forEach(::drop)
         find(current)?.let { manager.setUserData(it.account, CENTER, "") }
-        center.clear()
+        center.clearCenter()
         return Change(emptyList(), gone.map { it.hex }, emptyList())
     }
 
@@ -152,6 +155,57 @@ class Accounts(
     fun invalidate(hex: String) {
         val entry = find(hex) ?: return
         manager.peekAuthToken(entry.account, ACCESS)?.let { manager.invalidateAuthToken(TYPE, it) }
+    }
+
+    /**
+     * UNVERIFIED (not compiled or run: the Android SDK was not available when this was written).
+     *
+     * Registers this device's Keystore key as a device credential at Aduki ID (`ES256`, 65-byte
+     * uncompressed point, see `Center.register`) and keeps the credential id. [bearer] is an access token
+     * for audience `id` and [code] a fresh TOTP code; [center] true registers it for the account's center.
+     * The key is [AndroidKey.DEVICE], a different alias from the DPoP key, so that revoking one does not
+     * unbind the other.
+     */
+    fun registerDevice(
+        client: OkHttpClient,
+        identity: String,
+        bearer: String,
+        device: String,
+        code: String,
+        center: Boolean = true,
+        key: Key = AndroidKey.open(AndroidKey.DEVICE)
+    ): String {
+        val credential = Center.register(client, identity, bearer, device, key, code, center)
+        this.center.saveCredential(credential)
+        return credential
+    }
+
+    /**
+     * UNVERIFIED (not compiled or run, see [registerDevice]).
+     *
+     * Reopens the sessions of every account the registered credential opens, with the device key and no
+     * password: challenge, sign the raw nonce, unlock (`Center.unlock`), then [save] each session. Returns
+     * the account hexes whose tokens were stored; sessions of accounts that have no entry here are not
+     * stored (call [refresh] or [reconcile] first). One attempt: a 401 ([AdukiException.Unauthorized]) is
+     * final for that nonce, the caller decides whether to ask again. A 404 means the credential was
+     * revoked or lapsed (60 days): it is forgotten here and the user must sign in fully.
+     *
+     * @throws IllegalStateException when no credential was registered on this device.
+     */
+    fun unlockWithDevice(
+        client: OkHttpClient,
+        identity: String,
+        audience: String = pro.aduki.core.config.Endpoints.AUDIENCE,
+        key: Key = AndroidKey.open(AndroidKey.DEVICE)
+    ): List<String> {
+        val credential = center.credential() ?: throw IllegalStateException("No device credential registered")
+        val opened = try {
+            Center.unlock(client, identity, credential, key, audience)
+        } catch (e: AdukiException.Network) {
+            if (e.code == 404) center.clearCredential()
+            throw e
+        }
+        return opened.filter { save(it.account, it.tokens) }.map { it.account }
     }
 
     /** The center token for calls to Aduki ID only, or null when it is missing or expired. */

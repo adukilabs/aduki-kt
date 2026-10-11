@@ -29,5 +29,17 @@ class CenterStore(context: Context, private val vault: Vault?) {
         return vault?.openText(stored) ?: stored
     }
 
+    /** Keeps the id of this device's credential (ES256 or Ed25519, see `Accounts.registerDevice`); it is an identifier, not a secret. */
+    fun saveCredential(credential: String) = prefs.edit().putString("credential", credential).apply()
+
+    /** The device credential id last registered, or null. */
+    fun credential(): String? = prefs.getString("credential", null)
+
+    fun clearCredential() = prefs.edit().remove("credential").apply()
+
+    /** Forgets the center and its token but keeps the device credential (the account left its center, the device did not). */
+    fun clearCenter() = prefs.edit().remove("center").remove("token").remove("expires").apply()
+
+    /** Forgets everything, the device credential included (sign-out of the device). */
     fun clear() = prefs.edit().clear().apply()
 }

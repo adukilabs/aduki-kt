@@ -6,6 +6,7 @@ import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
 import pro.aduki.crypto.dpop.Der
+import pro.aduki.crypto.dpop.Device
 import pro.aduki.crypto.dpop.Key
 import pro.aduki.crypto.dpop.Software
 import java.security.KeyFactory
@@ -71,6 +72,12 @@ class AndroidKey private constructor(
     /** True when the private key can be read as bytes (always false for a Keystore key). */
     fun extractable(): Boolean = private.encoded != null
 
+    /**
+     * The public key as the device-credential API wants it for `ES256`: the uncompressed point
+     * `0x04 || x || y` (65 bytes; `Device.public`, unit-tested on the JVM).
+     */
+    fun devicePublic(): ByteArray = Device.public(this)
+
     override fun toString() = "AndroidKey($alias)" // never prints key material
 
     companion object {
@@ -78,6 +85,12 @@ class AndroidKey private constructor(
 
         /** The alias of the device DPoP key unless the app picks another. */
         const val DEFAULT = "aduki_dpop"
+
+        /**
+         * The alias of the device credential key (ES256 center unlock, `Accounts.registerDevice`). UNVERIFIED on
+         * a device. Kept apart from [DEFAULT] so revoking the credential does not change the DPoP thumbprint.
+         */
+        const val DEVICE = "aduki_device"
 
         /** Whether [alias] exists in the Keystore. */
         fun exists(alias: String = DEFAULT): Boolean = store().containsAlias(alias)

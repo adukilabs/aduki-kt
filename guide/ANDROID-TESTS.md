@@ -51,7 +51,18 @@ The sample has eight buttons (their numbers are used below) and a log. The log p
 
 Not applicable on a phone: the device authorization grant (RFC 8628) is for devices without a browser; its client is in `Oidc` and is covered by the JVM tests.
 
-Known gap found while building this: Aduki ID's device credentials (`POST /v1/credentials`, center unlock) accept only Ed25519 keys, but the Android Keystore signs P-256 on every supported Android version, so a Keystore key cannot register as a center-unlock credential yet. DPoP is not affected (`gate::dpop` accepts ES256). The fix is on the Aduki ID side: accept `ES256` device credentials. Until then, switching between accounts uses the refresh tokens in AccountManager, not the biometric center unlock.
+### ES256 center unlock (steps 11 to 13; needs Aduki ID with PR 35, the `id` ES256 device credentials)
+
+The sample code for buttons 9 and 10 and `Accounts.registerDevice` / `unlockWithDevice` is UNVERIFIED: it was written without an Android SDK and has never been compiled. If `./gradlew :sample:installDebug -Paduki.android=true` fails to compile, paste the compiler errors back first; that is the first result.
+
+| # | Step | Expected | Paste back |
+|---|---|---|---|
+| 11 | Signed in (step 2), the account in an Account Center. Type a fresh authenticator code in the field, press button 9 "register ES256 credential" | `device register: credential=<hex> alg=ES256 point=65 bytes level=...` (`level` as in step 1; `software` means no secure hardware) | the log |
+| 11b | Press button 9 again with the same (already used) code | a failure line, not a crash (a TOTP code is single-use or the server answers 401 `auth.invalid`) | the log |
+| 12 | Press button 10 "unlock with it" | `device unlock: unlocked=[<hex>...]`, one hex per account whose `unlock` is `center`; button 3 then lists them without `[sign in again]`; `adb logcat` has no token | the log, a screenshot of button 3 |
+| 13 | In the Aduki web Account Center revoke this device's credential, press button 10 | `FAILED Network: ... 404`; pressing 10 again says `No device credential registered` (the id was forgotten) | both log lines |
+
+If step 12 gives `FAILED Unauthorized: auth.invalid`, report it with the phone model and Android version: the cause is a signature form or key encoding problem and the server answers the same 401 for all causes, so check the Aduki ID audit log for the credential (`credential.registered` with `alg: ES256`) and tell the lead. Device and Keystore keys here are created without per-use user authentication; a biometric-bound key needs a BiometricPrompt that is not wired yet.
 
 ## 4. Keystore survival (two phases, automated, phone attached)
 
@@ -68,7 +79,7 @@ Expected: both print `OK (1 test)`. Phase 2 skips (reported as OK with an assump
 
 ## 5. What to paste back
 
-The log of each numbered check, the `adb shell getprop ro.product.model` and `ro.build.version.release`, the instrumented test result (`android/build/reports/androidTests/connected/debug/index.html` summary), and any crash from `adb logcat -d | grep -E "AndroidRuntime|AdukiKeystore|AdukiAccounts"` (no tokens are logged by the SDK; check before pasting).
+The log of each numbered check (including 11 to 13 and any compiler error), the `adb shell getprop ro.product.model` and `ro.build.version.release`, the instrumented test result (`android/build/reports/androidTests/connected/debug/index.html` summary), and any crash from `adb logcat -d | grep -E "AndroidRuntime|AdukiKeystore|AdukiAccounts"` (no tokens are logged by the SDK; check before pasting).
 
 ## 6. What was and was not verified on the build machine
 

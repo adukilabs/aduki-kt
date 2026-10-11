@@ -13,6 +13,8 @@ import pro.aduki.core.models.Linked
 import pro.aduki.core.models.Switcher
 import pro.aduki.core.models.Tokens
 import pro.aduki.core.models.Unlocked
+import pro.aduki.crypto.dpop.Device
+import pro.aduki.crypto.dpop.Key
 import java.util.Base64
 
 /**
@@ -122,6 +124,51 @@ object Center {
     }
 
     /**
+     * Registers [key] as a device credential (Ed25519 or ES256). The algorithm
+     * and the public key encoding come from the key (see [Device]); for ES256
+     * the request carries `alg: "ES256"` and the 65-byte uncompressed point.
+     * Returns the credential hex to keep with the key.
+     *
+     * @throws AdukiException.Unauthorized for a wrong [code].
+     * @throws AdukiException.Network with code 422 when the server refuses the
+     * key or the label (an old server that does not know ES256 answers so),
+     * 404 when [center] is true and the account is in none.
+     * @throws AdukiException.Protocol when the answer names another algorithm
+     * than the key's.
+     */
+    fun register(
+        client: OkHttpClient,
+        identity: String,
+        bearer: String,
+        device: String,
+        key: Key,
+        code: String,
+        center: Boolean = false
+    ): String {
+        val alg = Device.alg(key)
+        val body = JSONObject()
+            .put("device", device)
+            .put("alg", alg)
+            .put("public", B64.encodeToString(Device.public(key)))
+            .put("center", center)
+            .put("code", code.trim())
+        val request = Request.Builder()
+            .url(url(identity, "credentials"))
+            .header("Authorization", "Bearer $bearer")
+            .post(body.toString().toRequestBody(JSON))
+            .build()
+        client.newCall(request).execute().use {
+            val data = data(it, "Credential")
+            // The server pins the credential to the algorithm it was told; anything else means it did not understand.
+            val answered = data.optString("alg")
+            if (answered != alg) throw AdukiException.Protocol("Server registered algorithm '$answered', not $alg")
+            return data.optString("credential").ifBlank {
+                throw AdukiException.Protocol("Missing credential in response")
+            }
+        }
+    }
+
+    /**
      * Revokes a device credential (`DELETE /credentials/{id}`). Returns false
      * when it was already gone (404).
      */
@@ -143,8 +190,13 @@ object Center {
      * [credential], has [sign] sign it (after the OS biometric prompt), and
      * returns one session per account it opened.
      *
+     * One attempt, no retry: a refused signature is a 401 and the nonce it used
+     * is not offered again; the next call asks for a fresh nonce. [sign]
+     * signs the raw nonce bytes and returns the 64-byte signature (Ed25519, or
+     * ES256 as `r || s`; see the [Key] overload).
+     *
      * @throws AdukiException.Unauthorized when the signature or nonce is
-     * refused.
+     * refused (`401 auth.invalid`, the same for every cause).
      * @throws AdukiException.Network with code 404 when the credential is
      * revoked or past its trust window: sign in fully.
      */
@@ -160,7 +212,14 @@ object Center {
             .post("{}".toRequestBody(JSON))
             .build()
         val nonce = client.newCall(challenge).execute().use { data(it, "Challenge").optString("nonce") }
-        val signature = sign(UNB64.decode(nonce))
+        if (nonce.isBlank()) throw AdukiException.Protocol("Missing nonce in response")
+        val raw = try { UNB64.decode(nonce) } catch (e: IllegalArgumentException) {
+            throw AdukiException.Protocol("Nonce is not base64url", e)
+        }
+        val signature = sign(raw)
+        require(signature.size == Device.SIGNATURE) {
+            "A device signature is ${Device.SIGNATURE} bytes (ES256 as r||s, not DER); got ${signature.size}"
+        }
         val body = JSONObject()
             .put("nonce", nonce)
             .put("signature", B64.encodeToString(signature))
@@ -184,6 +243,23 @@ object Center {
                 )
             }
         }
+    }
+
+    /**
+     * [unlock] with a [Key] as the signer: the nonce is signed with
+     * [Key.sign] (Ed25519, or ES256 as 64-byte `r || s`, which `AndroidKey`
+     * and `Software` both return). Pass the key whose public part was
+     * registered with [register]; a different key is a 401.
+     */
+    fun unlock(
+        client: OkHttpClient,
+        identity: String,
+        credential: String,
+        key: Key,
+        audience: String = Endpoints.AUDIENCE
+    ): List<Unlocked> {
+        Device.alg(key)
+        return unlock(client, identity, credential, key::sign, audience)
     }
 
     /** The switcher in a center-token response. */
