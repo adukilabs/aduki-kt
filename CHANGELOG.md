@@ -12,6 +12,7 @@ Added:
 - Device authorization grant client (RFC 8628) in `Oidc`: `startDevice`, `pollDevice`, `awaitDevice` (polling, `slow_down`, expiry, error mapping); `AdukiException.Denied` and `AdukiException.Expired`; `Oidc.Discovery.device`. Fake-server tests only; never run against Aduki ID.
 - `Envelope.encrypt` uses the IV the cipher generates (stored in front of the ciphertext, same layout) and `Provider` no longer calls `setRandomizedEncryptionRequired(false)` by reflection: Keystore keys keep randomized encryption. Old blobs decrypt unchanged. JVM tests with a Keystore-like provider; device run pending.
 - `net.http.Passkeys` (K6 protocol part): begin and finish for passkey registration, step-up and sign-in, list, remove, credential shaping and validation. Fake-server tests only; the Credential Manager step is Android and not built.
+- `Center.revoke` (device credential revocation) and the first tests of the `Center` client (link, fetch, unlink, register, unlock with a verified Ed25519 signature over the raw nonce, error mapping, no center data in access tokens). Fake server only.
 - `HttpContactTransport`, `net.http.Contacts`, `Builder.contactStorage`.
 
 Breaking:

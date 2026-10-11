@@ -122,6 +122,23 @@ object Center {
     }
 
     /**
+     * Revokes a device credential (`DELETE /credentials/{id}`). Returns false
+     * when it was already gone (404).
+     */
+    fun revoke(client: OkHttpClient, identity: String, bearer: String, credential: String): Boolean {
+        val request = Request.Builder()
+            .url(url(identity, "credentials/$credential"))
+            .header("Authorization", "Bearer $bearer")
+            .delete()
+            .build()
+        client.newCall(request).execute().use {
+            if (it.code == 404) return false
+            if (!it.isSuccessful) envelope(it, "Revoke")
+            return true
+        }
+    }
+
+    /**
      * Reopens sessions with the device key: fetches a nonce for
      * [credential], has [sign] sign it (after the OS biometric prompt), and
      * returns one session per account it opened.
