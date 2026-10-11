@@ -95,10 +95,9 @@ class Provider(private val type: String = "AndroidKeyStore") {
             .invoke(builder, arrayOf(blockModeGcm))
         specClass.getMethod("setEncryptionPaddings", Array<String>::class.java)
             .invoke(builder, arrayOf(encryptionPaddingsNone))
-        // Envelope supplies its own random IV; the Keystore default (randomized
-        // encryption required) would refuse it. UNVERIFIED on a device.
-        specClass.getMethod("setRandomizedEncryptionRequired", Boolean::class.javaPrimitiveType)
-            .invoke(builder, false)
+        // Randomized encryption stays required (the default): the Keystore
+        // generates each IV and Envelope stores it with the ciphertext.
+        // UNVERIFIED on a device.
         specClass.getMethod("setKeySize", Int::class.javaPrimitiveType)
             .invoke(builder, 256)
         val spec = specClass.getMethod("build").invoke(builder) as AlgorithmParameterSpec

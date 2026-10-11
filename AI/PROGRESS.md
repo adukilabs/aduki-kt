@@ -64,7 +64,7 @@ Fixed on `code/phase1-fixes` (see `CHANGELOG.md`):
 
 Still open:
 
-- Sealed columns on a device: Android Keystore key creation (the `setRandomizedEncryptionRequired(false)` reflection call), use with Envelope's own IV, non-exportability, reinstall/backup, real `objectbox-android`. UNVERIFIED until a device run. Also: plaintext pages left in LMDB after migrating a legacy database (compaction not done).
+- Sealed columns on a device: Android Keystore key creation (randomized encryption now stays required; `Envelope` uses the Keystore-generated IV stored with the ciphertext, JVM-tested with a Keystore-like provider, device run pending), non-exportability, reinstall/backup, real `objectbox-android`. UNVERIFIED until a device run. Also: plaintext pages left in LMDB after migrating a legacy database (compaction not done).
 - `Circuit` is used by no client; `Lifecycle.pause()` stops nothing: wire or delete.
 - `whoami` stays on mail `GET /user` because Aduki ID has no whoami route; `Identity.scopes` and `tier` are filled only if mail returns them.
 - No benchmark harness exists. Do not add numbers to docs without one.

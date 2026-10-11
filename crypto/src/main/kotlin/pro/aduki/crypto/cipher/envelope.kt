@@ -1,6 +1,5 @@
 package pro.aduki.crypto.cipher
 
-import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
@@ -13,12 +12,16 @@ object Envelope {
     private const val IV_LENGTH = 12
 
     /**
-     * Encrypts plaintext using AES-256-GCM with a random 12-byte IV.
+     * Encrypts plaintext using AES-256-GCM. The IV is the one the cipher
+     * generates itself (the Android Keystore refuses a caller-supplied IV for
+     * keys that require randomized encryption, the default); it is stored in
+     * front of the ciphertext: `IV (12) | ciphertext | tag`.
      */
     fun encrypt(plain: ByteArray, key: SecretKey): ByteArray {
-        val iv = ByteArray(IV_LENGTH).also { SecureRandom().nextBytes(it) }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(TAG_LENGTH, iv))
+        cipher.init(Cipher.ENCRYPT_MODE, key)
+        val iv = cipher.iv
+        check(iv != null && iv.size == IV_LENGTH) { "Cipher did not generate a ${IV_LENGTH}-byte IV" }
         val encrypted = cipher.doFinal(plain)
 
         val result = ByteArray(IV_LENGTH + encrypted.size)

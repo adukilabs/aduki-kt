@@ -205,9 +205,10 @@ are sealed by the SDK. Built and tested on the JVM (software `Provider`):
   start has none; a migrated one may, until the file is compacted.
 
 Unverified until a device run: that the Android Keystore generates and uses
-the key (the default Keystore spec refuses a caller-supplied IV, so `Provider`
-now sets `setRandomizedEncryptionRequired(false)` via reflection; untested),
-non-exportability, reinstall and backup behaviour, behaviour with a real
+the key and uses its own IV (the key keeps `setRandomizedEncryptionRequired(true)`,
+the default: `Envelope.encrypt` lets the cipher generate the IV and stores it in
+front of the ciphertext; JVM tests use a Keystore-like test provider that refuses
+a caller-supplied IV; the device run is pending), non-exportability, reinstall and backup behaviour, behaviour with a real
 `objectbox-android` artifact. On a plain JVM a `Provider` key lives only for the
 process, so JVM tests cannot show data surviving a restart.
 

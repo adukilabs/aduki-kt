@@ -69,8 +69,8 @@ cannot be read.
 
 ## Verified and not verified
 
-Tested on the JVM with the software Provider: round trip, the database file
+Tested on the JVM with the software Provider and with a test double that, like the Keystore, refuses a caller-supplied IV: round trip, the database file
 holds no plaintext of a sealed column, tampering and unknown keys fail, rotation
 reads old keys, legacy plaintext rows upgrade. **Not verified: the Android
-Keystore** (key creation, use with the supplied IV, non-exportability, reinstall
+Keystore** (key creation and use with the Keystore-generated IV, non-exportability, reinstall
 and backup behaviour). Do not rely on it on a device until it has been run there.
