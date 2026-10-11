@@ -9,7 +9,7 @@ This guide walks you through integrating the Aduki Android Kotlin SDK into your 
 - **JDK**: 17 (the build and the CI use Java 17).
 - **Kotlin**: 2.0.21.
 - **ObjectBox**: 4.0.3, with its Gradle plugin in the app that stores data.
-- **Android**: the modules are plain JVM libraries. The SDK does not set an Android `minSdk`; the Keystore code reaches Android classes by reflection and falls back to software keys elsewhere.
+- **Android**: the shared modules are plain JVM libraries (the Keystore `Provider` reaches Android classes by reflection and falls back to software keys elsewhere). The Android parts (Keystore DPoP key, account authenticator, Custom Tabs sign-in, Credential Manager) are in the `android` module, `minSdk` 26: see [Android module](android.md).
 
 ---
 

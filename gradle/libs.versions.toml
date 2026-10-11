@@ -7,6 +7,12 @@ androidxCore = "1.13.1"
 robolectric = "4.12.2"
 junit = "4.13.2"
 json = "20231013"
+androidxBrowser = "1.8.0"
+androidxCredentials = "1.3.0"
+androidxTest = "1.2.1"
+androidxTestCore = "1.6.1"
+androidxTestRunner = "1.6.2"
+androidxEspresso = "3.6.1"
 
 [libraries]
 json = { module = "org.json:json", version.ref = "json" }
@@ -24,11 +30,18 @@ okhttp-tls = { module = "com.squareup.okhttp3:okhttp-tls", version.ref = "okhttp
 okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version.ref = "okhttp" }
 
 
+androidx-browser = { module = "androidx.browser:browser", version.ref = "androidxBrowser" }
+androidx-credentials = { module = "androidx.credentials:credentials", version.ref = "androidxCredentials" }
+androidx-credentials-play = { module = "androidx.credentials:credentials-play-services-auth", version.ref = "androidxCredentials" }
+androidx-core = { module = "androidx.core:core-ktx", version.ref = "androidxCore" }
+androidx-test-core = { module = "androidx.test:core", version.ref = "androidxTestCore" }
+androidx-test-ext = { module = "androidx.test.ext:junit", version.ref = "androidxTest" }
+androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidxTestRunner" }
 junit = { module = "junit:junit", version.ref = "junit" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
-android-library = { id = "com.android.library", version = "8.3.2" }
+android-library = { id = "com.android.library", version = "8.13.2" }
 

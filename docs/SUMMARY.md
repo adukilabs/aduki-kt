@@ -6,6 +6,7 @@
 
 - [Installation](start/install.md)
 - [Configuration](start/config.md)
+- [Android module](start/android.md)
 
 # Authentication
 

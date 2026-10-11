@@ -46,3 +46,7 @@ SDK yet.
   carrying a new nonce is retried once with it.
 
 The private key is never read; `Key` only signs.
+
+## Android device key
+
+On Android use `pro.aduki.android.keystore.AndroidKey` as the `Key`: a non-extractable P-256 Keystore key (`ES256`, JWS `r || s` signatures). Aduki ID's `gate::dpop` accepts `ES256`. Verified on an Android 14 emulator (software-backed): proofs verify with the public JWK. Hardware backing is reported by `AndroidKey.protection()` and not verified here.

@@ -32,3 +32,7 @@ fresh authenticator `code`; otherwise the server answers `403 auth.stepup`, whic
 `Passkeys.needsStepUp(e)` recognises (step up, then retry). A malformed server
 answer is `AdukiException.Protocol`. For a session bound to a device key, use an
 HTTP client with the [DPoP](dpop.md) interceptor.
+
+## Android: Credential Manager
+
+`pro.aduki.android.passkey.PasskeyFlow` runs begin, the platform step and finish for `register`, `stepUp` and `signIn`; `CredentialManagerAuthenticator` hands `challenge.optionsJson` to `CreatePublicKeyCredentialRequest` / `GetPublicKeyCredentialOption` and returns the platform's response JSON. See [Android module](../start/android.md). Request shaping and error mapping are unit tested; a real passkey ceremony needs a device with a credential provider and is not verified.

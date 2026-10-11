@@ -9,6 +9,7 @@ pluginManagement {
                 includeGroupByRegex("com\\.android.*")
                 includeGroupByRegex("androidx.*")
                 includeGroupByRegex("com\\.google\\.android.*")
+                includeGroupByRegex("com\\.google\\.testing.*")
             }
         }
     }
@@ -33,6 +34,7 @@ dependencyResolutionManagement {
                 includeGroupByRegex("com\\.android.*")
                 includeGroupByRegex("androidx.*")
                 includeGroupByRegex("com\\.google\\.android.*")
+                includeGroupByRegex("com\\.google\\.testing.*")
             }
         }
     }
@@ -48,3 +50,13 @@ include(":sync")
 include(":state")
 include(":sdk")
 
+
+// The Android library needs the Android SDK and AGP (JDK 17). It joins the build
+// only when asked (-Paduki.android=true or ADUKI_ANDROID=1) or when an SDK is
+// configured, so the pure-JVM modules build on JDK 17 to 22 without Google's repository.
+val withAndroid = providers.gradleProperty("aduki.android").orNull == "true" ||
+    providers.environmentVariable("ADUKI_ANDROID").orNull == "1"
+if (withAndroid) {
+    include(":android")
+    include(":sample")
+}

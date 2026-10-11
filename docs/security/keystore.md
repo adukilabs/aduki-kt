@@ -36,3 +36,13 @@ val provider = Provider()
 val key: SecretKey = provider.get(Provider.MASTER)
 provider.remove(Provider.MASTER)   // e.g. on sign-out
 ```
+
+## Device key (DPoP)
+
+`pro.aduki.android.keystore.AndroidKey` (module `android`, see [Android module](../start/android.md)) is the P-256 signing key for [DPoP](../auth/dpop.md): generated in the Keystore, `PrivateKey.getEncoded()` is null, it signs `ES256`. `protection()` returns what the platform reports (`software`, `trusted_environment`, `strongbox`).
+
+## Verified on
+
+An Android 14 (API 34) x86_64 emulator, software CPU: `Provider` creates keys in the real `AndroidKeyStore` (not the fallback), `getEncoded()` is null, `KeyInfo.getKeySize()` is 256, and a caller-supplied IV is refused, which is why `Envelope` stores the IV the cipher generates (B14; 300 encryptions, no repeated IV). That emulator holds its keys in software (`isInsideSecureHardware` false): hardware backing and StrongBox are not verified.
+
+`Provider.get` still falls back to a process-lifetime software key when the Keystore throws; on a device, check `has(alias)` after `get` if you must be sure a key is Keystore-held.

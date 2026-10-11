@@ -77,3 +77,7 @@ callback), `AdukiException.Unauthorized` (`invalid_grant`, `invalid_client`),
 `AdukiException.Network` (other failures). `pollDevice` is the single-step form
 for callers that run their own timer. The redirect argument of `Oidc` is not
 used by this grant.
+
+## Android: Custom Tabs
+
+`pro.aduki.android.signin.SignIn` launches `begin().url` in a Custom Tab and completes the sign-in from the redirect (`RedirectActivity`), accepting only your registered redirect and a `state` it started. See [Android module](../start/android.md). Not run against a real browser or Aduki ID yet.

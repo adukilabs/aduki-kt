@@ -1,3 +1,27 @@
+// AGP must share a class loader with the Kotlin Gradle plugin, so it is put on the root build
+// classpath, and only when the Android module is part of the build (-Paduki.android=true or
+// ADUKI_ANDROID=1): a JVM-only build never contacts Google's Maven repository.
+buildscript {
+    val withAndroid = providers.gradleProperty("aduki.android").orNull == "true" ||
+        providers.environmentVariable("ADUKI_ANDROID").orNull == "1"
+    if (withAndroid) {
+        repositories {
+            mavenCentral()
+            google {
+                content {
+                    includeGroupByRegex("com\\.android.*")
+                    includeGroupByRegex("androidx.*")
+                    includeGroupByRegex("com\\.google\\.android.*")
+                    includeGroupByRegex("com\\.google\\.testing.*")
+                }
+            }
+        }
+        dependencies {
+            classpath("com.android.tools.build:gradle:8.13.2")
+        }
+    }
+}
+
 plugins {
     alias(libs.plugins.kotlin.jvm) apply false
     id("io.objectbox") version "4.0.3" apply false
@@ -15,8 +39,10 @@ subprojects {
     tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
         compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.fromTarget(bytecode.toString()))
     }
-    tasks.withType<JavaCompile>().configureEach {
-        options.release.set(bytecode)
+    if (name != "android" && name != "sample") { // AGP owns the Java compile options of the Android library
+        tasks.withType<JavaCompile>().configureEach {
+            options.release.set(bytecode)
+        }
     }
 
     apply(plugin = "maven-publish")

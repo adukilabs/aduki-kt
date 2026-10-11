@@ -16,9 +16,9 @@ exact API.
 
 - The SDK does not encrypt the local ObjectBox database as a whole; it seals
   personal text columns ([Vault](vault.md)) and leaves structural metadata (ids,
-  flags, timestamps, counters) in the clear. The Android Keystore part is unverified until a device
-  run.
-- Access and refresh tokens are held in memory only; the SDK never writes them
-  to disk.
+  flags, timestamps, counters) in the clear. The Android Keystore part ran on an emulator (software-backed keys); hardware
+  backing is unverified.
+- Access and refresh tokens are held in memory only; the core SDK never writes them
+  to disk. The optional Android module stores them sealed ([Vault](vault.md)) in `AccountManager` for the account switcher.
 - The SDK does not request StrongBox; the Keystore key is generated with the
   platform default (hardware-backed where the device provides it).

@@ -22,7 +22,7 @@ preview and blob; contact name, e-mail, phone, company and vCard; appointment
 location and notes; mailbox and service names; the outbox payload. Ids, flags,
 timestamps, counters and roles stay in the clear so sync works; contact lookups
 use keyed blind indexes and free-text search runs in memory. Sealing is tested on a plain
-JVM; on Android it is unverified until a device run.
+JVM and on the real Android Keystore of an API 34 emulator (software-backed); hardware backing is unverified.
 
 ## Pages
 

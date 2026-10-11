@@ -4,6 +4,14 @@ The SDK is 0.x: breaking changes can land in a minor release. The version is set
 
 ## 0.4.0 (not released yet; `release` is set to it)
 
+Android (module `android`, opt-in with `-Paduki.android=true`; `minSdk` 26):
+
+- `AndroidKey` (K5): non-extractable P-256 Keystore key for DPoP (`ES256`); `crypto.dpop.Der` converts the Keystore's DER signature to JWS `r || s`; `Software.jwkOf`.
+- Account Center authenticator (K4): `Accounts` (`AccountManager` entries under `pro.aduki.account`, sealed tokens, reconcile with the center, `links = deny` removal), `AdukiAuthenticator`, `SwitcherState`.
+- Custom Tabs sign-in (K7): `SignIn`, `PendingStore`, `RedirectActivity`.
+- Credential Manager (K6): `CredentialManagerAuthenticator`, `PasskeyFlow`, `PasskeyFailure`.
+- Build: Gradle wrapper 9.5.1 (AGP 8.13 does not run on 9.6), a `sample` app for manual tests, `guide/ANDROID-TESTS.md`. Robolectric tests run in `./gradlew test -Paduki.android=true`; Keystore tests ran on an API 34 emulator (software-backed keys). Hardware Keystore, StrongBox, real Credential Manager and the real Aduki ID are not verified.
+
 Schema changed: personal text columns are now sealed and `Contact` gained two index columns, so **an existing local database from 0.3.x must be deleted** (there is no migration; no real data existed). The old plaintext read path is kept only so rows written without a vault still read.
 
 Added:
