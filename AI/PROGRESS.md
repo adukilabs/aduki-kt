@@ -41,15 +41,17 @@ Implement `crypto.dpop.Key` on the Android Keystore with a non-exportable P-256 
 
 ### 6. K6: passkeys (Credential Manager)
 
-Not started. Android only. Verify: register and authenticate against the Aduki ID test server on a device.
+Protocol part built on the JVM (`net.http.Passkeys`, fake server only). The Credential Manager step is not started (Android only). Verify: register and authenticate against the Aduki ID test server on a device.
 
 ### 7. K7 remainder: OIDC verification
+
+The device authorization grant client (RFC 8628) is built (`Oidc.startDevice/pollDevice/awaitDevice`, fake server only; run it against `id` once a device-enabled client exists). No certification is wanted (owner decision 2026-10-10), so the conformance suite is not a goal.
 
 `Oidc` is a library only. Not run: the conformance suite of the `id` repo (documented there; the notes said it cannot pass while PKCE is mandatory), a live run against `https://id.aduki.pro`, and the browser or Custom Tabs step (Android). Verify with a live sign-in using a registered client.
 
 ### 8. Space client
 
-Deferred: no `space` module. Needs final Space APIs (workspaces, projects, tasks, time, invoices, notifications, search), tokens from `Id` (audience `space`), DPoP (Space accepts DPoP-bound tokens only) and a rights source for non-mail clients (decision D-KT-3: ADK-AUTH-003 section 7.4).
+JVM draft built (`net.http.Space`, `docs/services/space.md`, fake-server tests). Open: wiring into `Aduki`, typed models, a local store, the realtime channel, and a run against a real Space server. The Space DTOs are still Draft; needs final Space APIs (workspaces, projects, tasks, time, invoices, notifications, search), tokens from `Id` (audience `space`), DPoP (Space accepts DPoP-bound tokens only) and a rights source for non-mail clients (decision D-KT-3: ADK-AUTH-003 section 7.4).
 
 ### 9. Claims in the code: state after the phase 1 fixes
 
@@ -75,6 +77,14 @@ Still open:
 - Build: `mdbook build docs` (mdBook is not installed by this repo; the CI action installs it). `docs/book.toml` has `site-url = "/kt/"`. Verify the built site works under `https://docs.aduki.pro/kt/` (links are relative).
 - `.github/workflows/book.yml` still deploys to GitHub Pages; with the site now at `docs.aduki.pro/kt` decide whether to remove the deploy job (the build job stays as a check). Owner decision.
 - Pages in `docs/` that were not re-verified line by line against the code: `services/mail.md`, `services/contacts.md`, `services/sync.md`, `services/outbox.md`, `services/scheduling.md`, `reactive/*`, `store/entities.md`. They were written for 0.2.0 and spot-checked; run them against item 1's green build and a live server, and fix drift.
+
+## Needs credentials/owner
+
+- Android work (K4 `pro.aduki.account` module with `AccountManager`, switcher and `links = deny` removal within 1 s on a device; K6 Credential Manager; Keystore `Key` for DPoP; K7 Custom Tabs): needs the Android SDK, an emulator or device and a decision on the Android Gradle layout; not startable here.
+- B14 and the sealed columns on a real Android Keystore (key creation, Keystore-generated IV, non-exportability): a device run.
+- A device-enabled OIDC client at `id.aduki.pro` (`device: true`) to run the device grant live; a test account with an authenticator and a registered passkey for `Passkeys`; a Space tenant with the `space` app and a DPoP-capable test account for `Space`.
+- Maven Central namespace, signing key and secrets (item 3), relocation POM, the GitHub Pages decision (item 10): owner.
+- `Circuit` and `Lifecycle.pause()` (wire or delete) and the `Aduki` entry for the Space client: design decisions, not taken here.
 
 ## Needs server
 

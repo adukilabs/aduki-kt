@@ -3,7 +3,7 @@ Spec-ID: ADK-KT-002
 Title: aduki-kt progress
 Category: KT
 Status: Draft
-Version: 6
+Version: 7
 Depends-on: ADK-KT-003
 ---
 
@@ -42,9 +42,11 @@ All have unit tests (none was run on this VPS: no JDK, see section 4); there is 
 | P4 | Android authenticator (`AccountManager`, multiple accounts) | missing; no Android module exists |
 | P4 | access tokens carry no center data (test) | not asserted in the SDK tests |
 | P9 | DPoP (proof signing, `jti`, nonce) | protocol part done (K5, slice 4): `crypto.dpop.Key` (sign-only interface, `ES256` and `EdDSA`, RFC 7638 `jkt`) with `Software` P-256 and Ed25519 keys; `net.http.Dpop` (proof with `htm`, `htu`, `iat`, random `jti`, `ath`, `nonce`; interceptor: proof on credential-less calls, `Authorization: DPoP` for tokens whose `cnf.jkt` is this key, one retry on `DPoP-Nonce`); `Aduki.builder().dpop(key)`. **Not done, Android only**: the Keystore-backed `Key` (P-256, non-exportable), tests on a device, and the contract test against the `id` test server (the proofs are verified by an independent verifier in the unit tests; the `id` server accepts `ES256` since S-ID-14) |
-| P9 | passkeys (WebAuthn / Credential Manager) | missing |
+| P9 | passkeys (WebAuthn / Credential Manager) | protocol part done (branch `code/kt-next`): `net.http.Passkeys` (begin and finish for register, step-up and sign-in, list, remove, credential shaping; fake-server tests, never run against `id`). **Missing**: the Credential Manager step (Android) |
 | P9 | OIDC "Sign in with Aduki" client | done as a client library (K7, slice 4): `net.http.Oidc` (discovery check, PKCE `S256`, state, nonce, `iss` check, code exchange with `client_secret_basic`, `client_secret_post` or `none`, rotating refresh, userinfo, revocation, optional DPoP, `EdDSA` id token validation with `kid` and one JWKS refetch, `at_hash`); MockWebServer tests (`oidc.test.kt`). **Not run**: the conformance suite of the `id` repo (it is documented there, not installable, and cannot pass while PKCE is mandatory) and a live run against `id.aduki.pro`; no browser or Custom Tabs step (Android) |
-| Space | any Space client | none; deferred (see ADK-KT-003 section 3) |
+| P9 | device authorization grant (RFC 8628) | done as a client (branch `code/kt-next`): `Oidc.startDevice`, `pollDevice`, `awaitDevice` (interval, `slow_down` +5 s, expiry, error mapping); fake-server tests; never run against `id` |
+| P4 | `Center.revoke` (device credential revocation) and first tests of the `Center` client | done (fake server) |
+| Space | Space client | JVM draft (branch `code/kt-next`): `net.http.Space` (DPoP-bound tokens through `Id`, envelope, `AdukiException.Api`, lists, `Idempotency-Key`, `ETag`; tasks, check-ins, tickets, search, settings); fake-server tests; not wired into `Aduki`, no store, DTOs still Draft at Space (ADK-KT-003 section 3) |
 
 ## 3.2 Merge state and history (from git log)
 
@@ -73,6 +75,11 @@ Built: gRPC removed (D-HOST-5); pinning opt-in via `Options.pins`; one `Scheme` 
 Verified: `./gradlew --no-daemon clean test --continue` is BUILD SUCCESSFUL on JDK 17 and on JDK 22 with 184 tests, 6 skipped (live tier, no server), 0 failures. Pinning against a generated local TLS certificate only; contacts against MockWebServer only.
 Not verified: any real host (`mail.aduki.pro` did not answer on 443), any device, database encryption (not built).
 
+## 3.6 Branch `code/kt-next` (2026-10-11)
+
+Built on the JVM, fake servers only: device authorization grant in `Oidc`; `Passkeys`; `Center.revoke` and `Center` tests; `Space` client draft; B14 (`Envelope` uses the cipher-generated IV and `Provider` keeps Keystore randomized encryption required, tested with a Keystore-like JCE provider that refuses caller IVs); B16 docs (delete the old database after in-place sealing).
+Verified: `./gradlew --no-daemon test --continue` on JDK 17 and JDK 22 (numbers in the branch report). Not verified: anything on a device, any real `id` or Space server.
+
 ## 3.4 Slice 4 scope
 
 Built (plain JVM, one commit each): K2 wiring into `Aduki`, K3 rights stream, K5 protocol part, K7 client.
@@ -86,6 +93,8 @@ JMAP EventSource `https://mail.aduki.pro/jmap/eventsource`), `store`, `files`, `
 The VPS had no JDK on 2026-10-08 and 2026-10-10 (first record). The phase 1 build box has JDK 17 and JDK 22 (`/opt/jdk17`, `/opt/jdk22`); no Android SDK. `/dev/kvm` is present but 8 GB does not run an emulator beside Gradle. The next step on the real server is `AI/PROGRESS.md`.
 
 ## 5. Changelog
+
+- v7 (2026-10-11): section 3.6 and the matching rows of section 3 (device grant, Passkeys, Center.revoke, Space draft, B14).
 
 - v6 (2026-10-10): phase 1 fixes (section 3.5); facts in 3.3 corrected for encryption, pinning, contacts transport.
 
