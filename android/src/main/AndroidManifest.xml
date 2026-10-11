@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application>
+        <!-- K4: the pro.aduki.account authenticator. -->
+        <service
+            android:name="pro.aduki.android.account.AdukiAuthenticatorService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.accounts.AccountAuthenticator" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accounts.AccountAuthenticator"
+                android:resource="@xml/aduki_authenticator" />
+        </service>
+
+        <!-- K7: starts the Custom Tab. -->
+        <activity
+            android:name="pro.aduki.android.signin.SignInActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- K7: the redirect. The app sets adukiRedirectScheme in manifestPlaceholders. -->
+        <activity
+            android:name="pro.aduki.android.signin.RedirectActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${adukiRedirectScheme}" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
