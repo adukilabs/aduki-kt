@@ -3,7 +3,7 @@ Spec-ID: ADK-KT-002
 Title: aduki-kt progress
 Category: KT
 Status: Draft
-Version: 8
+Version: 9
 Depends-on: ADK-KT-003
 ---
 
@@ -85,7 +85,13 @@ Verified: `./gradlew --no-daemon test --continue` on JDK 17 and JDK 22 (numbers 
 Built: `android` module (AGP 8.13.2, `minSdk` 26, `compileSdk` 34, opt-in `-Paduki.android=true`; Gradle wrapper moved to 9.5.1 because AGP 8.13 fails on 9.6.0), `AndroidKey`, `crypto.dpop.Der`, `Accounts` / `AdukiAuthenticator` / `SwitcherState`, `SignIn` / `PendingStore` / `RedirectActivity`, `CredentialManagerAuthenticator` / `PasskeyFlow`, a `sample` app and `ANDROID-TESTS.md` for the owner's phone.
 Verified: `./gradlew test` on JDK 17 and JDK 22: 243 tests, 6 skipped (live tier), 0 failures (baseline 240); with `-Paduki.android=true` on both JDKs: BUILD SUCCESSFUL and 34 Robolectric tests (debug and release variants); `:android:connectedDebugAndroidTest` on an API 34 x86_64 AOSP emulator without KVM (boot about 5 minutes): 14 tests, 13 passed, 1 skipped (the second phase of the restart test, run separately after `force-stop`: passed). Keystore there is software-backed.
 Not verified: hardware Keystore, StrongBox, user-authentication keys, a real Credential Manager ceremony, Custom Tabs in a real browser, the real `id` and Space servers, Android versions other than 14, the end-to-end 1 s removal.
-Finding: Aduki ID device credentials accept only Ed25519; Keystore keys are P-256, so a Keystore key cannot register for center unlock until `id` accepts ES256 device credentials.
+Finding (closed on the SDK side in 3.8): Aduki ID device credentials accepted only Ed25519 until PR 35; Keystore keys are P-256.
+
+## 3.8 Branch `code/kt-es256-center` (2026-10-11)
+
+Built: `Center.register(..., key: Key, ...)` and `Center.unlock(..., key: Key, ...)` for Ed25519 and ES256 (`crypto.dpop.Device`: algorithm and 65-byte uncompressed point from the key); `unlock` is one attempt (uniform 401 is final, a fresh nonce per call) and refuses a non-64-byte signature locally. Android glue, UNVERIFIED: `Accounts.registerDevice` / `unlockWithDevice`, `AndroidKey.DEVICE`, `devicePublic`, `CenterStore` credential id, sample buttons 9 and 10.
+Verified: `./gradlew test` (JVM, no Android flag) on JDK 17 and JDK 22: 259 tests, 6 skipped (live tier), 0 failures (baseline 243). New: 3 `DeviceTest` and 13 `DeviceKeyTest` (fake id server with an independent java.security verifier: P1363 and hand-made DER; real P-256 keys; wrong key, tampered and short signature, signature over the base64 text, expired and replayed nonce, key without `alg` is 422, old server, high-S and low-S, DER from the signer).
+Not verified: the real Aduki ID (PR 35 contract only), the real Keystore (hardware, StrongBox, biometric per-use keys; `authentication` needs a BiometricPrompt that is not wired), compilation of every Android change of this branch (no SDK; the android module was not built).
 
 ## 3.4 Slice 4 scope
 
@@ -101,6 +107,7 @@ The VPS had no JDK on 2026-10-08 and 2026-10-10 (first record). The phase 1 buil
 
 ## 5. Changelog
 
+- v9 (2026-10-11, provisional, ADK-META-002): section 3.8 and the Center row (ES256 device credentials).
 - v8 (2026-10-11): section 3.7 and the Android rows of section 3 (`code/kt-android`).
 - v7 (2026-10-11): section 3.6 and the matching rows of section 3 (device grant, Passkeys, Center.revoke, Space draft, B14).
 

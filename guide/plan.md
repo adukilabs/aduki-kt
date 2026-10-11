@@ -3,7 +3,7 @@ Spec-ID: ADK-KT-003
 Title: aduki-kt plan
 Category: KT
 Status: Draft
-Version: 5
+Version: 6
 Depends-on: ADK-KT-002, ADK-AUTH-001, ADK-AUTH-002, ADK-AUTH-003
 ---
 
@@ -66,6 +66,7 @@ K1, K2 (wired into `Aduki`), K3, the protocol part of K5 and K7 (plus the device
 
 ## 5. Changelog
 
+- v6 (2026-10-11, provisional, ADK-META-002): K4 and K5 text: device credentials accept `ES256` at Aduki ID (PR 35), so the Keystore key can be the center-unlock signer; `Center.register/unlock` take a `Key` (JVM, fake server); the Android glue is unverified.
 - v5 (2026-10-11): section 1.1: the Android module exists (opt-in `-Paduki.android=true`, `minSdk` 26, AGP 8.13.2 with Gradle 9.5.1); K4, K5 Keystore key, K6 Credential Manager step and K7 Custom Tabs are built there; an emulator runs here without KVM (about 5 minutes to boot).
 - v4 (2026-10-11): protocol parts built on the JVM: K6 `Passkeys` client, device authorization grant in `Oidc` (owner decision 2026-10-10: build), Space client draft; K7 text now says no certification (PKCE mandatory, no conformance suite).
 

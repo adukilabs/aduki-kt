@@ -72,4 +72,4 @@ Without `-Paduki.android=true` (or `ADUKI_ANDROID=1`) only the JVM modules build
 
 Robolectric tests run in `./gradlew test`; the Keystore tests run on an Android 14 emulator without secure hardware (software-backed keys). Hardware-backed keys, StrongBox, Credential Manager with a real provider and the real Aduki ID are not verified: see `guide/ANDROID-TESTS.md` in the repository.
 
-Known gap: Aduki ID's device credentials (center unlock) accept only Ed25519, and the Android Keystore signs P-256, so `AndroidKey` cannot register as a center-unlock credential yet. DPoP is not affected.
+Device credentials (center unlock): Aduki ID accepts `ES256` (PR 35), and `Accounts.registerDevice` / `Accounts.unlockWithDevice` use a separate Keystore key (`AndroidKey.DEVICE`) for it, see [Account Center](../auth/center.md). That glue is UNVERIFIED: it was written without the Android SDK, so it has not been compiled, and nothing ran on a device or against a real Aduki ID.

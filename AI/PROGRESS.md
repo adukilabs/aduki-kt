@@ -39,6 +39,10 @@ Written 2026-10-10 from `git log` and a read of the code. Update 2026-10-10 (bra
 
 Implement `crypto.dpop.Key` on the Android Keystore with a non-exportable P-256 key (`ES256`). Verify on a device: tokens bound to the key; the `id` test server accepts the proof; replayed `jti` rejected by the server contract test. Also run the contract test of the DPoP interceptor against a real `id` server (today only unit tests with an independent verifier). Needs a server (`id` repo): confirm it accepts `ES256` (the plan notes S-ID-14 added it; check).
 
+### 5b. Device credentials with ES256 (done on the JVM, Android part unverified)
+
+`Center.register/unlock` take a `Key`, `crypto.dpop.Device` derives alg and the 65-byte point, fake-server tests with an independent verifier pass on JDK 17 and 22 (259 tests). Needs, on a machine with the Android SDK: compile the glue (`Accounts.registerDevice/unlockWithDevice`, `AndroidKey.DEVICE`, sample buttons 9 and 10), then ANDROID-TESTS.md steps 11 to 13 against an Aduki ID with PR 35. Needs credentials/owner: nothing new.
+
 ### 6. K6: passkeys (Credential Manager)
 
 Protocol part built on the JVM (`net.http.Passkeys`, fake server only). The Credential Manager step is not started (Android only). Verify: register and authenticate against the Aduki ID test server on a device.

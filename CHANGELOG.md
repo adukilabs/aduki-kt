@@ -4,6 +4,11 @@ The SDK is 0.x: breaking changes can land in a minor release. The version is set
 
 ## 0.4.0 (not released yet; `release` is set to it)
 
+ES256 device credentials (Aduki ID PR 35):
+
+- `Center.register(..., key: Key, ...)` and `Center.unlock(..., key: Key, ...)`: Ed25519 or ES256 from the key type; `crypto.dpop.Device` (algorithm, 65-byte uncompressed P-256 point, `0x04 || x || y`, base64url without padding). `unlock` refuses a signature that is not 64 bytes before sending, treats the uniform 401 as final (no retry) and never reuses a nonce. Fake id server tests with an independent java.security verifier, high-S and low-S, tampered, wrong-key, expired and replayed cases.
+- Android, UNVERIFIED (not compiled: no SDK where it was written): `Accounts.registerDevice`, `Accounts.unlockWithDevice`, `AndroidKey.DEVICE`, `AndroidKey.devicePublic`, a credential id in `CenterStore`, sample buttons 9 and 10. The known gap "Keystore key cannot register for center unlock" is closed on the SDK side only.
+
 Android (module `android`, opt-in with `-Paduki.android=true`; `minSdk` 26):
 
 - `AndroidKey` (K5): non-extractable P-256 Keystore key for DPoP (`ES256`); `crypto.dpop.Der` converts the Keystore's DER signature to JWS `r || s`; `Software.jwkOf`.
