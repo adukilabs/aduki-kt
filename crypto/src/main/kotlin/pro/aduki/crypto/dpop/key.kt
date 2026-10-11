@@ -59,12 +59,13 @@ class Software private constructor(
         /** A fresh P-256 key (`ES256`), the algorithm hardware stores share. */
         fun p256(): Software {
             val pair = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
-            val point = (pair.public as ECPublicKey).w
-            return Software(
-                "ES256",
-                mapOf("kty" to "EC", "crv" to "P-256", "x" to b64(fixed(point.affineX)), "y" to b64(fixed(point.affineY))),
-                pair.private
-            )
+            return Software("ES256", jwkOf(pair.public as ECPublicKey), pair.private)
+        }
+
+        /** The public JWK members of a P-256 [key] (`kty`, `crv`, `x`, `y`). */
+        fun jwkOf(key: ECPublicKey): Map<String, String> {
+            val point = key.w
+            return mapOf("kty" to "EC", "crv" to "P-256", "x" to b64(fixed(point.affineX)), "y" to b64(fixed(point.affineY)))
         }
 
         /** A fresh Ed25519 key (`EdDSA`), for software-only clients. */
