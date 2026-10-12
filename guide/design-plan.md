@@ -184,7 +184,7 @@ SERVER-DEPENDENT TIER (Run strictly last)
 | Test ID | Test Case | Server Dependencies | Success Criteria |
 | :--- | :--- | :--- | :--- |
 | `T5-LIVE-01` | Live Whoami Resolution | Aduki REST API active at `:443` or `https://mail.aduki.pro/v1`. | Resolves user hex, tenant hex, and scopes against live database. |
-| `T5-LIVE-02` | Live gRPC Connection | Aduki gRPC service active at `:8443` or `grpc.aduki.pro:443`. | Completes TLS handshake and invokes `SessionService.Whoami`. |
+| `T5-LIVE-02` | Live gRPC Connection (dropped, D-HOST-5: no public gRPC host; the SDK has no gRPC client) | n/a | n/a |
 | `T5-LIVE-03` | Live Mailbox Listing | Test tenant populated with standard mailboxes. | Populates local ObjectBox mailboxes from live server. |
 | `T5-LIVE-04` | Live CONDSTORE Delta Sync | Server mailbox with newly delivered test message. | Receives new message UID via `MailboxSyncReq` and stores in ObjectBox. |
 | `T5-LIVE-05` | Live Outbox Send & Delivery | Active SMTP submission service (`:587`). | Enqueues outbound message offline; reconnects; verifies delivery and server status. |
