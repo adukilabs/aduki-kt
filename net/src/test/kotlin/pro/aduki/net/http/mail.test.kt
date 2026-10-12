@@ -26,8 +26,8 @@ class MailTest {
     private fun fixture(name: String): String =
         javaClass.getResource("/fixtures/$name")!!.readText()
 
-    private fun reply(name: String) {
-        server.enqueue(MockResponse().setResponseCode(200).setBody(fixture(name)))
+    private fun reply(name: String, status: Int = 200) {
+        server.enqueue(MockResponse().setResponseCode(status).setBody(fixture(name)))
     }
 
     @Before
@@ -113,7 +113,7 @@ class MailTest {
 
     @Test
     fun sendPostsRecipientsAndTheIdempotencyKey() {
-        reply("send.json")
+        reply("send.json", status = 201)
         val hex = mail.send(
             to = listOf("bob@example.com", "carol@example.com"),
             subject = "Hi \"there\"",
@@ -141,7 +141,8 @@ class MailTest {
         assertEquals("/v1/user/mail/M0GDB6EC798DDC2F3460/mailbox", mv.requestUrl!!.encodedPath)
         assertEquals("M0X6F5E4D3C2B1A", JSONObject(mv.body.readUtf8()).getString("mailbox"))
 
-        server.enqueue(MockResponse().setResponseCode(200).setBody("null"))
+        // ADK-NET-001 section 3.1: an update with nothing to return is 204, no body.
+        server.enqueue(MockResponse().setResponseCode(204))
         mail.flags("M0GDB6EC798DDC2F3460", add = listOf("\\Seen"), remove = listOf("\\Flagged"))
         val fl = server.takeRequest()
         assertEquals("PATCH", fl.method)
@@ -150,9 +151,41 @@ class MailTest {
         assertEquals("\\Seen", body.getJSONArray("add").getString(0))
         assertEquals("\\Flagged", body.getJSONArray("remove").getString(0))
 
+        // A delete is 204, no body.
+        server.enqueue(MockResponse().setResponseCode(204))
+        mail.delete("M0GDB6EC798DDC2F3460")
+        assertEquals("DELETE", server.takeRequest().method)
+    }
+
+    @Test
+    fun legacyNullBodyOnFlagsAndDeleteStillWorks() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("null"))
+        mail.flags("M0GDB6EC798DDC2F3460", add = listOf("\\Seen"))
+        server.takeRequest()
         server.enqueue(MockResponse().setResponseCode(200).setBody("null"))
         mail.delete("M0GDB6EC798DDC2F3460")
         assertEquals("DELETE", server.takeRequest().method)
+    }
+
+    @Test
+    fun sessionKindsMapToAuth() {
+        // auth.stale is 401 and auth.stepup is 403 (ADK-NET-001 section 4.1).
+        server.enqueue(MockResponse().setResponseCode(401).setBody(
+            """{"success":false,"error":{"kind":"auth.stale","message":"token is behind","details":{"epoch":4}}}"""))
+        try {
+            mail.inbox()
+            fail("expected Auth")
+        } catch (e: AdukiException.Auth) {
+            assertTrue(e.message!!.contains("auth.stale"))
+        }
+        server.enqueue(MockResponse().setResponseCode(403).setBody(
+            """{"success":false,"error":{"kind":"auth.stepup","message":"step-up required"}}"""))
+        try {
+            mail.inbox()
+            fail("expected Auth")
+        } catch (e: AdukiException.Auth) {
+            assertTrue(e.message!!.contains("auth.stepup"))
+        }
     }
 
     @Test

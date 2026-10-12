@@ -31,7 +31,7 @@ This document details the network transport architecture of the Aduki Android Ko
 ┌─────────────────────────────────────────────────────────────┐
 │                     Aduki Server Fleet                     │
 │        REST: https://mail.aduki.pro/v1 (Port 443)        │
-│        gRPC: grpc.aduki.pro (Port 443 TLS)                  │
+│        gRPC: none (dropped, D-HOST-5)                      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
