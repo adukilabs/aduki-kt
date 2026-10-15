@@ -2,8 +2,25 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (`AI/SKILLS/release.md`).
 
-## 0.4.0 (2026-10-15)
+## 0.4.1-beta (2026-10-16)
 
+Staged personal account signup (ADK-AUTH-007):
+
+- `Requirements`: dynamic discovery of signup requirements (`GET /v1/accounts`) returning `phone` verification requirement flag and platform domain. Clients dynamically check `Requirements.phone` before prompting for phone number, allowing server configuration changes without client app updates.
+- `Enrolment`: account initiation outcome returning pending account ID, canonical handle, TOTP enrolment URI, and base32 shared secret.
+- `Signup`:
+  - `Signup.requirements(client, identity): Requirements`
+  - `Signup.create(client, identity, handle, name, password, phone?): Enrolment`
+  - `Signup.verify(client, identity, hex, password, code): List<String>` (returns one-time backup codes)
+- `Id`: delegation helpers `requirements()`, `create(...)`, `verify(...)`.
+- `Aduki.Companion`:
+  - `Aduki.requirements(identity, pins): Requirements`
+  - `Aduki.signUp(handle, name, password, phone, identity, pins): Enrolment`
+  - `Aduki.verify(hex, password, code, identity, pins): List<String>`
+  - `Aduki.register(handle, name, password, code, hex, endpoint, identity, backup, dpop, pins): Pair<Aduki, List<String>>`
+- Unit and contract tests with MockWebServer covering discovery, initiation, verification, error mapping, and end-to-end registration.
+
+## 0.4.0 (2026-10-15)
 
 ES256 device credentials (Aduki ID PR 35):
 
