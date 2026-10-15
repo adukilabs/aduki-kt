@@ -2,9 +2,9 @@
 
 `pro.aduki.net.http.Passkeys` is the HTTP side of WebAuthn at Aduki ID: the begin
 and verify calls of the three ceremonies, plus list and remove. It runs on a
-plain JVM. The authenticator step is the platform's (Android Credential Manager)
-and is **not** in the SDK yet: no Android module exists, so nothing here has run
-on a device or against a real Aduki ID.
+plain JVM. The authenticator step is handled by the platform (Android Credential Manager):
+on Android, use `PasskeyFlow` and `CredentialManagerAuthenticator` from the `android`
+module (`pro.aduki:android`).
 
 Each ceremony is two calls. `begin*` returns a `Challenge` (`ceremony`, `expires`,
 `options`); give `challenge.optionsJson` to the platform API; pass the JSON the

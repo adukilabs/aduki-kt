@@ -39,12 +39,15 @@ implementations on a plain JVM.
 | `sync` | mailbox, contact and schedule sync engines; the outbox |
 | `state` | repositories that expose `StateFlow` |
 | `sdk` | the `Aduki` facade |
+| `android` | Android Keystore DPoP key, Account Center authenticator, Custom Tabs sign-in, Credential Manager |
 
 ## Status
 
-Not yet available: Account Center authenticator for Android, passkeys, and a
-Keystore-backed DPoP key. The local database file is not encrypted; personal text columns are sealed, structural metadata is not (unverified on Android). See
-the individual pages for the exact behaviour of each feature.
+Version 0.4.0 is published on Maven Central under the `pro.aduki` namespace.
+
+Android platform integrations (`AndroidKey`, `AdukiAuthenticator`, `SignIn`, `PasskeyFlow`) are provided in the optional `pro.aduki:android` module. They are verified with unit and Robolectric tests, and on an Android 14 emulator with software keys; verification on physical devices with hardware-backed Keystores, StrongBox, and live Credential Manager providers is pending device testing.
+
+In the local store, personal text columns are sealed with AES-256-GCM (`Vault`), and contacts carry keyed blind indexes (`emailIndex`, `phoneIndex`) for exact lookups; structural metadata and flags remain in cleartext, and the ObjectBox database file itself is not encrypted.
 
 ## Where to start
 

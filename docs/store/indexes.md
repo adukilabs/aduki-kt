@@ -6,10 +6,12 @@ property descriptors (`Message_`, `Contact_`) for queries.
 | Entity | Indexed fields |
 | :--- | :--- |
 | `Message` | `hex`, `mailbox`, `uid`, `threadId`, `flags`, `receivedAt` |
-| `Contact` | `hex`, `name`, `email` |
+| `Contact` | `hex`, `emailIndex`, `phoneIndex` |
 | `Mailbox` | `hex` |
 | `Outbox` | `hex`, `action`, `created` |
 | `Sync` | `target` |
+
+> **Note on Sealed Columns:** Personal text columns (`Contact.name`, `Contact.email`, `Contact.phone`, `Contact.company`, `Contact.vcard`, `Message.subject`, `Message.preview`, etc.) are sealed with AES-256-GCM under the Vault. They cannot be queried via plaintext database indexes. Exact lookups on contacts use keyed blind indexes (`emailIndex`, `phoneIndex`), and substring/autocomplete searches run in memory over decrypted rows.
 
 ## Query examples
 
@@ -21,13 +23,16 @@ val query = messageBox.query(Message_.mailbox.equal(mailboxHex))
 val page: List<Message> = query.find(0, 50)
 query.close()
 
-// Contacts matching a prefix, for autocomplete
-val search = contactBox.query(
-    Contact_.name.contains("ali", QueryBuilder.StringOrder.CASE_INSENSITIVE)
-        .or(Contact_.email.contains("ali", QueryBuilder.StringOrder.CASE_INSENSITIVE))
-).order(Contact_.name).build()
-val results = search.find(0, 20)
-search.close()
+// Exact contact lookup via keyed blind index
+val emailBlindIndex = Sealing.index("email", "ada@example.com")
+val contact = contactBox.query(Contact_.emailIndex.equal(emailBlindIndex))
+    .build()
+    .findFirst()
+
+// Free-text and substring search across contacts (in-memory over decrypted rows)
+// Exposes a reactive StateFlow updated on address book changes:
+val searchResults: StateFlow<List<Contact>>? = client.contacts.search("ali")
 ```
 
 Always `close()` a query you built, or use `query.use { }`.
+

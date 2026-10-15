@@ -25,9 +25,9 @@ interface Key {
 ```
 
 `Software.p256()` (`ES256`) and `Software.ed25519()` (`EdDSA`) generate keys in
-process memory using the JDK. Hardware keystores generate P-256 keys, so use
-`ES256` for hardware-backed keys; a Keystore-backed `Key` is not part of the
-SDK yet.
+process memory using the JDK. Hardware keystores generate P-256 keys, so use `ES256` for hardware-backed keys.
+On Android, use `pro.aduki.android.keystore.AndroidKey` from the `android` module
+(`pro.aduki:android`), which implements `Key` using the Android Keystore.
 
 ## What the SDK sends
 

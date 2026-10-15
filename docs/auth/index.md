@@ -26,6 +26,7 @@ app (restore it with `Id.adopt` or `session.update`).
 - [DPoP](dpop.md): binding tokens to a device key.
 - [OIDC client](oidc.md): "Sign in with Aduki" for third-party apps.
 - [Account Center & unlock](center.md).
+- [Passkeys](passkeys.md): register and sign in with passkeys (JVM protocol & Android Credential Manager).
 - [API keys](keys.md).
 - [Two-factor TOTP](totp.md) (deprecated).
 
