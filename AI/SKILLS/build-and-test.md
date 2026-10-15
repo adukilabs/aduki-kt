@@ -1,6 +1,6 @@
 # Skill: build and test
 
-Needs JDK 17. The Gradle wrapper (`./gradlew`, Gradle 9.5.1 per `gradle/wrapper/gradle-wrapper.properties`) downloads Gradle itself. No Android SDK is needed for the JVM modules. The Android library `android` and the `sample` app join the build only with `-Paduki.android=true` (or `ADUKI_ANDROID=1`) and need the Android SDK (`ANDROID_HOME`: platform 34, build-tools, platform-tools; AGP downloads build-tools 35 too).
+Needs JDK 17. The Gradle wrapper (`./gradlew`, Gradle 8.13 per `gradle/wrapper/gradle-wrapper.properties`) downloads Gradle itself. No Android SDK is needed for the JVM modules. The Android library `android` and the `sample` app join the build only with `-Paduki.android=true` (or `ADUKI_ANDROID=1`) and need the Android SDK (`ANDROID_HOME`: platform 34, build-tools, platform-tools; AGP downloads build-tools 35 too).
 
 ```bash
 cd /path/to/aduki-kt
@@ -23,7 +23,7 @@ Emulator without KVM: `emulator -avd <name> -no-accel -no-window -no-audio -no-b
 
 Rules and gotchas:
 
-- AGP 8.13 does not run on Gradle 9.6.0 (removed internal API): the wrapper is 9.5.1. AGP sits on the root build classpath only with `-Paduki.android=true` (it must share a class loader with the Kotlin plugin).
+- Gradle wrapper is 8.13 (compatible with AGP 8.13.2 and Kotlin 2.0 maven-publish). AGP sits on the root build classpath only with `-Paduki.android=true` (it must share a class loader with the Kotlin plugin).
 - One build at a time, `--no-daemon`, never beside a cargo build, on an 8 GB box.
 - Repositories: Maven Central and the Gradle plugin portal; Google's Maven is consulted only for `com.android*`, `androidx*`, `com.google.android*` (`settings.gradle.kts`). A network that blocks `dl.google.com` still builds.
 - The `store` module uses the ObjectBox Gradle plugin (`io.objectbox` 4.0.3, resolved through `pluginManagement.resolutionStrategy`); the first build generates `MyObjectBox` and `store/objectbox-models/default.json`. Commit changes to `default.json` (see `add-entity-migration.md`).
