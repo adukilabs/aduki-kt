@@ -37,7 +37,7 @@ jobs:
           GITHUB_ACTOR: ${{ github.actor }}
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
           SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
-        run: ./gradlew --no-daemon publishMavenPublicationToGithubRepository || echo "GitHub packages already published"
+        run: ./gradlew --no-daemon --continue publishMavenPublicationToGithubRepository || echo "GitHub packages already published"
 
       - name: bundle
         env:
@@ -66,7 +66,7 @@ jobs:
           echo "Deployment ID: $DEPLOYMENT_ID"
           if [ -n "$DEPLOYMENT_ID" ] && [ "$DEPLOYMENT_ID" != "null" ]; then
             echo "Checking deployment status..."
-            for i in {1..20}; do
+            for i in {1..30}; do
               STATUS=$(curl -s -X POST "https://central.sonatype.com/api/v1/publisher/status?id=$DEPLOYMENT_ID" \
                 -H "Authorization: Bearer $TOKEN")
               echo "Status: $STATUS"
@@ -78,7 +78,7 @@ jobs:
                 echo "Deployment failed!"
                 exit 1
               fi
-              sleep 5
+              sleep 10
             done
           fi
 

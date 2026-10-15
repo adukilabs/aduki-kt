@@ -31,3 +31,7 @@ jobs:
 
       - name: test
         run: ./gradlew --no-daemon test
+
+      - name: bundle
+        run: ./gradlew --no-daemon bundle
+
