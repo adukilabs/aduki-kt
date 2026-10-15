@@ -2,7 +2,8 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (`AI/SKILLS/release.md`).
 
-## 0.4.0 (not released yet; `release` is set to it)
+## 0.4.0 (2026-10-15)
+
 
 ES256 device credentials (Aduki ID PR 35):
 

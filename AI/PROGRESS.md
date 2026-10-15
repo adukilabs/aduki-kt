@@ -24,12 +24,14 @@ Written 2026-10-10 from `git log` and a read of the code. Update 2026-10-10 (bra
 
 `origin/main` contains `88fbb4e` through the docs-restructure PR; nothing to do.
 
-### 3. K0: Maven Central namespace `pro.aduki` (owner action)
+### 3. (completed) K0: Maven Central namespace `pro.aduki` & v0.4.0 release
 
-- The owner adds the DNS TXT record on `aduki.pro` that Sonatype Central asks for and verifies the namespace in the Central portal. Decision D-KT-1 (group move) is made; the verification is not done as far as the repo shows.
-- Then: signing key and `SIGNING_KEY`, `SIGNING_PASSWORD`, `SONATYPE_USERNAME`, `SONATYPE_PASSWORD` as repository secrets; tag `v0.4.0` (or newer); `publish.yml` uploads the bundle. Verify: `https://central.sonatype.com/artifact/pro.aduki/sdk` shows the version and a clean Gradle project resolves `pro.aduki:sdk:<version>`.
-- The README and docs say "check releases for the published version"; before verification the badge claim "Maven Central 0.3.0" (removed from the root README in this PR) was unproven.
-- **Relocation POM** for `io.github.adukilabs:sdk` pointing to `pro.aduki:sdk` (plan K1, owner decision D-KT-1): not done; needs write access to the old group's namespace on Central. Verify: resolving the old coordinates redirects with a relocation warning.
+- The owner added the DNS TXT record on `aduki.pro` and verified namespace `pro.aduki` in Sonatype Central.
+- Repository secrets configured: `SIGNING_KEY`, `SIGNING_PASSWORD`, `SONATYPE_USERNAME`, `SONATYPE_PASSWORD`.
+- Gradle wrapper pinned to 8.13 (PR #22) restoring `ProjectDependency.getDependencyProject()` API compatibility.
+- Tag `v0.4.0` published to Maven Central (deployment `6e35eee5-b768-45dc-85f5-e9af11b5587f`, state `PUBLISHED`).
+- Verified: `https://central.sonatype.com/artifact/pro.aduki/sdk` (and all other 6 modules) are active with HTTP 200.
+
 
 ### 4. K4: Account Center authenticator (Android)
 

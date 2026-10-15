@@ -34,7 +34,8 @@ All have unit tests (none was run on this VPS: no JDK, see section 4); there is 
 
 | Phase | Item | State |
 |---|---|---|
-| P2 | package names | done in code (K1): packages `pro.aduki.*`, `Aduki`, `AdukiException`, no compatibility shims; Maven group `pro.aduki` set in the build, but the namespace is not yet verified (K0) and the relocation POM for `io.github.adukilabs:sdk` is not done |
+| P2 | package names | done in code (K1): packages `pro.aduki.*`, `Aduki`, `AdukiException`, no compatibility shims; Maven group `pro.aduki` verified and published to Maven Central (v0.4.0) |
+
 | P2 | Aduki ID sign-in (`POST /v1/sessions`, audience `mail`), 401 renewal, revoking sign-out | done |
 | P2 | K2 Aduki ID client `net.http.Id`: sign-in, one access token per audience (`mail`, `id`, `space`, ...) cached with expiry, serialized refresh rotation, 401 renews once and retries once (never loops), a spent refresh is dropped and never reused, sign-out; MockWebServer tests (`id.test.kt`) | done (slice 3), and wired into `Aduki` (slice 4): `Aduki` renews, rotates and signs out through `Id`; the duplicate renewer is gone (`Session` stays the observable copy and is adopted into `Id`); a refused refresh is now dropped from the session and never presented again. `whoami` stays Mail `/user` because Aduki ID has no whoami route |
 | P4 | `Center` client: link, switcher, unlink, device key register, unlock | done |
