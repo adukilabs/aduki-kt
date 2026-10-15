@@ -15,6 +15,9 @@ import pro.aduki.net.http.Dpop
 import pro.aduki.net.http.Events
 import pro.aduki.net.http.Id
 import pro.aduki.net.http.Login
+import pro.aduki.net.http.Signup
+import pro.aduki.net.http.Requirements
+import pro.aduki.net.http.Enrolment
 import pro.aduki.net.http.Scheme
 import pro.aduki.net.http.Whoami
 import pro.aduki.core.models.Identity
@@ -463,6 +466,68 @@ class Aduki internal constructor(
             client.session.update(tokens)
             client.me() // Eagerly resolve identity
             return client
+        }
+
+        /**
+         * Discovers personal account signup requirements from Aduki ID.
+         */
+        suspend fun requirements(
+            identity: String = Endpoints.ID,
+            pins: List<Pin> = emptyList()
+        ): Requirements {
+            val tempClient = HttpClient.create("", 15, pro.aduki.crypto.tls.Pinning.pinner(pins))
+            return Signup.requirements(tempClient, identity)
+        }
+
+        /**
+         * Stage 1: Initiates personal account registration.
+         * The account remains pending until confirmed by [verify].
+         */
+        suspend fun signUp(
+            handle: String,
+            name: String,
+            password: String,
+            phone: String? = null,
+            identity: String = Endpoints.ID,
+            pins: List<Pin> = emptyList()
+        ): Enrolment {
+            val tempClient = HttpClient.create("", 15, pro.aduki.crypto.tls.Pinning.pinner(pins))
+            return Signup.create(tempClient, identity, handle, name, password, phone)
+        }
+
+        /**
+         * Stage 2: Confirms the authenticator code and returns backup codes.
+         */
+        suspend fun verify(
+            hex: String,
+            password: String,
+            code: String,
+            identity: String = Endpoints.ID,
+            pins: List<Pin> = emptyList()
+        ): List<String> {
+            val tempClient = HttpClient.create("", 15, pro.aduki.crypto.tls.Pinning.pinner(pins))
+            return Signup.verify(tempClient, identity, hex, password, code)
+        }
+
+        /**
+         * Complete staged registration: confirms the authenticator code, activates the account,
+         * logs in, and returns the authenticated Aduki client alongside the one-time backup codes.
+         */
+        suspend fun register(
+            handle: String,
+            name: String,
+            password: String,
+            code: String,
+            hex: String,
+            endpoint: String = Endpoints.REST,
+            identity: String = Endpoints.ID,
+            backup: String? = null,
+            dpop: pro.aduki.crypto.dpop.Key? = null,
+            pins: List<Pin> = emptyList()
+        ): Pair<Aduki, List<String>> {
+            val codes = verify(hex, password, code, identity, pins)
+            val client = login(handle, password, code, endpoint, identity, backup, dpop, pins)
+            return Pair(client, codes)
         }
     }
 }

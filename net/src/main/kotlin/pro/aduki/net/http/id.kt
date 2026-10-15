@@ -153,4 +153,15 @@ class Id(
         // Renew 30 s early so a token is not refused in flight.
         cache[audience] = Cached(tokens.token, clock() + (seconds - 30).coerceAtLeast(0) * 1000, tokens.expires)
     }
+
+    /** Discovers personal signup requirements from Aduki ID. */
+    fun requirements(): Requirements = Signup.requirements(client, base)
+
+    /** Stage 1: Initiates personal account registration. */
+    fun create(handle: String, name: String, password: String, phone: String? = null): Enrolment =
+        Signup.create(client, base, handle, name, password, phone)
+
+    /** Stage 2: Confirms the authenticator code and returns backup codes. */
+    fun verify(hex: String, password: String, code: String): List<String> =
+        Signup.verify(client, base, hex, password, code)
 }
