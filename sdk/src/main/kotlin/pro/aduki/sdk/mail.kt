@@ -18,9 +18,12 @@ class Mail internal constructor(
     private val repo: MailRepo? = null,
     private val worker: Worker? = null
 ) {
+    // Writes need the local store: without one they would vanish silently.
+    private fun outbox(): Manager = manager ?: throw IllegalStateException("no local store")
 
     /**
      * Sends an email message: writes optimistically to local store, journals outbox action, and flushes.
+     * Throws [IllegalStateException] without a local store (`Aduki.Builder.store`).
      */
     suspend fun send(to: List<String>, subject: String, body: String, mailbox: String = "outbox"): Message {
         val hex = "msg_${System.currentTimeMillis()}"
@@ -39,7 +42,7 @@ class Mail internal constructor(
             .put("text", body)
             .toString()
             .toByteArray(Charsets.UTF_8)
-        manager?.send(msg, raw)
+        outbox().send(msg, raw)
         worker?.drain()
         return msg
     }
@@ -48,21 +51,21 @@ class Mail internal constructor(
      * Toggles a flag bitmask optimistically on a message.
      */
     suspend fun flag(hex: String, flag: Int) {
-        manager?.flag(hex, flag)
+        outbox().flag(hex, flag)
     }
 
     /**
      * Moves a message optimistically to a destination mailbox.
      */
     suspend fun move(hex: String, dest: String) {
-        manager?.move(hex, dest)
+        outbox().move(hex, dest)
     }
 
     /**
      * Removes or marks a message as deleted optimistically.
      */
     suspend fun remove(hex: String) {
-        manager?.remove(hex)
+        outbox().remove(hex)
     }
 
     /**

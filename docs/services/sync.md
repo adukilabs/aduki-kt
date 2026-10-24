@@ -10,34 +10,72 @@ The `Sync` service (`client.sync`) orchestrates incremental delta synchronizatio
 package pro.aduki.sdk
 
 class Sync internal constructor(...) {
-    suspend fun all(mailboxes: List<String> = listOf("inbox")): Boolean
+    val state: StateFlow<SyncState>
+    val outbox: StateFlow<Int>
+
+    suspend fun mailboxes(): List<String>
+
+    suspend fun all(mailboxes: List<String>? = null): Boolean
 
     suspend fun flush(): Int
 
     fun pending(): Int
 }
+
+data class SyncState(
+    val running: Boolean = false,
+    val synced: Long = 0,        // epoch millis of the last clean sync, 0 if none
+    val error: Throwable? = null // why the last sync failed; null after a clean one
+)
 ```
+
+Everything below needs a local store (`Aduki.Builder.store`, see [Installation](../start/install.md)). Without one, `all` and `flush` have nothing to do and `outbox` stays 0.
 
 ---
 
 ## 2. Detailed Method Specifications
 
-### `all`
-Executes an incremental delta sync across specified mailbox folders and subsequently syncs contacts for the active tenant.
+### `mailboxes`
+Loads the account's mailbox list (`GET /v1/user/mailbox`, every page) into the local store and returns the mailbox hexes.
 
 ```kotlin
-suspend fun all(mailboxes: List<String> = listOf("inbox")): Boolean
+suspend fun mailboxes(): List<String>
+```
+
+- Known mailboxes keep their sync cursor (`uidvalidity`, `modseq`); name, role and counts are updated.
+- A mailbox deleted on the server is dropped from the store with its messages.
+- `client.mail.mailboxes()` observes the result.
+
+---
+
+### `all`
+Executes an incremental delta sync across mailboxes and subsequently syncs contacts for the active tenant.
+
+```kotlin
+suspend fun all(mailboxes: List<String>? = null): Boolean
 ```
 
 #### Parameters
 
 | Parameter | Type | Required | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `mailboxes` | `List<String>` | No | `listOf("inbox")` | List of mailbox hex identifiers or names to synchronize. |
+| `mailboxes` | `List<String>?` | No | `null` | `null` loads the mailbox list first (as `mailboxes()`) and syncs every mailbox. Otherwise each entry is a mailbox hex or a role (`inbox`, `sent`, `drafts`, `trash`, `junk`, `archive`); an entry that is not known locally loads the mailbox list once. |
 
 #### Return Value
 - **Type**: `Boolean`
-- **Description**: Returns `true` if all targeted mailboxes and the address book synced cleanly; `false` if any mailbox delta failed.
+- **Description**: `true` if every targeted mailbox and the address book synced; `false` if a listed mailbox does not exist.
+
+#### State and errors
+- Calls are serialized: a second `all` waits for the first.
+- `state.running` is true while it runs. On success `state.synced` is set and `state.error` cleared.
+- A network or server failure is rethrown and kept in `state.error`; `state.synced` keeps the time of the last clean sync.
+
+```kotlin
+client.sync.state.collect { s ->
+    refreshing = s.running
+    s.error?.let { showError(it) }
+}
+```
 
 ---
 
@@ -61,6 +99,9 @@ fun pending(): Int
 ```
 
 - **Return Value**: `Int` — Count of pending outbox actions (`send`, `flag`, `move`, `remove`).
+
+### `outbox`
+The same count as a `StateFlow<Int>`, for a "waiting to send" badge. It changes whenever an action is queued, completed or dropped.
 
 ---
 

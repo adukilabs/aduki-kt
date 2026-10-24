@@ -1,6 +1,9 @@
 package pro.aduki.sync.outbox
 
 import io.objectbox.BoxStore
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 import pro.aduki.store.box.Sealing
 import pro.aduki.store.entities.Message
@@ -17,6 +20,9 @@ interface Storage {
     fun removeOutbox(id: Long)
     fun pending(): List<Outbox>
     fun <T> tx(block: () -> T): T
+
+    /** How many actions are queued. */
+    fun size(): Int = pending().size
 
     /** Gives the local message [old] the server's id [new] (after a send). */
     fun renameMessage(old: String, new: String) {
@@ -43,7 +49,21 @@ class Manager(private val storage: Storage) {
         override fun removeOutbox(id: Long) { outbox.remove(id) }
         override fun pending(): List<Outbox> = outbox.all.map(Sealing::opened).sortedBy { it.created }
         override fun <T> tx(block: () -> T): T = store.callInTx(block)
+        override fun size(): Int = outbox.count().toInt()
     })
+
+    private val counter = MutableStateFlow(storage.size())
+
+    /** The number of queued actions, updated on every change made through this manager. */
+    val count: StateFlow<Int> = counter.asStateFlow()
+
+    /** Re-reads [count] from storage (after a write that bypassed the manager). */
+    fun recount() {
+        counter.value = storage.size()
+    }
+
+    /** The local message with [hex], or null. */
+    fun message(hex: String): Message? = storage.getMessage(hex)
 
     /**
      * Optimistically toggles a flag bitmask on a message and journals an outbox action.
@@ -73,7 +93,7 @@ class Manager(private val storage: Storage) {
             )
             val id = storage.putOutbox(entry)
             entry.copy(id = id)
-        }
+        }.also { recount() }
     }
 
     /**
@@ -97,7 +117,7 @@ class Manager(private val storage: Storage) {
             )
             val id = storage.putOutbox(entry)
             entry.copy(id = id)
-        }
+        }.also { recount() }
     }
 
     /**
@@ -119,7 +139,7 @@ class Manager(private val storage: Storage) {
             )
             val id = storage.putOutbox(entry)
             entry.copy(id = id)
-        }
+        }.also { recount() }
     }
 
     /**
@@ -143,7 +163,7 @@ class Manager(private val storage: Storage) {
             )
             val id = storage.putOutbox(entry)
             entry.copy(id = id)
-        }
+        }.also { recount() }
     }
 
     /**
@@ -157,6 +177,7 @@ class Manager(private val storage: Storage) {
             created = System.currentTimeMillis()
         )
         val id = storage.putOutbox(entry)
+        recount()
         return entry.copy(id = id)
     }
 
@@ -181,6 +202,7 @@ class Manager(private val storage: Storage) {
                 }
             }
         }
+        recount()
     }
 
     /**
