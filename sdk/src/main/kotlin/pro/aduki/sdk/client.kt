@@ -257,6 +257,8 @@ class Aduki internal constructor(
         scheduleEngine ?: store?.let { ScheduleEngine(it, schedulingApi) },
         schedulingApi
     )
+    /** Filter rules, vacation reply, senders and new-mail push, kept on the server. */
+    val settings = Settings(this)
 
     init {
         lifecycle.listen { active ->

@@ -136,7 +136,10 @@ class StoreTest {
         val aduki = build()
 
         assertTrue(aduki.sync.all(listOf("inbox")))
+        assertEquals("b-inbox", aduki.mail.resolve("inbox"))
+        assertEquals(2, aduki.mail.listMailboxes().size)
         assertFalse(aduki.sync.all(listOf("nope")))
+        assertEquals(listOf("nope"), aduki.sync.state.value.missing)
 
         assertTrue(paths.any { it.startsWith("GET /v1/user/mail/changes?mailbox=b-inbox") })
         assertFalse(paths.any { "mailbox=inbox" in it || "mailbox=nope" in it })

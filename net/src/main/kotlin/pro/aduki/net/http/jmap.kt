@@ -149,7 +149,7 @@ class Jmap(
         response.use { resp ->
             val raw = resp.body?.string() ?: ""
             val why = Envelope.failure(raw) ?: problem(raw) ?: resp.message
-            if (resp.code == 401 || resp.code == 403) throw AdukiException.Auth("Unauthorized access ($why)")
+            if (resp.code == 401 || resp.code == 403) throw AdukiException.Auth(Scheme.refusal(resp.request, why))
             throw AdukiException.Network("HTTP error ${resp.code}: $why", code = resp.code)
         }
     }
