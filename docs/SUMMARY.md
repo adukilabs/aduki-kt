@@ -40,6 +40,7 @@
 # Core Services
 
 - [Mail Service](services/mail.md)
+- [Mail Settings](services/settings.md)
 - [Contacts Service](services/contacts.md)
 - [Scheduling Service](services/scheduling.md)
 - [Space client (draft)](services/space.md)

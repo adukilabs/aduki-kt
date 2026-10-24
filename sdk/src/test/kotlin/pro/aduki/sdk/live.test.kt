@@ -13,6 +13,11 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import pro.aduki.core.config.Endpoints
+import pro.aduki.core.errors.AdukiException
+import pro.aduki.net.http.Condition
+import pro.aduki.net.http.Subscription
+import pro.aduki.net.http.Vacation
+import java.time.Instant
 
 /**
  * Tier 5: Live Aduki Server Integration Tests (SERVER REQUIRED - PUT LAST).
@@ -154,5 +159,67 @@ class LiveTest {
         client.sync.flush()
         assertEquals(0, client.sync.pending())
         client.close()
+    }
+
+    /**
+     * T5-LIVE-07: Vacation reply round trip; left off afterwards.
+     */
+    @Test
+    fun vacation() = runBlocking<Unit> {
+        val settings = live().settings
+        val away = Vacation(true, Instant.parse("2030-01-01T00:00:00Z"), Instant.parse("2030-01-02T00:00:00Z"), "SDK test", "Away")
+        try {
+            settings.save(away)
+            assertEquals(away, settings.vacation())
+        } finally {
+            settings.save(Vacation())
+        }
+        assertEquals(false, settings.vacation().enabled)
+    }
+
+    /**
+     * T5-LIVE-07: Senders: the main one is listed first and is the default.
+     */
+    @Test
+    fun senders() = runBlocking<Unit> {
+        val senders = live().settings.senders()
+        assertTrue(senders.first().main && senders.first().default)
+    }
+
+    /**
+     * T5-LIVE-08: Filter rules are stored as the active `aduki` Sieve script,
+     * read back exactly, then removed.
+     */
+    @Test
+    fun rules() = runBlocking<Unit> {
+        val settings = live().settings
+        val rule = pro.aduki.net.http.Rule(conditions = listOf(Condition(Condition.Field.SUBJECT, "aduki-sdk \"live\" test")), move = "SDK Test", read = true)
+        val before = settings.rules()
+        try {
+            assertEquals(before + rule, settings.create(rule))
+            assertEquals(before + rule, settings.rules())
+        } finally {
+            settings.save(before)
+        }
+        assertEquals(before, settings.rules())
+    }
+
+    /**
+     * T5-LIVE-09: Push registration shape on a non-routable endpoint: accepted
+     * (then removed) or refused with a typed error.
+     */
+    @Test
+    fun push() = runBlocking<Unit> {
+        val settings = live().settings
+        val device = "aduki-sdk-live-test"
+        try {
+            val entry = settings.registerPush(Subscription("https://push.invalid/aduki-sdk-live-test", device))
+            assertTrue(entry.id.isNotBlank())
+        } catch (e: AdukiException.Api) {
+            assertEquals("invalidProperties", e.kind)
+        } finally {
+            settings.unregisterPush(device)
+        }
+        assertEquals(0, settings.unregisterPush(device))
     }
 }

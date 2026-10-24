@@ -28,6 +28,12 @@ Mail (#24, #25, #26, #27, #28, #29, #31):
 - Fixed: `Worker.drain` dispatched from a snapshot, so an action rewritten by an earlier one in the same drain went out stale.
 - `HttpDispatcher` maps JMAP method errors other than server failures to `Rejected`.
 
+Mail settings (#32, #33, #34, #35):
+
+- `Aduki.settings` (`Settings`), over JMAP, see `docs/services/settings.md`: filter rules (`rules`, `create`, `update`, `remove`, `reorder`, `save`), the vacation reply (`vacation`, `save`), senders and signatures (`senders`, `create`, `update`, `remove`, `prefer`) and new-mail push (`registerPush`, `unregisterPush`, `receive`).
+- `net`: `Rule`, `Condition`, `Sieve` (rules to an escaped Sieve script and back) and `Filters` (the active `aduki` `SieveScript`, validated before it is written); `Vacation` and `Responder` (`VacationResponse`); `Sender` and `Senders` (`Identity`); `Subscription`, `Subscriptions` (`PushSubscription`) and `Push` (the `PushVerification`, `StateChange` and `Rights` payloads).
+- Against proposed server extensions, refused until the mail host supports them: `Identity.isDefault` (`Senders.prefer`), `PushSubscription.fcmToken` (`Subscription.fcm`), and `StateChange.mailboxes` (read when present to sync only those mailboxes).
+
 ## 0.4.1-beta (2026-10-16)
 
 Staged personal account signup (ADK-AUTH-007):
