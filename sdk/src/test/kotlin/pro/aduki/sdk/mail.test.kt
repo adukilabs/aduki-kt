@@ -141,7 +141,10 @@ class MailTest {
             .put("created", if (args.has("create")) JSONObject().put("d", JSONObject().put("id", "srv-rich")) else JSONObject())
             .put("updated", JSONObject())
         "EmailSubmission/set" -> JSONObject().put("created", JSONObject().put("s", JSONObject().put("id", "sub1")))
-        "Identity/get" -> JSONObject().put("list", JSONArray().put(JSONObject().put("id", "id1").put("email", "me@aduki.pro").put("name", "Me")))
+        // Listed second but the default: a draft without `from` goes out as it.
+        "Identity/get" -> JSONObject().put("list", JSONArray()
+            .put(JSONObject().put("id", "id0").put("email", "team@example.com").put("name", "Team").put("isDefault", false))
+            .put(JSONObject().put("id", "id1").put("email", "me@aduki.pro").put("name", "Me").put("isDefault", true)))
         "Mailbox/get" -> JSONObject().put("list", JSONArray()
             .put(JSONObject().put("id", "b-drafts").put("role", "drafts"))
             .put(JSONObject().put("id", "b-sent").put("role", "sent")))

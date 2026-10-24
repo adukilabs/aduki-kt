@@ -12,9 +12,9 @@ import pro.aduki.core.models.Address
  * mail sent as it.
  *
  * [main] marks the account's own login address, which cannot be removed.
- * [default] marks the sender new mail starts from: the `isDefault`
- * extension property when the server sends it, else the [main] one (the
- * Aduki mail host does not keep a default yet; see [Senders.prefer]).
+ * [default] marks the sender new mail starts from (the `isDefault`
+ * property; exactly one sender has it, the [main] one until another is
+ * chosen with [Senders.prefer]). Mail sent without a `from` goes out as it.
  */
 data class Sender(
     val id: String = "",
@@ -109,8 +109,6 @@ class Senders(private val jmap: Jmap) {
     /**
      * Makes the sender [id] the default one (`Identity/set` with the
      * `isDefault` extension: setting it on one clears it on the others).
-     * Proposed server contract: the Aduki mail host does not support it yet
-     * and refuses it with `invalidProperties`.
      */
     fun prefer(id: String) {
         val args = JSONObject().put("update", JSONObject().put(id, JSONObject().put("isDefault", true)))

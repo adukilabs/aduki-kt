@@ -186,7 +186,8 @@ class Composer(private val jmap: Jmap) {
 
     private fun identity(setup: Setup, from: String?): JSONObject {
         if (setup.identities.isEmpty()) throw Rejected("The account has no sending identity")
-        if (from == null) return setup.identities.first()
+        // No from: the default sender (`isDefault`), as the server's own send does.
+        if (from == null) return setup.identities.firstOrNull { it.optBoolean("isDefault") } ?: setup.identities.first()
         return setup.identities.firstOrNull { it.optString("email").equals(from, ignoreCase = true) }
             ?: throw Rejected("Not allowed to send as $from")
     }

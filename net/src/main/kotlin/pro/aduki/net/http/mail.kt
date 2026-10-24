@@ -126,7 +126,7 @@ class Mail(
 
     /**
      * Sends a plain-text message and returns the server's id for the copy
-     * filed in Sent. [from] defaults to the account's own address. Pass a
+     * filed in Sent. [from] defaults to the default sender (`Sender.default`). Pass a
      * stable [idempotencyKey] when retrying, so a retry replays the first
      * result instead of sending twice.
      */
