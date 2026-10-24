@@ -28,10 +28,13 @@ import java.time.Instant
  *
  * - events: `GET /user/events`, `GET /user/events/range/{start}/{end}`
  *   (pages of `{items, total, page, pages}`), `POST /user/events`
- *   `{ical, calendar?}`, `PATCH /user/events/{hex}` `{ical}`,
- *   `DELETE /user/events/{hex}`. An event is an iCalendar object; the
- *   server derives every other field from it.
- * - services: `GET|POST /user/pages`, `GET|PATCH|DELETE /user/pages/{hex}`.
+ *   `{ical, calendar?, notify?}`, `PATCH /user/events/{hex}` `{ical, notify?}`,
+ *   `DELETE /user/events/{hex}?notify=`, `POST /user/events/{hex}/reply`
+ *   `{partstat, comment?}`. An event is an iCalendar object; the server
+ *   derives every other field from it. With `notify`, an event the account
+ *   organizes goes to its attendees as an iTIP REQUEST (CANCEL on delete).
+ * - services: `GET|POST /user/pages`, `GET|PATCH|DELETE /user/pages/{hex}`,
+ *   `GET /user/pages/{hex}/stats?from&to`.
  * - availability: `GET|POST /user/schedules`, `PUT /user/schedules/{hex}/rules`.
  * - offers a page sells: `GET /user/schedule/services?page=`.
  * - slots and bookings: `GET /user/book/pages/{hex}/slots?from&to&length`,
@@ -55,7 +58,7 @@ class Scheduling(
     /** Every event of the account (`GET /user/events`, all pages). */
     fun events(): List<AppointmentRecord> = paged(url("user/events"), ::parseEvent)
 
-    /** Events overlapping `[start, end)` (`GET /user/events/range/{start}/{end}`). Repeating events are matched by their first occurrence only. */
+    /** Events overlapping `[start, end)` (`GET /user/events/range/{start}/{end}`), repeating events with a later occurrence in it included. */
     fun range(start: Instant, end: Instant): List<AppointmentRecord> {
         val path = url("user/events/range").newBuilder()
             .addPathSegment(start.toString())
@@ -64,46 +67,58 @@ class Scheduling(
         return paged(path, ::parseEvent)
     }
 
-    /** Creates an event from an iCalendar object, in [calendar] (a hex) or the default calendar. */
-    fun createEvent(ical: String, calendar: String = ""): AppointmentRecord {
+    /**
+     * Creates an event from an iCalendar object, in [calendar] (a hex) or the
+     * default calendar. With [notify], an event the account organizes is
+     * sent to its attendees (iTIP REQUEST).
+     */
+    fun createEvent(ical: String, calendar: String = "", notify: Boolean = false): AppointmentRecord {
         val payload = JSONObject().put("ical", ical)
         if (calendar.isNotBlank()) payload.put("calendar", calendar)
+        if (notify) payload.put("notify", true)
         val request = Request.Builder().url(url("user/events")).post(json(payload)).build()
         return execute(request) { parseEvent(JSONObject(it)) }
     }
 
     /**
-     * Replaces an event's iCalendar object. The whole object is sent: the
-     * server's field edit (`summary`, `location`, ...) re-renders the object
-     * and drops attendees and alarms.
+     * Replaces an event's iCalendar object (the server bumps the sequence).
+     * With [notify], an event the account organizes is sent to its
+     * attendees again (iTIP REQUEST).
      */
-    fun replaceEvent(hex: String, ical: String): AppointmentRecord {
+    fun replaceEvent(hex: String, ical: String, notify: Boolean = false): AppointmentRecord {
+        val payload = JSONObject().put("ical", ical)
+        if (notify) payload.put("notify", true)
         val request = Request.Builder()
             .url(url("user/events").newBuilder().addPathSegment(hex).build())
-            .patch(json(JSONObject().put("ical", ical)))
+            .patch(json(payload))
             .build()
         return execute(request) { parseEvent(JSONObject(it)) }
     }
 
     /**
-     * Answers an invitation: `POST /user/events/{hex}/reply` `{partstat}`
-     * (`ACCEPTED`, `DECLINED`, `TENTATIVE`) answers with the event.
-     * Proposed route: the server sets the account's `PARTSTAT` and sends the
-     * organizer an iTIP REPLY. Null where the server does not have it
-     * (`404`, `405`).
+     * Answers an invitation: `POST /user/events/{hex}/reply`
+     * `{partstat, comment?}` (`ACCEPTED`, `DECLINED`, `TENTATIVE`). The
+     * server sets the `PARTSTAT` of the account's attendee, sends the
+     * organizer an iTIP REPLY carrying [comment], and answers with the event.
+     * An event without an organizer, or without the account among its
+     * attendees, is refused (422).
      */
-    fun reply(hex: String, partstat: String): AppointmentRecord? {
+    fun reply(hex: String, partstat: String, comment: String? = null): AppointmentRecord {
+        val payload = JSONObject().put("partstat", partstat)
+        if (!comment.isNullOrBlank()) payload.put("comment", comment)
         val request = Request.Builder()
             .url(url("user/events").newBuilder().addPathSegment(hex).addPathSegment("reply").build())
-            .post(json(JSONObject().put("partstat", partstat)))
+            .post(json(payload))
             .build()
-        return missing { execute(request) { parseEvent(JSONObject(it)) } }
+        return execute(request) { parseEvent(JSONObject(it)) }
     }
 
-    /** Deletes an event. */
-    fun removeEvent(hex: String) {
+    /** Deletes an event; with [notify], the attendees of an event the account organizes get an iTIP CANCEL. */
+    fun removeEvent(hex: String, notify: Boolean = false) {
+        val path = url("user/events").newBuilder().addPathSegment(hex)
+        if (notify) path.addQueryParameter("notify", "true")
         val request = Request.Builder()
-            .url(url("user/events").newBuilder().addPathSegment(hex).build())
+            .url(path.build())
             .delete()
             .build()
         execute(request) { }
@@ -220,10 +235,11 @@ class Scheduling(
     /**
      * Booking counts of one page for bookings starting in `[from, to)`:
      * `GET /user/pages/{hex}/stats?from&to` answers
-     * `{views, bookings, confirmed, pending, cancelled, done, noshow}`.
-     * Proposed route; null where the server does not have it (`404`, `405`).
+     * `{views, bookings, confirmed, pending, cancelled, done, noshow}`;
+     * `views` counts the page's public views on the days the range
+     * touches. The range is at most a year.
      */
-    fun stats(service: String, from: Instant, to: Instant): Stats? {
+    fun stats(service: String, from: Instant, to: Instant): Stats {
         val path = url("user/pages").newBuilder()
             .addPathSegment(service)
             .addPathSegment("stats")
@@ -231,20 +247,18 @@ class Scheduling(
             .addQueryParameter("to", to.toString())
             .build()
         val request = Request.Builder().url(path).get().build()
-        return missing {
-            execute(request) { body ->
-                val obj = JSONObject(body)
-                Stats(
-                    service = service,
-                    views = if (obj.isNull("views") || !obj.has("views")) null else obj.optInt("views"),
-                    bookings = obj.optInt("bookings"),
-                    confirmed = obj.optInt("confirmed"),
-                    pending = obj.optInt("pending"),
-                    cancelled = obj.optInt("cancelled"),
-                    done = obj.optInt("done"),
-                    noshow = obj.optInt("noshow")
-                )
-            }
+        return execute(request) { body ->
+            val obj = JSONObject(body)
+            Stats(
+                service = service,
+                views = if (obj.isNull("views") || !obj.has("views")) null else obj.optInt("views"),
+                bookings = obj.getInt("bookings"),
+                confirmed = obj.optInt("confirmed"),
+                pending = obj.optInt("pending"),
+                cancelled = obj.optInt("cancelled"),
+                done = obj.optInt("done"),
+                noshow = obj.optInt("noshow")
+            )
         }
     }
 
@@ -355,13 +369,6 @@ class Scheduling(
             if (items.isEmpty() || out.size >= total) return out
             page++
         }
-    }
-
-    // Null for a route the server does not have yet.
-    private fun <T> missing(call: () -> T): T? = try {
-        call()
-    } catch (e: AdukiException.Network) {
-        if (e.code == 404 || e.code == 405) null else throw e
     }
 
     private fun objects(array: JSONArray): List<JSONObject> =

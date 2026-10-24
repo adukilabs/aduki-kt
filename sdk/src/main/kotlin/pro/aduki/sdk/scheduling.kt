@@ -80,39 +80,49 @@ class Scheduling internal constructor(
     /**
      * Creates an event: personal, all-day, repeating, with attendees and
      * reminders, in no service. It is stored at once with a `local-...` hex
-     * that becomes the server's once sent.
+     * that becomes the server's once sent. With [notify], the server
+     * invites the attendees (iTIP REQUEST) when the account organizes it.
      */
-    suspend fun create(request: EventRequest): Appointment =
-        withContext(Dispatchers.IO) { local().create(request) }.also { flush() }
+    suspend fun create(request: EventRequest, notify: Boolean = false): Appointment =
+        withContext(Dispatchers.IO) { local().create(request, notify) }.also { flush() }
 
-    /** Edits an event; null fields of [changes] keep their value. */
-    suspend fun update(hex: String, changes: EventChanges): Appointment =
-        withContext(Dispatchers.IO) { local().update(hex, changes) }.also { flush() }
+    /**
+     * Edits an event; null fields of [changes] keep their value. With
+     * [notify], the server sends the changed event to the attendees.
+     */
+    suspend fun update(hex: String, changes: EventChanges, notify: Boolean = false): Appointment =
+        withContext(Dispatchers.IO) { local().update(hex, changes, notify) }.also { flush() }
 
-    /** Moves an event to [start] .. [end]. */
-    suspend fun reschedule(hex: String, start: Instant, end: Instant): Appointment =
-        withContext(Dispatchers.IO) { local().reschedule(hex, start, end) }.also { flush() }
+    /** Moves an event to [start] .. [end]; [notify] as for [update]. */
+    suspend fun reschedule(hex: String, start: Instant, end: Instant, notify: Boolean = false): Appointment =
+        withContext(Dispatchers.IO) { local().reschedule(hex, start, end, notify) }.also { flush() }
 
     /**
      * Answers an invitation (`PARTSTAT` of [address], by default the
-     * account's own address), sent with `POST /user/events/{hex}/reply`, a
-     * proposed route that also tells the organizer (iTIP REPLY). Until the
-     * server has it, the answer is only stored in the account's copy.
+     * account's own address) with `POST /user/events/{hex}/reply`: the
+     * server stores the answer and sends the organizer an iTIP REPLY with
+     * [comment]. For an event without an organizer the answer is only
+     * stored.
      */
-    suspend fun respond(hex: String, response: Response, address: String? = null): Appointment {
+    suspend fun respond(hex: String, response: Response, address: String? = null, comment: String = ""): Appointment {
         val engine = local()
         val me = address ?: client.me()?.email?.ifBlank { null }
             ?: throw IllegalStateException("the account's address is unknown: pass address")
-        return withContext(Dispatchers.IO) { engine.respond(hex, response, me) }.also { flush() }
+        return withContext(Dispatchers.IO) { engine.respond(hex, response, me, comment) }.also { flush() }
     }
 
-    /** Cancels an event (`STATUS:CANCELLED`, [reason] as a comment); it stays in the calendar. */
-    suspend fun cancel(hex: String, reason: String = ""): Appointment =
-        withContext(Dispatchers.IO) { local().cancel(hex, reason) }.also { flush() }
+    /**
+     * Cancels an event (`STATUS:CANCELLED`, [reason] as a comment); it stays
+     * in the calendar. With [notify], the server sends the cancelled event
+     * to the attendees (an iTIP REQUEST with the cancelled status; [remove]
+     * with `notify` sends a CANCEL).
+     */
+    suspend fun cancel(hex: String, reason: String = "", notify: Boolean = false): Appointment =
+        withContext(Dispatchers.IO) { local().cancel(hex, reason, notify) }.also { flush() }
 
-    /** Deletes an event. */
-    suspend fun remove(hex: String) {
-        withContext(Dispatchers.IO) { local().remove(hex) }
+    /** Deletes an event; with [notify], the attendees get an iTIP CANCEL when the account organizes it. */
+    suspend fun remove(hex: String, notify: Boolean = false) {
+        withContext(Dispatchers.IO) { local().remove(hex, notify) }
         flush()
     }
 
@@ -151,9 +161,8 @@ class Scheduling internal constructor(
     /**
      * Edits a service; null fields keep their value, `paused = true` pauses
      * it. New [ServiceRequest.windows] replace the rules of the service's
-     * schedule (`ServiceRecord.schedule`, a proposed server field), else of
-     * the schedule named after the slug, else move the service to a new
-     * such schedule.
+     * schedule (`ServiceRecord.schedule`), else of the schedule named after
+     * the slug, else move the service to a new such schedule.
      */
     suspend fun updateService(hex: String, request: ServiceRequest): ServiceRecord = withContext(Dispatchers.IO) {
         request.validate()
@@ -213,31 +222,10 @@ class Scheduling internal constructor(
         withContext(Dispatchers.IO) { api().bookings(upcoming) }
 
     /**
-     * Booking counts of [service] for bookings starting in `[start, end)`,
-     * from `GET /user/pages/{hex}/stats` (a proposed route, with page
-     * views). Until the server has it, bookings are counted on the device:
-     * those of [service] when bookings carry their `page` (a proposed
-     * field), else every booking of the account, and the result then has an
-     * empty `service`. `views` is null either way.
+     * Booking counts of [service] by state for bookings starting in
+     * `[start, end)` (at most a year), and its page views on the days the
+     * range touches (`GET /user/pages/{hex}/stats`).
      */
-    suspend fun stats(service: String, start: Instant, end: Instant): Stats {
-        api().let { api -> withContext(Dispatchers.IO) { api.stats(service, start, end) } }?.let { return it }
-        val all = bookings()
-        val paged = all.any { it.page.isNotBlank() }
-        val list = all.filter { b ->
-            if (paged && b.page != service) return@filter false
-            val at = runCatching { Instant.parse(b.start) }.getOrNull() ?: return@filter false
-            !at.isBefore(start) && at.isBefore(end)
-        }
-        fun count(state: String) = list.count { it.state == state }
-        return Stats(
-            service = if (paged) service else "",
-            bookings = list.size,
-            confirmed = count("confirmed"),
-            pending = count("pending"),
-            cancelled = count("cancelled"),
-            done = count("done"),
-            noshow = count("noshow")
-        )
-    }
+    suspend fun stats(service: String, start: Instant, end: Instant): Stats =
+        withContext(Dispatchers.IO) { api().stats(service, start, end) }
 }

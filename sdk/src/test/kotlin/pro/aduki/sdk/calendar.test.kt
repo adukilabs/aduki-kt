@@ -51,7 +51,7 @@ class CalendarTest {
                 calls += "${request.method} $path"
                 if (body.isNotBlank()) bodies += body
                 if (down) return MockResponse().setResponseCode(503)
-                val hex = path.removePrefix("/v1/user/events/").substringBefore('/')
+                val hex = path.removePrefix("/v1/user/events/").substringBefore('/').substringBefore('?')
                 return when {
                     path == "/v1/user" -> ok("""{"hex":"u1","tenant":"t1","email":"me@example.com"}""")
                     recorded && path.startsWith("/v1/user/events?") ->
@@ -64,12 +64,16 @@ class CalendarTest {
                         held[made] = JSONObject(body).getString("ical")
                         ok(event(made, held[made]!!), 201)
                     }
-                    path.endsWith("/reply") -> MockResponse().setResponseCode(404)
+                    // Like the server: only an event with an organizer is answered.
+                    path.endsWith("/reply") && held[hex]?.contains("ORGANIZER") == true -> ok(event(hex, held[hex]!!))
+                    path.endsWith("/reply") -> MockResponse().setResponseCode(422)
+                        .setBody("""{"success":false,"error":{"status":422,"kind":"input.invalid","message":"the event has no organizer"}}""")
                     path == "/v1/user/schedules" && request.method == "POST" ->
                         ok(javaClass.getResource("/scheduling/schedule.json")!!.readText().let { JSONObject(it).getJSONObject("data").toString() }, 201)
                     path == "/v1/user/schedules" -> ok("""[{"hex":"39ff21cbd4760d8e","name":"consult","zone":"UTC","main":false}]""")
                     path.startsWith("/v1/user/schedules/") -> ok("[]")
-                    path.startsWith("/v1/user/pages/p1/stats") -> MockResponse().setResponseCode(404)
+                    path.startsWith("/v1/user/pages/p1/stats") ->
+                        ok("""{"views":7,"bookings":2,"confirmed":1,"pending":0,"cancelled":1,"done":0,"noshow":0}""")
                     path.startsWith("/v1/user/pages") -> ok(PAGE, if (request.method == "POST") 201 else 200)
                     path.startsWith("/v1/user/bookings") -> ok(
                         """{"items":[{"hex":"b1","span":{"start":"2026-11-02T09:00:00Z","end":"2026-11-02T09:30:00Z"},"state":"cancelled"},
@@ -174,7 +178,7 @@ class CalendarTest {
 
         aduki.scheduling.respond(hex, Response.Declined)
         assertEquals("DECLINED", aduki.scheduling.get(hex)!!.guests().first { it.first == "me@example.com" }.second)
-        // The proposed reply route is missing (404): the object goes out with PATCH.
+        // No organizer, so the server will not answer (422): the object goes out with PATCH.
         assertEquals(listOf("GET /v1/user", "POST /v1/user/events/srv1/reply", "PATCH /v1/user/events/srv1"), calls)
         assertTrue(held["srv1"]!!.contains("PARTSTAT=DECLINED"))
 
@@ -188,6 +192,39 @@ class CalendarTest {
         aduki.scheduling.remove(hex)
         assertNull(aduki.scheduling.get(hex))
         assertEquals(listOf("DELETE /v1/user/events/srv1"), calls)
+        assertEquals(0, aduki.sync.outbox.value)
+    }
+
+    @Test
+    fun anAnswerToAnOrganizedEventGoesToTheReplyRouteWithItsComment() = runBlocking<Unit> {
+        val aduki = build()
+        val organized = Events.build(standup()).replace("BEGIN:VEVENT\r\n", "BEGIN:VEVENT\r\nORGANIZER:mailto:boss@example.com\r\n")
+        val hex = aduki.scheduling.importIcs(organized).single().let { aduki.scheduling.get("srv1")!!.hex }
+        calls.clear()
+        bodies.clear()
+
+        aduki.scheduling.respond(hex, Response.Tentative, comment = "maybe")
+
+        assertEquals(listOf("GET /v1/user", "POST /v1/user/events/srv1/reply"), calls)
+        val body = JSONObject(bodies.single())
+        assertEquals("TENTATIVE", body.getString("partstat"))
+        assertEquals("maybe", body.getString("comment"))
+        assertEquals(0, aduki.sync.outbox.value)
+    }
+
+    @Test
+    fun notifyGoesWithCreateUpdateCancelAndRemove() = runBlocking<Unit> {
+        val aduki = build()
+        aduki.scheduling.create(standup(), notify = true)
+        assertTrue(JSONObject(bodies.last()).getBoolean("notify"))
+        aduki.scheduling.update("srv1", EventChanges(title = "Sync"), notify = true)
+        assertTrue(JSONObject(bodies.last()).getBoolean("notify"))
+        aduki.scheduling.cancel("srv1", notify = true)
+        assertTrue(JSONObject(bodies.last()).getBoolean("notify"))
+        aduki.scheduling.update("srv1", EventChanges(title = "Quiet"))
+        assertFalse(JSONObject(bodies.last()).has("notify"))
+        aduki.scheduling.remove("srv1", notify = true)
+        assertEquals("DELETE /v1/user/events/srv1?notify=true", calls.last())
         assertEquals(0, aduki.sync.outbox.value)
     }
 
@@ -276,8 +313,9 @@ class CalendarTest {
         val stats = aduki.scheduling.stats("p1", Instant.parse("2026-11-01T00:00:00Z"), Instant.parse("2026-12-01T00:00:00Z"))
         assertEquals(2, stats.bookings)
         assertEquals(1, stats.cancelled)
-        assertEquals("", stats.service) // counted for the account: bookings carry no page yet
-        assertNull(stats.views)
+        assertEquals("p1", stats.service)
+        assertEquals(7, stats.views)
+        assertEquals("GET /v1/user/pages/p1/stats?from=2026-11-01T00%3A00%3A00Z&to=2026-12-01T00%3A00%3A00Z", calls.last())
     }
 
     private companion object {

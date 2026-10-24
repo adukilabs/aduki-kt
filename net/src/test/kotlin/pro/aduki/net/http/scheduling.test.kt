@@ -179,23 +179,56 @@ class SchedulingTest {
     }
 
     @Test
-    fun proposedRoutesAreNullWhereTheServerLacksThem() {
-        failure(404, "not.found")
-        assertNull(api.reply("n", "ACCEPTED"))
+    fun notifyIsSentOnlyWhenAsked() {
+        reply(event("n"), 201)
+        reply(event("n"))
+        server.enqueue(MockResponse().setResponseCode(204))
+
+        api.createEvent(ical, notify = true)
+        api.replaceEvent("n", ical, notify = true)
+        api.removeEvent("n", notify = true)
+
+        val create = server.takeRequest()
+        assertTrue(JSONObject(create.body.readUtf8()).getBoolean("notify"))
+        val edit = JSONObject(server.takeRequest().body.readUtf8())
+        assertEquals(setOf("ical", "notify"), edit.keySet())
+        assertEquals("DELETE /v1/user/events/n?notify=true", server.takeRequest().let { "${it.method} ${it.path}" })
+    }
+
+    @Test
+    fun replyPostsTheAnswerAndTheComment() {
+        reply(event("n"))
+        reply(event("n"))
+
+        assertEquals("n", api.reply("n", "ACCEPTED", "see you").hex)
+        api.reply("n", "DECLINED")
+
         val asked = server.takeRequest()
         assertEquals("POST /v1/user/events/n/reply", "${asked.method} ${asked.path}")
-        assertEquals("ACCEPTED", JSONObject(asked.body.readUtf8()).getString("partstat"))
+        val body = JSONObject(asked.body.readUtf8())
+        assertEquals("ACCEPTED", body.getString("partstat"))
+        assertEquals("see you", body.getString("comment"))
+        assertEquals(setOf("partstat"), JSONObject(server.takeRequest().body.readUtf8()).keySet())
 
-        failure(405, "method")
-        assertNull(api.stats("p1", Instant.parse("2026-11-01T00:00:00Z"), Instant.parse("2026-12-01T00:00:00Z")))
+        failure(422, "input.invalid")
+        try {
+            api.reply("n", "ACCEPTED")
+            fail("expected a refusal")
+        } catch (e: AdukiException.Network) {
+            assertEquals(422, e.code)
+        }
+    }
+
+    @Test
+    fun statsReadThePageRoute() {
+        reply("""{"views":12,"bookings":3,"confirmed":2,"pending":0,"cancelled":1,"done":0,"noshow":0}""")
+        val stats = api.stats("p1", Instant.parse("2026-11-01T00:00:00Z"), Instant.parse("2026-12-01T00:00:00Z"))
         assertEquals(
             "/v1/user/pages/p1/stats?from=2026-11-01T00%3A00%3A00Z&to=2026-12-01T00%3A00%3A00Z",
             server.takeRequest().path
         )
-
-        reply("""{"views":12,"bookings":3,"confirmed":2,"pending":0,"cancelled":1,"done":0,"noshow":0}""")
-        val stats = api.stats("p1", Instant.EPOCH, Instant.parse("2026-12-01T00:00:00Z"))!!
         assertEquals(12, stats.views)
+        assertEquals(3, stats.bookings)
         assertEquals(1, stats.cancelled)
         assertEquals("p1", stats.service)
     }
