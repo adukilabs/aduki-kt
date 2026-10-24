@@ -158,7 +158,7 @@ class Accounts(
     }
 
     /**
-     * UNVERIFIED (not compiled or run: the Android SDK was not available when this was written).
+     * Not yet tested on a device or against a live Aduki ID.
      *
      * Registers this device's Keystore key as a device credential at Aduki ID (`ES256`, 65-byte
      * uncompressed point, see `Center.register`) and keeps the credential id. [bearer] is an access token
@@ -181,7 +181,7 @@ class Accounts(
     }
 
     /**
-     * UNVERIFIED (not compiled or run, see [registerDevice]).
+     * Not yet tested on a device (see [registerDevice]).
      *
      * Reopens the sessions of every account the registered credential opens, with the device key and no
      * password: challenge, sign the raw nonce, unlock (`Center.unlock`), then [save] each session. Returns

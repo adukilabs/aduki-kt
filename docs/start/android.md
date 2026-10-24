@@ -16,10 +16,10 @@ android { defaultConfig { manifestPlaceholders["adukiRedirectScheme"] = "com.exa
 
 | Part | Class | What it does |
 | :--- | :--- | :--- |
-| Device key (K5) | `keystore.AndroidKey` | non-extractable P-256 key in the Android Keystore; implements the `Key` of [DPoP](../auth/dpop.md) (`ES256`) |
-| Accounts (K4) | `account.Accounts`, `AdukiAuthenticator`, `SwitcherState` | the linked accounts of an [Account Center](../auth/center.md) as `pro.aduki.account` entries in `AccountManager`; reconcile with the center; sealed tokens |
-| Sign-in (K7) | `signin.SignIn`, `PendingStore`, `RedirectActivity` | [Sign in with Aduki](../auth/oidc.md) through a Custom Tab, redirect handling |
-| Passkeys (K6) | `passkey.PasskeyFlow`, `CredentialManagerAuthenticator` | the [passkey](../auth/passkeys.md) ceremonies through Credential Manager |
+| Device key | `keystore.AndroidKey` | non-extractable P-256 key in the Android Keystore; implements the `Key` of [DPoP](../auth/dpop.md) (`ES256`) |
+| Accounts | `account.Accounts`, `AdukiAuthenticator`, `SwitcherState` | the linked accounts of an [Account Center](../auth/center.md) as `pro.aduki.account` entries in `AccountManager`; reconcile with the center; sealed tokens |
+| Sign-in | `signin.SignIn`, `PendingStore`, `RedirectActivity` | [Sign in with Aduki](../auth/oidc.md) through a Custom Tab, redirect handling |
+| Passkeys | `passkey.PasskeyFlow`, `CredentialManagerAuthenticator` | the [passkey](../auth/passkeys.md) ceremonies through Credential Manager |
 
 ## Device key
 
@@ -68,8 +68,8 @@ export JAVA_HOME=/path/to/jdk17 ANDROID_HOME=/path/to/android-sdk
 
 Without `-Paduki.android=true` (or `ADUKI_ANDROID=1`) only the JVM modules build, on JDK 17 to 22, and Google's Maven repository is never contacted. The Android modules need JDK 17 to 22 as well, AGP 8.13.2 and Gradle 9.5.1.
 
-## Verification state
+## Testing
 
-Robolectric tests run in `./gradlew test`; the Keystore tests run on an Android 14 emulator without secure hardware (software-backed keys). Hardware-backed keys, StrongBox, Credential Manager with a real provider and the real Aduki ID are not verified: see `guide/ANDROID-TESTS.md` in the repository.
+Robolectric tests run in `./gradlew test -Paduki.android=true`, and the Keystore tests run on a device or emulator (`connectedDebugAndroidTest`). Emulators have software-backed keys: check hardware-backed keys and StrongBox on your target devices.
 
-Device credentials (center unlock): Aduki ID accepts `ES256` (PR 35), and `Accounts.registerDevice` / `Accounts.unlockWithDevice` use a separate Keystore key (`AndroidKey.DEVICE`) for it, see [Account Center](../auth/center.md). That glue is UNVERIFIED: it was written without the Android SDK, so it has not been compiled, and nothing ran on a device or against a real Aduki ID.
+Device credentials (center unlock) use `ES256`: `Accounts.registerDevice` and `Accounts.unlockWithDevice` use a separate Keystore key (`AndroidKey.DEVICE`), see [Account Center](../auth/center.md).

@@ -32,5 +32,5 @@ connect, read and write.
 `Events` reads `GET {mail host}/jmap/eventsource` (Server-Sent Events) for the
 `rights` event. See [Token lifecycle](../auth/tokens.md).
 
-The SDK has no gRPC transport: the `grpc.` host was dropped from the platform
-(D-HOST-5) and the `Channel` and `Credentials` classes were removed (a breaking change in this 0.x SDK; see the CHANGELOG).
+The SDK has no gRPC transport: the platform serves REST and JMAP only. The
+`Channel` and `Credentials` classes were removed in 0.3 (see the CHANGELOG).

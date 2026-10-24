@@ -28,7 +28,7 @@ import pro.aduki.net.http.Space
 import pro.aduki.core.config.Endpoints
 
 /**
- * The manual-test screen of guide/ANDROID-TESTS.md: every button runs one check against the real Aduki ID and
+ * The manual-test screen (see CONTRIBUTING.md): every button runs one check against the real Aduki ID and
  * prints what happened (no tokens, no keys: only ids, handles, statuses and durations).
  */
 class MainActivity : Activity() {
@@ -61,7 +61,7 @@ class MainActivity : Activity() {
             add("6 Passkey: step-up") { passkey("stepup") }
             add("7 Passkey: sign in") { passkey("signin") }
             add("8 DPoP call to Space (GET settings)") { space() }
-            // UNVERIFIED (not compiled: no Android SDK when written): ES256 center unlock, steps 11 and 12 of ANDROID-TESTS.md
+            // ES256 center unlock: register a device credential, then unlock with it
             addView(totp)
             add("9 Device key: register ES256 credential (type a fresh authenticator code above)") { deviceRegister() }
             add("10 Device key: unlock with it (challenge, sign, unlock)") { deviceUnlock() }

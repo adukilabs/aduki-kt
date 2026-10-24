@@ -28,7 +28,7 @@ import pro.aduki.sync.outbox.Worker
 
 /**
  * The sync transport and outbox dispatcher against the server's response
- * shapes (fixtures copied from the Aduki repo's `guide/fixtures/sdk`).
+ * shapes (fixtures copied from the Aduki mail server's SDK fixtures).
  */
 class HttpTest {
 
