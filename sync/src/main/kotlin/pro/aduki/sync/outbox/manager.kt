@@ -55,7 +55,7 @@ class Manager(private val storage: Storage) {
         private val outbox = store.boxFor(Outbox::class.java)
 
         override fun getMessage(hex: String): Message? =
-            messages.query(pro.aduki.store.entities.Message_.hex.equal(hex)).build().findFirst()
+            messages.query(pro.aduki.store.entities.Message_.hex.equal(hex)).build().use { it.findFirst() }
         override fun putMessage(msg: Message) { messages.put(msg) }
         override fun getOutbox(id: Long): Outbox? = outbox.get(id)?.let(Sealing::opened)
         override fun putOutbox(entry: Outbox): Long = Sealing.put(outbox, entry)
