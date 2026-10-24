@@ -69,7 +69,8 @@ class Whoami(
             tenant = tenant,
             owner = owner,
             scopes = scopes,
-            tier = tier
+            tier = tier,
+            email = obj.optString("email", "")
         )
     }
 

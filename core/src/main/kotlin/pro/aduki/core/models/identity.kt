@@ -8,6 +8,8 @@ data class Identity(
     val tenant: String = "",
     val owner: Boolean = false,
     val scopes: List<String> = emptyList(),
-    val tier: String = ""
+    val tier: String = "",
+    /** The account's address (`email` of `GET /user`). */
+    val email: String = ""
 )
 

@@ -47,5 +47,25 @@ class AppointmentTest {
         assertNotNull(single)
         assertEquals("a2", single!!.hex)
     }
-}
 
+    @Test
+    fun observeExpandsRepeatsInTheRangeAndFollowsChanges() = runBlocking {
+        val source = TestAppointmentSource()
+        val repo = Appointment(source = source, scope = CoroutineScope(Dispatchers.Unconfined))
+        val day = 86_400_000L
+        val monday = 1_793_005_200_000L // 2026-10-26T09:00:00Z, a Monday
+        source.flow.value = listOf(
+            AppointmentEntity(hex = "w", start = monday, end = monday + 3_600_000, rrule = "FREQ=WEEKLY;BYDAY=MO,WE",
+                exdate = (monday + 2 * day).toString()),
+            AppointmentEntity(hex = "x", start = monday + day, end = monday + day + 60_000, status = "cancelled")
+        )
+
+        val week = repo.observe(monday, monday + 14 * day)
+        // Mon 26, (Wed 28 excluded), Mon 2, Wed 4; the cancelled one is left out.
+        assertEquals(listOf(monday, monday + 7 * day, monday + 9 * day), week.value.map { it.start })
+        assertEquals(monday + 7 * day + 3_600_000, week.value[1].end)
+
+        source.flow.value = source.flow.value.drop(1)
+        assertEquals(emptyList<Occurrence>(), week.value)
+    }
+}

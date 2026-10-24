@@ -1,6 +1,6 @@
 # Entities
 
-The SDK's local data models are ObjectBox entities (`pro.aduki.store.entities`). Besides the four below the module holds `Appointment`, `Service` and `Slot` for [scheduling](../services/scheduling.md).
+The SDK's local data models are ObjectBox entities (`pro.aduki.store.entities`). Besides the four below the module holds `Appointment` (one calendar event with its iCalendar object), `Service` and `Slot` for [scheduling](../services/scheduling.md).
 
 ---
 

@@ -4,6 +4,19 @@ The SDK is 0.x: breaking changes can land in a minor release. The version is set
 
 ## Unreleased
 
+Scheduling (#40, #41, #42, #48):
+
+The 0.4 scheduling client called `/user/appointments`, `/user/services`, `/user/availability` and `/book/{slug}`, which do not exist on the server (404). It now uses events, booking pages, schedules and bookings.
+
+- Events (`/user/events`) are iCalendar objects. `Scheduling.create(EventRequest)` makes personal, all-day and repeating events with attendees and reminders; `update(hex, EventChanges)`, `reschedule(hex, start, end)`, `respond(hex, Response.Accepted | Declined | Tentative, address?)`, `cancel(hex, reason)` (`STATUS:CANCELLED`) and `remove(hex)`. All are optimistic in the store and queued in the outbox (`event_create`, `event_update`, `event_reply`, `event_delete`), sent by the new `sync.http.ScheduleDispatcher`, which the store wiring chains after `HttpDispatcher` (a list of fallbacks in `client.kt`). Writes without a store throw `IllegalStateException("no local store")`. An event made offline has a `local-...` hex until it is sent.
+- `observe(start, end): StateFlow<List<Occurrence>>` and `expand(start, end)`: occurrences in a range, repeats expanded on the device (`core.calendar.Recurrence`: RRULE with FREQ, INTERVAL, COUNT, UNTIL, BYDAY, BYMONTHDAY, BYMONTH, BYSETPOS, less EXDATE, in the event's zone).
+- `importIcs(text)` and `exportIcs(hexes?)`: iCalendar files read and written on the device (`core.calendar.Ics`, `core.calendar.Events`), one event per UID; a known UID is replaced.
+- Services are booking pages: `services()`, `service(hex)`, `createService(ServiceRequest)`, `updateService(hex, ServiceRequest)` (`paused = true` pauses), `removeService(hex)`, with weekly availability `Window`s kept in a schedule of the service's own; `bookingUrl(service)`; `offers(service)` (`/user/schedule/services`); `slots(service, start, end, length?)`; `book(service, BookRequest)` as a guest and `reserve(service, BookRequest)` as the account; `bookings()`, `booking(hex)`, `updateBooking(hex, state)`; `stats(service, start, end)`.
+- `respond` and `stats` try the proposed `POST /user/events/{hex}/reply` and `GET /user/pages/{hex}/stats` first, and fall back (the answer stored in the account's copy only; bookings counted on the device for the whole account) while the server lacks them.
+- `Identity.email` (from `GET /user`).
+- Breaking: `net.http.Scheduling` lost `appointments`, `appointment`, `create(service, ...)`, `cancel`, `availability` and `book(slug, ...)`; `sdk.Scheduling.create`, `cancel`, `slots` and `book` take the new types; `AppointmentRecord` and `ServiceRecord` follow the server's event and page; `sync.engine.Schedule` takes the outbox `Manager`. `Scheduling.cancel` no longer also calls the network itself (it cancelled twice), and the cancel is journaled through the manager, sealed, so `Sync.outbox` counts it. A 0.4 `appointment_cancel` still in an outbox is sent as an update.
+- Schema: `Appointment` gained `calendar`, `allday`, `title`, `organizer`, `attendees`, `rrule`, `exdate`, `reminders`, `ical`, `etag` and `moved` and lost `host` and `rescheduled`; title, organizer, attendees and the iCalendar object are sealed.
+
 Local store wiring and mailbox sync (#43, #44, #30):
 
 - `Aduki.Builder.store(BoxStore)` and `store(File)`: one call builds the outbox `Manager` and `Worker` (with `HttpDispatcher`), the mail, contact and appointment repositories, and the mailbox, contact and schedule engines on the client's own HTTP clients. Parts passed to the builder still win. `store(File)` opens the database in `build()`; `Aduki.close()` closes it.

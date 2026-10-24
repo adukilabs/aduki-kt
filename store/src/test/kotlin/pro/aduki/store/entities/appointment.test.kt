@@ -11,7 +11,10 @@ class AppointmentTest {
         val appt = Appointment(
             hex = "apt_test",
             service = "srv_demo",
-            host = "usr_alice",
+            title = "Intro",
+            attendees = "bob@example.com=ACCEPTED\ncy@example.com",
+            reminders = "15, 60",
+            exdate = "1760086400000",
             start = 1760000000000L,
             end = 1760001800000L,
             timezone = "America/New_York",
@@ -26,6 +29,11 @@ class AppointmentTest {
         assertEquals("srv_demo", appt.service)
         assertEquals("confirmed", appt.status)
         assertEquals(1760000000000L, appt.start)
+        assertEquals(listOf("bob@example.com" to "ACCEPTED", "cy@example.com" to "NEEDS-ACTION"), appt.guests())
+        assertEquals(listOf(15, 60), appt.alarms())
+        assertEquals(listOf(1760086400000L), appt.excluded())
+        assertEquals(false, appt.local())
+        assertEquals(true, appt.copy(hex = Appointment.LOCAL + "x").local())
     }
 
     @Test

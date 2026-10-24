@@ -43,6 +43,8 @@ import pro.aduki.sync.http.HttpDispatcher
 import pro.aduki.sync.http.HttpMailboxTransport
 import pro.aduki.sync.http.JmapContentTransport
 import pro.aduki.sync.engine.Content as ContentEngine
+import pro.aduki.sync.http.ScheduleDispatcher
+import pro.aduki.sync.outbox.Dispatcher
 import pro.aduki.sync.outbox.Rejected
 import pro.aduki.store.box.Factory
 import pro.aduki.store.entities.Outbox
@@ -221,9 +223,23 @@ class Aduki internal constructor(
     // initializers run in order).
     private val outbox: Manager? = manager ?: store?.let(::Manager)
 
+    private val scheduleSync: ScheduleEngine? = scheduleEngine
+        ?: store?.let { s -> outbox?.let { ScheduleEngine(s, schedulingApi, it) } }
+
+    // Outbox dispatchers after mail's, in order: each sends its own actions
+    // and hands anything else to the next.
+    private val dispatchers: List<(Dispatcher?) -> Dispatcher?> = listOf(
+        { next -> scheduleSync?.let { ScheduleDispatcher(schedulingApi, it, next) } ?: next }
+    )
+
     private val outboxWorker: Worker? = worker ?: store?.let {
         outbox?.let { queue ->
-            Worker(queue, HttpDispatcher(mailApi, queue::message, queue::rename, jmap = jmap, adopt = queue::adopt), onRejected = rejected)
+            val fallback = dispatchers.foldRight(null as Dispatcher?) { make, next -> make(next) }
+            Worker(
+                queue,
+                HttpDispatcher(mailApi, queue::message, queue::rename, fallback, jmap = jmap, adopt = queue::adopt),
+                onRejected = rejected
+            )
         }
     }
 
@@ -243,8 +259,9 @@ class Aduki internal constructor(
     val scheduling = Scheduling(
         this,
         appointmentRepo ?: store?.let { AppointmentRepo(it, scope) },
-        scheduleEngine ?: store?.let { ScheduleEngine(it, schedulingApi) },
-        schedulingApi
+        scheduleSync,
+        schedulingApi,
+        outboxWorker
     )
 
     init {
