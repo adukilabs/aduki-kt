@@ -26,6 +26,9 @@ interface ContactSource {
 
     /** Exact lookup by phone number (digits and `+` compared); null when none. */
     fun byPhone(phone: String): ContactEntity? = null
+
+    /** Every stored contact, read now; empty when the source cannot list. */
+    fun all(): List<ContactEntity> = emptyList()
 }
 
 /**
@@ -50,6 +53,8 @@ class Contact(
 
             override fun get(hex: String): ContactEntity? =
                 box.query(Contact_.hex.equal(hex)).build().findFirst()
+
+            override fun all(): List<ContactEntity> = box.all
 
             // Through the keyed blind index when the vault is attached; otherwise
             // a scan over the decrypted rows (every contact is read and opened).
@@ -81,6 +86,14 @@ class Contact(
     }
 
     private val searchCache = ConcurrentHashMap<String, StateFlow<List<ContactEntity>>>()
+    private val groupCache = ConcurrentHashMap<String, StateFlow<List<ContactEntity>>>()
+
+    // Group names are tags on contacts: the list is derived from them.
+    private val groupsFlow: StateFlow<List<String>> by lazy {
+        source.contacts()
+            .map { list -> list.flatMap { it.groups }.distinct().sortedBy { it.lowercase() } }
+            .stateIn(scope = scope, started = SharingStarted.Eagerly, initialValue = emptyList())
+    }
 
     /**
      * Hot StateFlow of all contacts sorted by name.
@@ -112,6 +125,19 @@ class Contact(
                 )
         }
     }
+
+    /** Hot StateFlow of the members of [group], sorted by name. */
+    fun group(group: String): StateFlow<List<ContactEntity>> = groupCache.getOrPut(group) {
+        source.contacts()
+            .map { list -> list.filter { group in it.groups }.sortedBy { it.name } }
+            .stateIn(scope = scope, started = SharingStarted.Eagerly, initialValue = emptyList())
+    }
+
+    /** Hot StateFlow of the group names in use, sorted. */
+    fun groups(): StateFlow<List<String>> = groupsFlow
+
+    /** Every stored contact, read now. */
+    fun all(): List<ContactEntity> = source.all()
 
     /**
      * Looks up a contact synchronously by hex.

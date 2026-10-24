@@ -16,11 +16,12 @@ import pro.aduki.store.entities.Outbox
  *
  * With no vault installed, values are written in the clear and sealed values
  * cannot be read (they fail closed). Sealed: every personal text column
- * (message subject, sender, recipients, preview, blob; contact name, e-mail,
- * phone, company, vCard; appointment location and notes; mailbox and service
- * names and descriptions; cached message bodies and attachment lists) and the
- * outbox payload (through the outbox storage, not a converter: the ObjectBox
- * generator cannot convert a byte-array column). Clear: ids, hexes, uids, flags, keywords, timestamps, counters,
+ * (message subject, sender, recipients, preview, blob; contact name, e-mails,
+ * phones, groups, company, notes, photo, vCard; appointment location and notes;
+ * mailbox and service names and descriptions; cached message bodies and
+ * attachment lists) and the outbox payload (through the outbox storage, not a
+ * converter: the ObjectBox generator cannot convert a byte-array column).
+ * Clear: ids, hexes, uids, flags, keywords, timestamps, counters,
  * sequence numbers, roles, statuses and tenant/host/service ids. Contacts also
  * carry keyed blind indexes of e-mail and phone for exact lookups.
  */
@@ -136,4 +137,20 @@ class SealedText : PropertyConverter<String, String> {
         val text = entityProperty ?: ""
         return Sealing.vault()?.sealText(text) ?: text
     }
+}
+
+/**
+ * Seals a list of short values (e-mails, phones, group names) as one text
+ * column, one value per line; values never hold a line break.
+ */
+class SealedList : PropertyConverter<List<String>, String> {
+    private val text = SealedText()
+
+    override fun convertToEntityProperty(databaseValue: String?): List<String> {
+        val plain = text.convertToEntityProperty(databaseValue)
+        return if (plain.isEmpty()) emptyList() else plain.split('\n')
+    }
+
+    override fun convertToDatabaseValue(entityProperty: List<String>?): String =
+        text.convertToDatabaseValue(entityProperty.orEmpty().joinToString("\n"))
 }

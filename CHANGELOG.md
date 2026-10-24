@@ -28,6 +28,17 @@ Mail (#24, #25, #26, #27, #28, #29, #31):
 - Fixed: `Worker.drain` dispatched from a snapshot, so an action rewritten by an earlier one in the same drain went out stale.
 - `HttpDispatcher` maps JMAP method errors other than server failures to `Rejected`.
 
+### Contacts (#36, #37, #38, #39)
+
+- `Contacts.create(card)`, `update(hex, card)` and `delete(hex)`: applied to the local store at once and queued in the outbox (`contact.create`, `contact.update`, `contact.delete`) with a stable `Idempotency-Key`; a created contact's placeholder hex is replaced by the server's and later queued writes follow it. `Contacts.card(hex)` gives the editable fields. `Card` (`pro.aduki.core.models`) holds name, e-mails, phones, company, notes, photo, groups, UID and the source vCard, with `validate()`.
+- Groups (`Contacts.groups`): `observe`, `list`, `create`, `rename`, `delete`, `add`, `remove`, and `Contacts.observe(group)`. Groups are the server's per-contact tags; `rename` and `delete` use the proposed `PATCH`/`DELETE /user/contacts/group/{group}` and fall back to per-member writes while the server lacks them.
+- vCard: `Contacts.import(InputStream): Imported` (created, updated, skipped, errors) and `export(hexes, version)` to a `String` or an `OutputStream`, vCard 3.0 and 4.0, keeping multi-value fields, their parameters, the photo and unmodelled properties. Codec: `pro.aduki.core.vcard.Vcard`.
+- `Contacts.duplicates(): List<Duplicate>` (match on e-mail, phone or name) and `merge(keep, others)`, which combines fields and groups and deletes the others in one local transaction.
+- `net.Contacts`: `create`, `replace`, `groups`, `delete`, `members`, `rename`, `dissolve`; `list` takes a `page` and rows carry `uid`, `vcard` and `updated`. Uploads leave out the vCard's `VERSION` line, which the server would otherwise refuse.
+- `ContactDispatcher` (chained as `HttpDispatcher`'s fallback by `Builder.store`, with its own `fallback`) and `outbox.Book`; `Manager.repoint`, `drop` and `entry`; the worker re-reads each queued action before sending it.
+- Contact sync keeps every e-mail address and phone, reads company, notes and photo from the vCard, follows the server's page mode (it ignored the cursor, so books over 200 contacts were cut short), sees group changes, and leaves contacts with queued writes alone.
+- `Contact` entity: `uid`, `emails`, `phones`, `groups`, `notes`, `photo` (sealed except `uid`); the ObjectBox model changed.
+
 ## 0.4.1-beta (2026-10-16)
 
 Staged personal account signup (ADK-AUTH-007):
