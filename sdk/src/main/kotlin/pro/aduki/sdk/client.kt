@@ -15,6 +15,7 @@ import pro.aduki.net.http.Client as HttpClient
 import pro.aduki.net.http.Dpop
 import pro.aduki.net.http.Events
 import pro.aduki.net.http.Id
+import pro.aduki.net.http.Jmap
 import pro.aduki.net.http.Login
 import pro.aduki.net.http.Signup
 import pro.aduki.net.http.Requirements
@@ -40,6 +41,8 @@ import pro.aduki.sync.engine.ContactStorage
 import pro.aduki.sync.http.HttpContactTransport
 import pro.aduki.sync.http.HttpDispatcher
 import pro.aduki.sync.http.HttpMailboxTransport
+import pro.aduki.sync.http.JmapContentTransport
+import pro.aduki.sync.engine.Content as ContentEngine
 import pro.aduki.sync.outbox.Rejected
 import pro.aduki.store.box.Factory
 import pro.aduki.store.entities.Outbox
@@ -200,6 +203,16 @@ class Aduki internal constructor(
      */
     val mailApi: NetMail by lazy { NetMail(activeHttpClient(), options.endpoint) }
 
+    /**
+     * JMAP client of the mail host (`{endpoint without /v1}/jmap`) on this
+     * client's authenticated connection: message bodies, attachments, rich
+     * send and the account settings that have no REST route.
+     */
+    val jmap: Jmap by lazy { Jmap(activeHttpClient(), host()) }
+
+    // The mail host root: the REST endpoint without its `/v1`.
+    private fun host(): String = options.endpoint.removeSuffix("/").removeSuffix("/v1")
+
     /** Typed REST scheduling client on this client's authenticated connection. */
     val schedulingApi: NetScheduling by lazy { NetScheduling(activeHttpClient(), options.endpoint) }
 
@@ -210,7 +223,7 @@ class Aduki internal constructor(
 
     private val outboxWorker: Worker? = worker ?: store?.let {
         outbox?.let { queue ->
-            Worker(queue, HttpDispatcher(mailApi, queue::message, queue::rename), onRejected = rejected)
+            Worker(queue, HttpDispatcher(mailApi, queue::message, queue::rename, jmap = jmap, adopt = queue::adopt), onRejected = rejected)
         }
     }
 
@@ -222,7 +235,9 @@ class Aduki internal constructor(
     private val mailboxSync: MailboxEngine? = mailboxEngine
         ?: store?.let { MailboxEngine(it, HttpMailboxTransport(mailApi)) }
 
-    val mail = Mail(this, outbox, mailRepo ?: store?.let { MailRepo(it, outbox, scope) }, outboxWorker)
+    private val bodies: ContentEngine? = store?.let { ContentEngine(it, JmapContentTransport(jmap)) }
+
+    val mail = Mail(this, outbox, mailRepo ?: store?.let { MailRepo(it, outbox, scope) }, outboxWorker, bodies)
     val contacts = Contacts(this, contactRepo ?: store?.let { ContactRepo(it, scope) }, contactSync)
     val sync = Sync(this, mailboxSync, contactSync, outboxWorker, outbox)
     val scheduling = Scheduling(
@@ -304,7 +319,7 @@ class Aduki internal constructor(
      * its `/v1`. Calling it again replaces the previous subscription; stop it
      * with [unwatchRights] (also done by [logout]).
      */
-    fun watchRights(host: String = options.endpoint.removeSuffix("/").removeSuffix("/v1")) {
+    fun watchRights(host: String = host()) {
         val http = activeHttpClient().newBuilder().readTimeout(90, java.util.concurrent.TimeUnit.SECONDS).build()
         val events = Events(http, host, { payload -> applyRights(payload) })
         synchronized(renewal) {

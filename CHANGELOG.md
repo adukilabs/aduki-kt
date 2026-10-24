@@ -15,6 +15,19 @@ Local store wiring and mailbox sync (#43, #44, #30):
 - `Sync.state: StateFlow<SyncState>` (`running`, `synced`, `error`) and `Sync.outbox: StateFlow<Int>`; `Manager.count`, `Manager.recount()`, `Manager.message(hex)`.
 - Live tests take `ADUKI_TOKEN` (an Aduki ID access token) as well as `ADUKI_KEY`, use a local store, and send to `ADUKI_ADDRESS` instead of a fixed external address.
 
+Mail (#24, #25, #26, #27, #28, #29, #31):
+
+- `Aduki.jmap`: a JMAP client for the mail host (`net.http.Jmap`: session, batched calls, blob upload and download). JMAP ids are the REST hexes.
+- Bodies and attachments: `Mail.body`, `attachments`, `open`, `save`. Bodies are cached in the new sealed entity `Content` (schema change: a new entity, no migration needed).
+- Search: `Mail.search` (offline, in memory over sealed columns) and `Mail.find` (`GET /user/mail/search/{q}`); `net.Mail.search`.
+- Threads: `Mail.thread` and `Mail.conversations` (`state.repository.Conversation`).
+- Flags: `Mail.setFlag` (idempotent), `setFlags`, `markAllRead`, `move(list)`, `remove(list)`. The bulk forms are one outbox action each (`flags`, `moves`, `deletes`), sent as one JMAP `Email/set` per 500 messages.
+- Mailboxes: `Mail.createMailbox`, `renameMailbox`, `deleteMailbox` (optimistic; offline creates adopt the server hex via `Manager.adopt`); `net.Mail.createMailbox`, `renameMailbox`, `deleteMailbox`.
+- Compose: `Draft` and `Upload` (core models). `Mail.send(draft)` sends bcc, HTML, attachments, display names, replies and forwards over JMAP (`sync.http.Composer`), retry-safe by Message-ID.
+- Snooze: `Mail.snooze`, `unsnooze`, `wake`, and `Message.snoozed()`; `Sync.all` wakes due messages.
+- Fixed: `Worker.drain` dispatched from a snapshot, so an action rewritten by an earlier one in the same drain went out stale.
+- `HttpDispatcher` maps JMAP method errors other than server failures to `Rejected`.
+
 ## 0.4.1-beta (2026-10-16)
 
 Staged personal account signup (ADK-AUTH-007):

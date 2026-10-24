@@ -111,4 +111,48 @@ class LiveTest {
         assertEquals(0, client.sync.pending())
         client.close()
     }
+
+    /**
+     * T5-LIVE-06: Rich send over JMAP (HTML, attachment, bcc) to self, then
+     * the body, the attachment, a reply, flags and both searches
+     */
+    @Test
+    fun richSend() = runBlocking {
+        val me = System.getProperty("aduki.address") ?: System.getenv("ADUKI_ADDRESS")
+        assumeTrue("Skipping live send: set ADUKI_ADDRESS to the account's own address", !me.isNullOrBlank())
+        val client = live(store = true)
+        val tag = "live-${System.currentTimeMillis()}"
+        client.mail.send(
+            pro.aduki.core.models.Draft(
+                to = listOf(me!!),
+                bcc = listOf(me),
+                subject = "Rich $tag",
+                text = "plain $tag",
+                html = "<p>html $tag</p>",
+                attachments = listOf(pro.aduki.core.models.Upload("note.txt", "text/plain", bytes = "attached $tag".toByteArray()))
+            )
+        )
+        assertEquals(0, client.sync.pending())
+
+        var found: pro.aduki.store.entities.Message? = null
+        repeat(20) {
+            if (found != null) return@repeat
+            client.sync.all(listOf("inbox"))
+            found = client.mail.search(tag)!!.let { flow -> kotlinx.coroutines.withTimeoutOrNull(2_000) { flow.first { it.isNotEmpty() } } }?.firstOrNull()
+            if (found == null) Thread.sleep(1_500)
+        }
+        val msg = found ?: error("the message did not arrive")
+        val body = client.mail.body(msg.hex)
+        assertTrue(body.html.contains("html $tag"))
+        assertTrue(body.text.contains("plain $tag"))
+        val file = client.mail.save(body.attachments.single(), dir.newFile("note.txt"))
+        assertEquals("attached $tag", file.readText())
+        assertTrue(client.mail.find(tag).isNotEmpty())
+
+        client.mail.send(pro.aduki.core.models.Draft(to = listOf(me), subject = "Re: Rich $tag", text = "reply $tag", reply = msg.hex))
+        client.mail.setFlag(msg.hex, pro.aduki.store.entities.Message.FLAGGED, true)
+        client.sync.flush()
+        assertEquals(0, client.sync.pending())
+        client.close()
+    }
 }

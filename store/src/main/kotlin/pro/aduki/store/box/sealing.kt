@@ -18,9 +18,9 @@ import pro.aduki.store.entities.Outbox
  * cannot be read (they fail closed). Sealed: every personal text column
  * (message subject, sender, recipients, preview, blob; contact name, e-mail,
  * phone, company, vCard; appointment location and notes; mailbox and service
- * names and descriptions) and the outbox payload (through the outbox storage,
- * not a converter: the ObjectBox generator cannot convert a byte-array
- * column). Clear: ids, hexes, uids, flags, keywords, timestamps, counters,
+ * names and descriptions; cached message bodies and attachment lists) and the
+ * outbox payload (through the outbox storage, not a converter: the ObjectBox
+ * generator cannot convert a byte-array column). Clear: ids, hexes, uids, flags, keywords, timestamps, counters,
  * sequence numbers, roles, statuses and tenant/host/service ids. Contacts also
  * carry keyed blind indexes of e-mail and phone for exact lookups.
  */

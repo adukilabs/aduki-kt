@@ -56,7 +56,8 @@ class Sync internal constructor(
      * With no [mailboxes], the mailbox list is loaded first and every mailbox
      * syncs. A listed mailbox is a hex or a role (`inbox`, `sent`, ...); an
      * unknown one loads the mailbox list once. Returns false when a listed
-     * mailbox does not exist. Failures are rethrown and kept in [state].
+     * mailbox does not exist. Snoozed messages that are due come back to the
+     * inbox ([Mail.wake]). Failures are rethrown and kept in [state].
      */
     suspend fun all(mailboxes: List<String>? = null): Boolean = lock.withLock {
         current.update { it.copy(running = true) }
@@ -69,6 +70,7 @@ class Sync internal constructor(
                     if (box == null || !engine.sync(box)) success = false
                 }
             }
+            client.mail.wake()
             if (contactEngine != null) {
                 val tenant = client.me()?.tenant ?: ""
                 if (tenant.isNotBlank()) {

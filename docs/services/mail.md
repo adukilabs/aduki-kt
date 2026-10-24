@@ -10,26 +10,49 @@ The `Mail` service (`client.mail`) provides high-level APIs for composing, query
 package pro.aduki.sdk
 
 class Mail internal constructor(...) {
-    suspend fun send(
-        to: List<String>,
-        subject: String,
-        body: String,
-        mailbox: String = "outbox"
-    ): Message
+    // Compose (#31)
+    suspend fun send(to: List<String>, subject: String, body: String, mailbox: String = "outbox"): Message
+    suspend fun send(draft: Draft, mailbox: String = "outbox"): Message
 
-    suspend fun flag(hex: String, flag: Int)
-
+    // Flags, moves, deletes (#26)
+    suspend fun flag(hex: String, flag: Int)                       // toggles
+    suspend fun setFlag(hex: String, flag: Int, on: Boolean)       // idempotent
+    suspend fun setFlags(hexes: List<String>, flag: Int, on: Boolean)
+    suspend fun markAllRead(mailbox: String)
     suspend fun move(hex: String, dest: String)
-
+    suspend fun move(hexes: List<String>, dest: String)
     suspend fun remove(hex: String)
+    suspend fun remove(hexes: List<String>)
+
+    // Mailboxes (#28)
+    suspend fun createMailbox(name: String, parent: String? = null): Mailbox
+    suspend fun renameMailbox(hex: String, name: String)
+    suspend fun deleteMailbox(hex: String)
+
+    // Bodies and attachments (#24)
+    suspend fun body(hex: String, refresh: Boolean = false): Body
+    suspend fun attachments(hex: String): List<Attachment>
+    fun open(attachment: Attachment): InputStream
+    suspend fun save(attachment: Attachment, file: File): File
+
+    // Search and conversations (#25, #29)
+    fun search(query: String, mailbox: String? = null): StateFlow<List<Message>>?
+    suspend fun find(query: String, mailbox: String? = null, page: Int = 1, limit: Int = 50): List<Message>
+    fun thread(threadId: String): StateFlow<List<Message>>?
+    fun conversations(mailboxHex: String): StateFlow<List<Conversation>>?
+
+    // Snooze (#27)
+    suspend fun snooze(hex: String, until: Instant)
+    suspend fun unsnooze(hex: String)
+    suspend fun wake(now: Instant = Instant.now()): Int
 
     fun observe(mailboxHex: String): StateFlow<List<Message>>?
-
     fun mailboxes(): StateFlow<List<Mailbox>>?
-
     fun unread(mailboxHex: String): StateFlow<Int>?
 }
 ```
+
+Every write is applied to the local store at once and queued in the outbox (see [Outbox](outbox.md)); `client.sync.flush()` sends the queue, and `send` and `createMailbox` flush by themselves. Without a local store (`Aduki.Builder.store`) writes throw `IllegalStateException("no local store")` and reads return `null`.
 
 ---
 
@@ -242,3 +265,48 @@ data class Mailbox(
 
 Errors are `AdukiException.Auth` (401/403), `AdukiException.Network` (transport failures, and other HTTP errors with `code`), and `AdukiException.Protocol` (an unparseable response). The DTOs (`MessageRow`, `MailChanges`, `FlagUpdate`, `MailboxRow`, `Listing`, `Moved`, `Address`) live in `pro.aduki.core.models`.
 
+## 5. Composing: `Draft`
+
+```kotlin
+val draft = Draft(
+    to = listOf("ada@example.com"),
+    cc = listOf("bob@example.com"),
+    bcc = listOf("audit@example.com"),
+    subject = "Re: Lunch",
+    text = "Noon works.",
+    html = "<p>Noon works.</p>",
+    attachments = listOf(Upload("menu.pdf", "application/pdf", path = file.path)),
+    reply = original.hex            // or forward = original.hex
+)
+client.mail.send(draft)
+```
+
+- A plain draft (text only, no bcc, attachments, HTML, display name, reply or forward) is sent with `POST /v1/user/mail/send` and an `Idempotency-Key`.
+- Any other draft is sent with JMAP. The attachments are uploaded, the message is created in Drafts (`Email/set`) and submitted (`EmailSubmission/set`). On success it is filed in Sent and `$draft` is cleared.
+- A reply carries `In-Reply-To` and `References` built from the original's Message-ID, so it threads on the server. The original gets `$answered` (a forward gets `$forwarded`).
+- `from` must be one of the account's sending identities; the server refuses any other address.
+- Retries are safe. The Message-ID is derived from the outbox entry, so a retry whose first attempt got through finds that message and does not send again.
+- An `Upload` holds `bytes` or a `path`. Bytes are kept in the (sealed) outbox until sent. A path must stay readable until then: use one for large files.
+
+## 6. Bodies and attachments
+
+`body(hex)` reads the text and HTML parts and the attachment list with JMAP `Email/get`. With a local store, the result is cached in the sealed `Content` entity and read offline afterwards; `refresh = true` fetches it again. Lists never load bodies. `open(attachment)` streams the blob (`/jmap/download`), and `save(attachment, file)` writes it to a file.
+
+## 7. Search and conversations
+
+- `search(query, mailbox?)` matches synced messages offline. Every word must appear in the subject, sender, recipients or preview. The columns are sealed, so matching runs in memory.
+- `find(query, mailbox?)` asks the server (`GET /v1/user/mail/search/{q}`), which also covers messages not synced. Its results are not stored.
+- `thread(threadId)` gives one conversation across mailboxes, oldest first.
+- `conversations(mailbox)` gives one `Conversation(latest, count, unread)` per thread, newest first.
+
+## 8. Mailboxes
+
+`createMailbox` shows the mailbox at once under a placeholder hex (`Mailbox.pending()`, prefix `local-`). When the queued create is sent, the row, its messages and every queued action that names it switch to the server's hex. `renameMailbox` and `deleteMailbox` are queued like moves. Deleting a mailbox also drops its messages.
+
+## 9. Snooze
+
+The server has no snooze, so the SDK keeps it in data that syncs:
+- Snoozing moves the message to a mailbox named "Snoozed" (created when missing) and adds the keyword `$snoozed-<epoch seconds>`.
+- `Message.snoozed()` reads the time back.
+- After each sync, `client.sync.all()` calls `wake()`, which brings due messages back to the inbox, unread. Any device that syncs does it.
+- A message comes back on the first sync after its time, so schedule periodic syncs (e.g. WorkManager) for it to reappear on time.
