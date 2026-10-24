@@ -13,8 +13,8 @@ import java.io.IOException
 import java.util.UUID
 
 /**
- * Space is the client for the Aduki Space REST API (ADK-SPACE-007, `space`
- * repo `guide/api/api.md`): the transport rules that are final (envelope,
+ * Space is the client for the Aduki Space REST API: the transport rules that
+ * are final (envelope,
  * keyset lists, `Idempotency-Key`, `ETag` / `If-Match`, error kinds) and thin
  * helpers for the work, support, search and settings routes whose request and
  * response shapes are read from the Space handlers.

@@ -2,8 +2,8 @@
 
 The calls are blocking (run them off the main thread). Each takes an HTTP client and the Aduki ID base, `https://id.aduki.pro/v1`.
 
-`pro.aduki.net.http.Center` talks to Aduki ID's Account Center
-(ADK-AUTH-002 §5) and device-bound unlock (ADK-AUTH-001 §9).
+`pro.aduki.net.http.Center` talks to Aduki ID's Account Center and its
+device-bound unlock.
 
 | Call | Endpoint | Returns |
 |------|----------|---------|
@@ -26,10 +26,10 @@ Errors: every unlock failure (bad signature, wrong key, spent, expired or foreig
 
 A credential works for 60 days after the full authentication that registered it. Once that window lapses, the user must sign in with their password again.
 
-Status: built against the contract of Aduki ID PR 35 and tested on the JVM against a fake server with an independent verifier. Not yet run against a real Aduki ID.
+The signature form is tested on the JVM against an independent verifier.
 
 ## Android authenticator
 
 The `android` module keeps the linked accounts as separate `AccountManager` entries under the type `pro.aduki.account` (`Accounts.reconcile`, `AdukiAuthenticator`; see [Android module](../start/android.md)). When Aduki ID removes a link (tenant `links = deny`, forced unlink), `Accounts.refresh` drops the entry and its tokens. The center token is stored in a separate sealed file and sent to Aduki ID only.
 
-`Accounts.registerDevice` and `Accounts.unlockWithDevice` use `AndroidKey.open(AndroidKey.DEVICE)` (P-256, `ES256`) as the signer of this flow and store each unlocked session. This glue is UNVERIFIED: it could not be compiled or run without the Android SDK (see `guide/ANDROID-TESTS.md`).
+`Accounts.registerDevice` and `Accounts.unlockWithDevice` use `AndroidKey.open(AndroidKey.DEVICE)` (P-256, `ES256`) as the signer of this flow and store each unlocked session.

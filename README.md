@@ -4,9 +4,8 @@ Kotlin client library for the [Aduki](https://aduki.pro) platform: sign-in at
 Aduki ID (DPoP, OIDC client), offline-first mail, contacts and scheduling
 sync, and a reactive state layer. Maven group `pro.aduki`; Apache 2.0.
 
-- **Use it:** the public manual is in [`docs/`](docs/) (mdBook, published at `docs.aduki.pro/kt`). Build it with `mdbook build docs`.
-- **Work on it:** internal plans, design notes and progress are in [`guide/`](guide/README.md).
-- **AI on the hosting server:** start at [`AI/README.md`](AI/README.md); what remains to verify is in [`AI/PROGRESS.md`](AI/PROGRESS.md).
+- **Use it:** the manual is in [`docs/`](docs/) (mdBook, published at `docs.aduki.pro/kt`).
+- **Work on it:** see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Quick start
 
@@ -19,6 +18,14 @@ implementation("io.objectbox:objectbox-android:4.0.3")
 val client = Aduki.login(handle = "ada@aduki.me", password = password, code = code)
 client.watchRights()   // renew when the account's rights change
 
+// Offline-first mail, contacts and scheduling on a local store
+val app = Aduki.builder()
+    .token(accessToken)
+    .store(File(context.filesDir, "aduki"))
+    .build()
+app.sync.all()
+app.mail.mailboxes()?.collect { boxes -> /* ... */ }
+
 // Headless
 val worker = Aduki.builder().key(apiKey).build()
 ```
@@ -29,19 +36,17 @@ artifacts.
 ## Build and test
 
 ```bash
-./gradlew test          # every module; contract tests replay the server's fixtures
-./gradlew :net:liveTest # the live tier, against a running Aduki server
+./gradlew test          # every module (JDK 17+)
 ```
 
-The build is plain JVM and needs Maven Central and the Gradle plugin portal
-only (Google's Maven is used for Android and Google groups alone). The live
-tier runs only when `ADUKI_LIVE_URL`, `ADUKI_LIVE_EMAIL`, `ADUKI_LIVE_PASSWORD`
-and a second factor (`ADUKI_LIVE_CODE` or `ADUKI_LIVE_BACKUP`) are set; it sends and deletes real mail on that account.
-Details in [`AI/SKILLS/build-and-test.md`](AI/SKILLS/build-and-test.md).
+Android modules, live tests against a real server, conventions and releases:
+see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Modules
 
-`core`, `crypto`, `store`, `net`, `sync`, `state`, `sdk` (the `Aduki` facade).
+`core`, `crypto`, `store`, `net`, `sync`, `state`, `sdk` (the `Aduki` facade),
+and `android` (Keystore keys, account authenticator, Custom Tabs sign-in,
+passkeys).
 
 ## License
 

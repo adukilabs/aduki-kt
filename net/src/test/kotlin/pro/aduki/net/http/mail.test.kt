@@ -16,7 +16,7 @@ import pro.aduki.core.errors.AdukiException
 
 /**
  * Contract tests: the client against the server's own response shapes
- * (`fixtures/`, copied from the Aduki repo's `guide/fixtures/sdk`).
+ * (`fixtures/`, copied from the Aduki mail server's SDK fixtures).
  */
 class MailTest {
 

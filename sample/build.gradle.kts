@@ -3,7 +3,7 @@ plugins {
     kotlin("android")
 }
 
-// The sample is the manual-test app of guide/ANDROID-TESTS.md. Configure it with Gradle properties:
+// The sample is the manual-test app (see CONTRIBUTING.md). Configure it with Gradle properties:
 //   -PadukiIssuer=https://id.aduki.pro  -PadukiClient=<OIDC client id>  -PadukiScheme=pro.aduki.sample
 // The OIDC client must be registered at Aduki ID with the redirect "<scheme>:/callback" (public client, PKCE).
 val issuer = providers.gradleProperty("adukiIssuer").orElse("https://id.aduki.pro")

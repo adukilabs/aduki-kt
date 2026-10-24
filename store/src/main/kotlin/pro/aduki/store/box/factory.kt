@@ -11,7 +11,7 @@ import java.io.File
  *
  * The database file as a whole is NOT encrypted (ObjectBox 4.0.3 has no
  * encryption option). Sensitive payload columns are sealed with a [Vault];
- * see [Sealing] for exactly which, and `guide/security.md` section 4.
+ * see [Sealing] for exactly which, and `docs/security/vault.md`.
  */
 object Factory {
 
