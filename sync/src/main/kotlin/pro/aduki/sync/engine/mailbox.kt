@@ -29,6 +29,13 @@ fun interface MailboxTransport {
 }
 
 /**
+ * MailboxDirectory lists the account's mailboxes on the server.
+ */
+fun interface MailboxDirectory {
+    suspend fun list(): List<Mailbox>
+}
+
+/**
  * MailboxStorage abstracts persistence for CONDSTORE sync.
  */
 interface MailboxStorage {
@@ -42,6 +49,12 @@ interface MailboxStorage {
 
     /** Messages with any of [hexes], in any mailbox (a message moved in keeps its row). */
     fun findByHex(hexes: List<String>): List<Message> = emptyList()
+
+    /** Every local mailbox. */
+    fun mailboxes(): List<Mailbox> = emptyList()
+
+    /** Drops a mailbox row (its messages are cleared separately). */
+    fun removeMailbox(mailbox: Mailbox) {}
 }
 
 /**
@@ -49,30 +62,53 @@ interface MailboxStorage {
  */
 class Mailbox(
     private val storage: MailboxStorage,
-    private val transport: MailboxTransport
+    private val transport: MailboxTransport,
+    /** Lists mailboxes for [refresh]; without it only known rows sync. */
+    private val directory: MailboxDirectory? = transport as? MailboxDirectory
 ) {
 
-    constructor(store: BoxStore, transport: MailboxTransport) : this(object : MailboxStorage {
-        private val mailboxes = store.boxFor(Mailbox::class.java)
-        private val messages = store.boxFor(Message::class.java)
+    constructor(
+        store: BoxStore,
+        transport: MailboxTransport,
+        directory: MailboxDirectory? = transport as? MailboxDirectory
+    ) : this(storage(store), transport, directory)
 
-        // Indexed queries: never scan the whole box on a sync.
-        override fun getMailbox(hex: String): Mailbox? =
-            mailboxes.query(Mailbox_.hex.equal(hex)).build().use { it.findFirst() }
-        override fun putMailbox(mailbox: Mailbox) { mailboxes.put(mailbox) }
-        override fun getMessages(mailboxHex: String): List<Message> =
-            messages.query(Message_.mailbox.equal(mailboxHex)).build().use { it.find() }
-        override fun putMessages(messages: List<Message>) { this.messages.put(messages) }
-        override fun removeMessages(messages: List<Message>) { this.messages.remove(messages) }
-        override fun clearMailbox(mailboxHex: String) {
-            messages.query(Message_.mailbox.equal(mailboxHex)).build().use { it.remove() }
+    /**
+     * Loads the server's mailbox list into the store and returns their hexes.
+     * Known rows keep their sync cursor (`uidvalidity`, `modseq`); mailboxes
+     * gone from the server are dropped with their messages. Without a
+     * [directory], returns the local rows unchanged.
+     */
+    suspend fun refresh(): List<String> {
+        val remote = directory?.list() ?: return storage.mailboxes().map { it.hex }
+        return storage.tx {
+            val local = storage.mailboxes().associateBy { it.hex }
+            val kept = remote.map { it.hex }.toSet()
+            for (gone in local.values.filter { it.hex !in kept }) {
+                storage.clearMailbox(gone.hex)
+                storage.removeMailbox(gone)
+            }
+            for (box in remote) {
+                val row = local[box.hex]
+                storage.putMailbox(
+                    row?.copy(
+                        name = box.name,
+                        role = box.role,
+                        uidnext = box.uidnext,
+                        exists = box.exists,
+                        unseen = box.unseen
+                    ) ?: box.copy(id = 0, uidvalidity = 0, modseq = 0)
+                )
+            }
+            remote.map { it.hex }
         }
-        override fun <T> tx(block: () -> T): T = store.callInTx(block)
-        override fun findByHex(hexes: List<String>): List<Message> {
-            if (hexes.isEmpty()) return emptyList()
-            return messages.query(Message_.hex.oneOf(hexes.toTypedArray())).build().use { it.find() }
-        }
-    }, transport)
+    }
+
+    /** The hex of the local mailbox with [role] (`inbox`, `sent`, ...), or null. */
+    fun role(role: String): String? = storage.mailboxes().firstOrNull { it.role == role }?.hex
+
+    /** Whether a mailbox row with [hex] is stored. */
+    fun known(hex: String): Boolean = storage.getMailbox(hex) != null
 
     /**
      * Performs incremental delta sync for the given mailbox, following
@@ -164,5 +200,30 @@ class Mailbox(
     companion object {
         /** Upper bound on pages per sync, against a server that never settles. */
         const val MAX_PAGES = 1000
+
+        /** The ObjectBox-backed storage for [store]. */
+        fun storage(store: BoxStore): MailboxStorage = object : MailboxStorage {
+            private val mailboxes = store.boxFor(Mailbox::class.java)
+            private val messages = store.boxFor(Message::class.java)
+
+            // Indexed queries: never scan the whole box on a sync.
+            override fun getMailbox(hex: String): Mailbox? =
+                mailboxes.query(Mailbox_.hex.equal(hex)).build().use { it.findFirst() }
+            override fun putMailbox(mailbox: Mailbox) { mailboxes.put(mailbox) }
+            override fun getMessages(mailboxHex: String): List<Message> =
+                messages.query(Message_.mailbox.equal(mailboxHex)).build().use { it.find() }
+            override fun putMessages(messages: List<Message>) { this.messages.put(messages) }
+            override fun removeMessages(messages: List<Message>) { this.messages.remove(messages) }
+            override fun clearMailbox(mailboxHex: String) {
+                messages.query(Message_.mailbox.equal(mailboxHex)).build().use { it.remove() }
+            }
+            override fun <T> tx(block: () -> T): T = store.callInTx(block)
+            override fun findByHex(hexes: List<String>): List<Message> {
+                if (hexes.isEmpty()) return emptyList()
+                return messages.query(Message_.hex.oneOf(hexes.toTypedArray())).build().use { it.find() }
+            }
+            override fun mailboxes(): List<Mailbox> = mailboxes.all
+            override fun removeMailbox(mailbox: Mailbox) { mailboxes.remove(mailbox) }
+        }
     }
 }

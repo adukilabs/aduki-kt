@@ -1,11 +1,17 @@
 package pro.aduki.sdk
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeout
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import pro.aduki.core.config.Endpoints
 
 /**
@@ -20,10 +26,18 @@ class LiveTest {
         return prop == "true" || env == "true"
     }
 
-    private fun liveApiKey(): String {
+    @get:Rule
+    val dir = TemporaryFolder()
+
+    // An Aduki ID access token (ADUKI_TOKEN) or a tenant API key (ADUKI_KEY).
+    private fun live(store: Boolean = false): Aduki {
+        val token = System.getProperty("aduki.token") ?: System.getenv("ADUKI_TOKEN")
         val key = System.getProperty("aduki.key") ?: System.getenv("ADUKI_KEY")
-        assumeTrue("Skipping live tests: set ADUKI_KEY (or -Daduki.key)", !key.isNullOrBlank())
-        return key!!
+        assumeTrue("Skipping live tests: set ADUKI_TOKEN or ADUKI_KEY", !token.isNullOrBlank() || !key.isNullOrBlank())
+        val builder = Aduki.builder().endpoint(liveEndpoint())
+        if (!token.isNullOrBlank()) builder.token(token) else builder.key(key!!)
+        if (store) builder.store(dir.newFolder("db"))
+        return builder.build()
     }
 
     private fun liveEndpoint(): String {
@@ -42,15 +56,9 @@ class LiveTest {
      */
     @Test
     fun whoami() = runBlocking {
-        val client = Aduki.builder()
-            .key(liveApiKey())
-            .endpoint(liveEndpoint())
-            .build()
-
-        val identity = client.me()
+        val identity = live().me()
         assertNotNull("Expected live server identity resolution", identity)
         assertTrue(identity!!.user.isNotBlank())
-        assertTrue(identity.tenant.isNotBlank())
     }
 
     /**
@@ -58,60 +66,49 @@ class LiveTest {
      */
     @Test
     fun connect() = runBlocking {
-        val client = Aduki.builder()
-            .key(liveApiKey())
-            .endpoint(liveEndpoint())
-            .build()
-
-        assertNotNull(client)
-        assertTrue(client.lifecycle.active())
+        assertTrue(live().lifecycle.active())
     }
 
     /**
-     * T5-LIVE-03: Live Mailbox Listing
+     * T5-LIVE-03: Live Mailbox Listing into the local store
      */
     @Test
     fun mailboxes() = runBlocking {
-        val client = Aduki.builder()
-            .key(liveApiKey())
-            .endpoint(liveEndpoint())
-            .build()
-
-        val boxes = client.mail.mailboxes()?.value ?: emptyList()
-        assertNotNull(boxes)
+        val client = live(store = true)
+        val hexes = client.sync.mailboxes()
+        assertTrue("expected the account's mailboxes", hexes.isNotEmpty())
+        val boxes = withTimeout(5_000) { client.mail.mailboxes()!!.first { it.size == hexes.size } }
+        assertTrue(boxes.any { it.role == "inbox" })
+        client.close()
     }
 
     /**
-     * T5-LIVE-04: Live CONDSTORE Delta Sync
+     * T5-LIVE-04: Live CONDSTORE Delta Sync of every mailbox, then by role
      */
     @Test
     fun sync() = runBlocking {
-        val client = Aduki.builder()
-            .key(liveApiKey())
-            .endpoint(liveEndpoint())
-            .build()
-
-        val result = client.sync.all(listOf("inbox"))
-        assertTrue(result)
+        val client = live(store = true)
+        assertTrue(client.sync.all())
+        assertTrue(client.sync.all(listOf("inbox")))
+        assertNull(client.sync.state.value.error)
+        client.close()
     }
 
     /**
-     * T5-LIVE-05: Live Outbox Send & Delivery
+     * T5-LIVE-05: Live Outbox Send to the account's own address (ADUKI_ADDRESS)
      */
     @Test
     fun send() = runBlocking {
-        val client = Aduki.builder()
-            .key(liveApiKey())
-            .endpoint(liveEndpoint())
-            .build()
-
+        val me = System.getProperty("aduki.address") ?: System.getenv("ADUKI_ADDRESS")
+        assumeTrue("Skipping live send: set ADUKI_ADDRESS to the account's own address", !me.isNullOrBlank())
+        val client = live(store = true)
         val sent = client.mail.send(
-            to = listOf("test@aduki.pro"),
+            to = listOf(me),
             subject = "Automated Live Tier 5 Test",
             body = "Aduki Android SDK Live Verification"
         )
-        assertNotNull(sent)
         assertTrue(sent.hex.isNotBlank())
+        assertEquals(0, client.sync.pending())
+        client.close()
     }
 }
-

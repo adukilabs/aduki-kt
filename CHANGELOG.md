@@ -2,6 +2,19 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (`AI/SKILLS/release.md`).
 
+## Unreleased
+
+Local store wiring and mailbox sync (#43, #44, #30):
+
+- `Aduki.Builder.store(BoxStore)` and `store(File)`: one call builds the outbox `Manager` and `Worker` (with `HttpDispatcher`), the mail, contact and appointment repositories, and the mailbox, contact and schedule engines on the client's own HTTP clients. Parts passed to the builder still win. `store(File)` opens the database in `build()`; `Aduki.close()` closes it.
+- `Aduki.Builder.rejected(callback)`: told about each outbox action the server refused for good.
+- `Aduki.schedulingApi`: the scheduling client on the authenticated connection.
+- `Mail.send`, `flag`, `move` and `remove` throw `IllegalStateException("no local store")` instead of doing nothing.
+- `Sync.mailboxes()` loads `GET /user/mailbox` into the store, keeping the sync cursor of known mailboxes and dropping deleted ones with their messages. `engine.Mailbox.refresh()`, `MailboxDirectory`, implemented by `HttpMailboxTransport`.
+- `Sync.all()` with no argument syncs every mailbox (it synced only a mailbox with the hex `inbox`, which never exists). Listed mailboxes may be roles (`inbox`, `sent`, ...). Breaking: the parameter is now `List<String>?` with default `null`.
+- `Sync.state: StateFlow<SyncState>` (`running`, `synced`, `error`) and `Sync.outbox: StateFlow<Int>`; `Manager.count`, `Manager.recount()`, `Manager.message(hex)`.
+- Live tests take `ADUKI_TOKEN` (an Aduki ID access token) as well as `ADUKI_KEY`, use a local store, and send to `ADUKI_ADDRESS` instead of a fixed external address.
+
 ## 0.4.1-beta (2026-10-16)
 
 Staged personal account signup (ADK-AUTH-007):

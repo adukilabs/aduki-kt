@@ -104,7 +104,28 @@ If your application only needs specific subsystems, you can import individual mo
 
 ---
 
-## 5. Upgrading from 0.1.x
+## 5. Create the Client with a Local Store
+
+Mail, contacts and scheduling are offline-first: they read from and write to a local ObjectBox database. Pass it to the builder with `store`, and the client builds everything on top of it with its own authenticated HTTP clients: the outbox manager and worker, the mail, contact and appointment repositories, and the mailbox, contact and schedule sync engines.
+
+```kotlin
+val client = Aduki.builder()
+    .token(accessToken)
+    .store(File(context.filesDir, "aduki")) // opened by build(), closed by client.close()
+    .rejected { action, why -> notifySendFailed(action, why) } // optional
+    .build()
+
+client.sync.all()                                  // mailbox list, every mailbox, contacts
+client.mail.mailboxes()?.collect { boxes -> /* ... */ }
+```
+
+`store(boxStore)` takes a `BoxStore` you opened yourself (for example with `Factory.build(dir)`); it stays yours and `client.close()` leaves it open. A part passed to the builder as well (`manager`, `worker`, `mail`, `contacts`, `scheduling`, `engines`, `contactStorage`) replaces the one the store would give.
+
+Without a store, reads return `null` and writes (`mail.send`, `flag`, `move`, `remove`) throw `IllegalStateException("no local store")`.
+
+---
+
+## 6. Upgrading from 0.1.x
 
 Version 0.3.0 also renames the packages to `pro.aduki.*`, the client to `Aduki` and the error type to `AdukiException`, and the Maven group to `pro.aduki` (it was `io.github.adukilabs`). There are no compatibility shims.
 
@@ -115,7 +136,7 @@ Version 0.3.0 also renames the packages to `pro.aduki.*`, the client to `Aduki` 
 - **`Worker` rejects permanent failures.** It now accepts an `onRejected` callback for actions the server refused for good.
 - **New HTTP layer.** Wire `HttpMailboxTransport(client.mailApi)` and `HttpDispatcher(client.mailApi, …)` into the sync engine and the outbox worker.
 
-## 6. ProGuard / R8 Rules
+## 7. ProGuard / R8 Rules
 
 ObjectBox and OkHttp need minimal ProGuard configuration. Add the following to `app/proguard-rules.pro`:
 

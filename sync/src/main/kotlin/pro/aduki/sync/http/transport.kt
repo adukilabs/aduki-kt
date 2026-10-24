@@ -3,10 +3,13 @@ package pro.aduki.sync.http
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import pro.aduki.core.models.MailChanges
+import pro.aduki.core.models.MailboxRow
 import pro.aduki.core.models.MessageRow
 import pro.aduki.net.http.Mail
+import pro.aduki.store.entities.Mailbox
 import pro.aduki.store.entities.Message
 import pro.aduki.sync.engine.MailboxDelta
+import pro.aduki.sync.engine.MailboxDirectory
 import pro.aduki.sync.engine.MailboxTransport
 
 /**
@@ -15,11 +18,26 @@ import pro.aduki.sync.engine.MailboxTransport
  *
  * A stale UIDVALIDITY (`reset`) is answered with a full fetch from MODSEQ 0,
  * which the engine applies as a fresh copy of the mailbox.
+ *
+ * It is also the engine's [MailboxDirectory]: `GET /user/mailbox`, every page.
  */
 class HttpMailboxTransport(
     private val api: Mail,
     private val pageSize: Int = 500
-) : MailboxTransport {
+) : MailboxTransport, MailboxDirectory {
+
+    override suspend fun list(): List<Mailbox> = withContext(Dispatchers.IO) {
+        val rows = mutableListOf<MailboxRow>()
+        var page = 1
+        while (page <= MAX_PAGES) {
+            val listing = api.mailboxes(page)
+            rows += listing.items
+            val pages = listing.pages ?: break
+            if (page >= pages || listing.items.isEmpty()) break
+            page++
+        }
+        rows.map(::mailbox)
+    }
 
     override suspend fun fetch(mailbox: String, uidvalidity: Long, modseq: Long): MailboxDelta =
         withContext(Dispatchers.IO) {
@@ -33,6 +51,19 @@ class HttpMailboxTransport(
         }
 
     companion object {
+        /** Upper bound on mailbox list pages. */
+        private const val MAX_PAGES = 100
+
+        /** A mailbox list row as a local mailbox; the sync cursor starts empty. */
+        fun mailbox(row: MailboxRow): Mailbox = Mailbox(
+            hex = row.hex,
+            name = row.name,
+            role = row.role ?: "",
+            uidnext = row.uidnext,
+            exists = row.messages.toInt(),
+            unseen = row.unread.toInt()
+        )
+
         /** Maps a changes response to the engine's delta. */
         fun delta(mailbox: String, changes: MailChanges): MailboxDelta {
             val created = changes.created.map { message(it, mailbox) }

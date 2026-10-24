@@ -1,5 +1,6 @@
 package pro.aduki.sdk
 
+import io.objectbox.BoxStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -37,6 +38,12 @@ import pro.aduki.net.http.Mail as NetMail
 import pro.aduki.net.http.Contacts as NetContacts
 import pro.aduki.sync.engine.ContactStorage
 import pro.aduki.sync.http.HttpContactTransport
+import pro.aduki.sync.http.HttpDispatcher
+import pro.aduki.sync.http.HttpMailboxTransport
+import pro.aduki.sync.outbox.Rejected
+import pro.aduki.store.box.Factory
+import pro.aduki.store.entities.Outbox
+import java.io.File
 
 /**
  * Aduki is the primary entrypoint for the Android Kotlin SDK.
@@ -58,7 +65,12 @@ class Aduki internal constructor(
     scheduleEngine: ScheduleEngine? = null,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val dpop: Dpop? = null,
-    contactStorage: ContactStorage? = null
+    contactStorage: ContactStorage? = null,
+    /** The local database; with it every part below that was not supplied is built. */
+    private val store: BoxStore? = null,
+    /** Whether [close] closes [store] (it was opened by `Builder.store(dir)`). */
+    private val owned: Boolean = false,
+    rejected: (Outbox, Rejected) -> Unit = { _, _ -> }
 ) {
     private fun activeAuthString(): String {
         return session.token() ?: if (token.isNotBlank()) token else apiKey
@@ -181,24 +193,44 @@ class Aduki internal constructor(
      */
     val contactsApi: NetContacts by lazy { NetContacts(activeHttpClient(), options.endpoint) }
 
-    // An explicit engine wins; with only a storage the engine reads the
-    // address book over REST (`HttpContactTransport`).
-    private val contactSync: ContactEngine? =
-        contactEngine ?: contactStorage?.let { ContactEngine(it, HttpContactTransport(contactsApi)) }
-
-    // Declared after the HTTP client above: property initializers run in
-    // order, and `scheduling` needs the client while the object is built.
-    val mail = Mail(this, manager, mailRepo, worker)
-    val contacts = Contacts(this, contactRepo, contactSync)
-    val sync = Sync(this, mailboxEngine, contactSync, worker, manager)
-    val scheduling = Scheduling(this, appointmentRepo, scheduleEngine, NetScheduling(activeHttpClient(), options.endpoint))
-
     /**
      * Typed REST mail client on this client's authenticated connection.
      * Build `HttpMailboxTransport(mailApi)` and `HttpDispatcher(mailApi, …)`
      * from it for the sync engine and the outbox worker.
      */
     val mailApi: NetMail by lazy { NetMail(activeHttpClient(), options.endpoint) }
+
+    /** Typed REST scheduling client on this client's authenticated connection. */
+    val schedulingApi: NetScheduling by lazy { NetScheduling(activeHttpClient(), options.endpoint) }
+
+    // Each part is the one supplied to the builder, else built on [store]
+    // over this client's own HTTP clients (declared above: property
+    // initializers run in order).
+    private val outbox: Manager? = manager ?: store?.let(::Manager)
+
+    private val outboxWorker: Worker? = worker ?: store?.let {
+        outbox?.let { queue ->
+            Worker(queue, HttpDispatcher(mailApi, queue::message, queue::rename), onRejected = rejected)
+        }
+    }
+
+    // An explicit engine wins; with only a storage the engine reads the
+    // address book over REST (`HttpContactTransport`).
+    private val contactSync: ContactEngine? = contactEngine
+        ?: (contactStorage ?: store?.let(ContactEngine::storage))?.let { ContactEngine(it, HttpContactTransport(contactsApi)) }
+
+    private val mailboxSync: MailboxEngine? = mailboxEngine
+        ?: store?.let { MailboxEngine(it, HttpMailboxTransport(mailApi)) }
+
+    val mail = Mail(this, outbox, mailRepo ?: store?.let { MailRepo(it, outbox, scope) }, outboxWorker)
+    val contacts = Contacts(this, contactRepo ?: store?.let { ContactRepo(it, scope) }, contactSync)
+    val sync = Sync(this, mailboxSync, contactSync, outboxWorker, outbox)
+    val scheduling = Scheduling(
+        this,
+        appointmentRepo ?: store?.let { AppointmentRepo(it, scope) },
+        scheduleEngine ?: store?.let { ScheduleEngine(it, schedulingApi) },
+        schedulingApi
+    )
 
     init {
         lifecycle.listen { active ->
@@ -317,6 +349,15 @@ class Aduki internal constructor(
     }
 
     /**
+     * Closes the local database if this client opened it (`Builder.store(dir)`).
+     * A store passed in as a `BoxStore` belongs to the caller and stays open.
+     */
+    fun close() {
+        unwatchRights()
+        if (owned) store?.close()
+    }
+
+    /**
      * Suspends background operations when app enters background.
      */
     fun pause() {
@@ -350,6 +391,9 @@ class Aduki internal constructor(
         private var dpop: Dpop? = null
         private var contactStorage: ContactStorage? = null
         private var secureStore: pro.aduki.crypto.keystore.Provider? = null
+        private var store: BoxStore? = null
+        private var directory: File? = null
+        private var rejected: (Outbox, Rejected) -> Unit = { _, _ -> }
 
         fun key(key: String) = apply { this.apiKey = key }
         fun token(token: String) = apply { this.token = token }
@@ -396,6 +440,30 @@ class Aduki internal constructor(
          * behaviour is unverified until a device run.
          */
         fun secureStore(provider: pro.aduki.crypto.keystore.Provider) = apply { this.secureStore = provider }
+        /**
+         * Keeps mail, contacts and scheduling in [store] and builds everything
+         * that needs it on the client's own HTTP clients: the outbox manager and
+         * worker, the repositories and the sync engines. A part passed to the
+         * builder as well ([manager], [worker], [mail], [engines], ...) wins.
+         * The store stays the caller's: [Aduki.close] does not close it.
+         */
+        fun store(store: BoxStore) = apply {
+            this.store = store
+            this.directory = null
+        }
+
+        /**
+         * Like `store(BoxStore)`, with the database opened by [build] in [dir]
+         * (`Factory.build`, after the vault is installed). [Aduki.close] closes it.
+         */
+        fun store(dir: File) = apply {
+            this.directory = dir
+            this.store = null
+        }
+
+        /** Told about each outbox action the server refused for good (e.g. an invalid recipient). */
+        fun rejected(callback: (Outbox, Rejected) -> Unit) = apply { this.rejected = callback }
+
         fun engines(mailbox: MailboxEngine, contact: ContactEngine) = apply {
             this.mailboxEngine = mailbox
             this.contactEngine = contact
@@ -407,6 +475,7 @@ class Aduki internal constructor(
             }
             (secureStore?.let { pro.aduki.crypto.cipher.Vault(it) } ?: pro.aduki.crypto.cipher.Vault.platform())
                 ?.let { pro.aduki.store.box.Sealing.install(it) }
+            val local = store ?: directory?.let { Factory.build(it) }
             val options = Options(
                 endpoint = endpoint,
                 identity = identity,
@@ -428,7 +497,10 @@ class Aduki internal constructor(
                 contactEngine = contactEngine,
                 scheduleEngine = scheduleEngine,
                 dpop = dpop,
-                contactStorage = contactStorage
+                contactStorage = contactStorage,
+                store = local,
+                owned = store == null && local != null,
+                rejected = rejected
             )
         }
     }
