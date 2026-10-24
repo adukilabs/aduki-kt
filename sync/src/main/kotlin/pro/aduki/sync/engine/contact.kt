@@ -2,8 +2,10 @@ package pro.aduki.sync.engine
 
 import io.objectbox.BoxStore
 import io.objectbox.query.QueryBuilder.StringOrder
+import pro.aduki.core.models.GroupRow
 import pro.aduki.store.box.Sealing
 import pro.aduki.store.entities.Contact as ContactEntity
+import pro.aduki.store.entities.Group as GroupEntity
 import pro.aduki.store.entities.Outbox
 import pro.aduki.store.entities.Outbox_
 import pro.aduki.store.entities.Sync
@@ -22,7 +24,12 @@ data class ContactDelta(
      * missing from it are removed. For transports whose server has no
      * incremental route.
      */
-    val full: Boolean = false
+    val full: Boolean = false,
+    /**
+     * The server's whole group list, empty groups included; null when the
+     * transport cannot read it (the stored groups are then left as they are).
+     */
+    val groups: List<GroupRow>? = null
 )
 
 /**
@@ -42,6 +49,9 @@ interface ContactStorage {
     fun putContacts(contacts: List<ContactEntity>)
     fun removeContacts(hexes: List<String>)
     fun <T> tx(block: () -> T): T
+
+    /** Replaces the stored groups (the rows that keep empty groups listed) with [groups]. */
+    fun putGroups(groups: List<GroupRow>) {}
 
     /**
      * Hexes of contacts with a queued outbox write: a sync leaves them as
@@ -76,6 +86,11 @@ class Contact(
                 contactBox.remove(toRemove)
             }
             override fun <T> tx(block: () -> T): T = store.callInTx(block)
+            override fun putGroups(groups: List<GroupRow>) {
+                val box = store.boxFor(GroupEntity::class.java)
+                box.removeAll()
+                box.put(groups.map { GroupEntity(name = it.name, count = it.count) })
+            }
             override fun pending(): Set<String> = store.boxFor(Outbox::class.java)
                 .query(Outbox_.action.startsWith(Book.PREFIX, StringOrder.CASE_SENSITIVE)).build()
                 .property(Outbox_.hex).findStrings().toSet()
@@ -115,6 +130,10 @@ class Contact(
                 }
                 storage.putContacts(merged)
             }
+
+            // A group created here is queued without a hex, so nothing is
+            // pending at all when this runs: the list is the server's.
+            delta.groups?.takeIf { "" !in pending }?.let(storage::putGroups)
 
             // Skipped rows must be read again: no cursor until nothing is pending.
             syncRecord.token = if (pending.isEmpty()) delta.ctag else ""

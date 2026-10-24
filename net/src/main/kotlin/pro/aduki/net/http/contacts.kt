@@ -10,6 +10,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import pro.aduki.core.errors.AdukiException
 import pro.aduki.core.models.ContactRow
+import pro.aduki.core.models.GroupRow
+import pro.aduki.core.models.ImportReport
 import pro.aduki.core.models.Listing
 import pro.aduki.core.vcard.Vcard
 
@@ -18,10 +20,8 @@ import pro.aduki.core.vcard.Vcard
  * `contacts:read` and `contacts:write`). The tenant and user come from the
  * credential, never from the request.
  *
- * Writes send the vCard without its `VERSION` line: the server rebuilds the
- * card and writes `VERSION:4.0` only when the source had none, so a card
- * that carries one is refused as having no version. The display name sent
- * alongside is the card's `FN`.
+ * Writes send the vCard as it is (the server rebuilds it and writes one
+ * `VERSION:4.0`), with the card's `FN` as the display name alongside.
  *
  * Calls are blocking; run them off the main thread.
  */
@@ -31,6 +31,7 @@ class Contacts(
 ) {
 
     private val mediaJson = "application/json; charset=utf-8".toMediaType()
+    private val mediaVcard = "text/vcard; charset=utf-8".toMediaType()
 
     private fun url(vararg segments: String): HttpUrl.Builder {
         val builder = endpoint.trimEnd('/').toHttpUrl().newBuilder().addPathSegment("user").addPathSegment("contacts")
@@ -40,8 +41,9 @@ class Contacts(
 
     /**
      * One page of the address book, [limit] rows (the server caps it at 200).
-     * Pass the previous page's `next` as [after]; a server that answers in
-     * page mode (no `next`, but `page` and `pages`) is walked with [page].
+     * Pass the previous page's `next` as [after] (null on the last page); a
+     * server that answers in page mode (no `next`, but `page` and `pages`)
+     * is walked with [page].
      */
     fun list(after: String? = null, limit: Int = 200, page: Int? = null): Listing<ContactRow> {
         val builder = url().addQueryParameter("limit", limit.toString())
@@ -57,7 +59,7 @@ class Contacts(
      */
     fun create(vcard: String, groups: List<String> = emptyList(), key: String? = null): ContactRow {
         val payload = JSONObject()
-            .put("vcard", bare(vcard))
+            .put("vcard", vcard)
             .put("name", name(vcard))
             .put("meta", JSONObject.NULL)
         if (groups.isNotEmpty()) payload.put("groups", JSONArray(groups))
@@ -66,7 +68,7 @@ class Contacts(
 
     /** Replaces the vCard of [hex] (`PATCH /user/contacts/{hex}/vcard`). */
     fun replace(hex: String, vcard: String, key: String? = null) {
-        val payload = JSONObject().put("vcard", bare(vcard)).put("name", name(vcard))
+        val payload = JSONObject().put("vcard", vcard).put("name", name(vcard))
         execute(write(url(hex, "vcard"), "PATCH", payload, key)) { }
     }
 
@@ -82,27 +84,75 @@ class Contacts(
         return execute(Request.Builder().url(builder.build()).get().build()) { body -> Companion.page(JSONObject(body)) }
     }
 
+    /** The groups with their member counts, by name (`GET /user/contacts/groups`); empty groups count 0. */
+    fun groups(): List<GroupRow> =
+        execute(Request.Builder().url(url("groups").build()).get().build()) { body ->
+            val items = JSONObject(body).getJSONArray("items")
+            (0 until items.length()).map { items.getJSONObject(it) }.map { GroupRow(it.getString("name"), it.optInt("count")) }
+        }
+
     /**
-     * Renames [group] to [name] on every member in one call.
-     *
-     * Proposed server route, not deployed yet: `PATCH /user/contacts/group/{group}`
-     * with `{"name": "..."}`, answering `{"group": "...", "changed": n}`
-     * (0 for a group without members, never 404). Until it exists the server
-     * answers 405 (or 404); callers then rename member by member with [groups].
+     * Creates the group [name] without members (`POST /user/contacts/groups`);
+     * it stays listed until deleted. A group that exists already is
+     * returned as it is (200 instead of 201).
      */
-    fun rename(group: String, name: String, key: String? = null) {
-        execute(write(url("group", group), "PATCH", JSONObject().put("name", name), key)) { }
+    fun createGroup(name: String, key: String? = null): GroupRow =
+        execute(write(url("groups"), "POST", JSONObject().put("name", name), key)) { body ->
+            val obj = JSONObject(body)
+            GroupRow(obj.getString("name"), obj.optInt("count"))
+        }
+
+    /**
+     * Renames [group] to [name] on every member, and the group itself when
+     * it was created empty (`PATCH /user/contacts/group/{group}`). Returns
+     * how many contacts changed: 0 for an empty or unknown group, never 404.
+     */
+    fun rename(group: String, name: String, key: String? = null): Int =
+        execute(write(url("group", group), "PATCH", JSONObject().put("name", name), key)) { body ->
+            val obj = JSONObject(body)
+            obj.getString("group")
+            obj.getInt("changed")
+        }
+
+    /**
+     * Deletes [group] (`DELETE /user/contacts/group/{group}`): its members
+     * lose it (the contacts stay). Returns how many contacts changed.
+     */
+    fun dissolve(group: String): Int =
+        execute(Request.Builder().url(url("group", group).build()).delete().build()) { body -> JSONObject(body).getInt("changed") }
+
+    /**
+     * Merges [others] into [hex] in one server transaction
+     * (`POST /user/contacts/{hex}/merge`): their groups join its own,
+     * [vcard] (when given) replaces its vCard, and the others are deleted.
+     * Returns the merged contact; a 404 means one of them is not there and
+     * nothing changed.
+     */
+    fun merge(hex: String, others: List<String>, vcard: String? = null, key: String? = null): ContactRow {
+        require(others.isNotEmpty()) { "others: name at least one contact" }
+        val payload = JSONObject().put("others", JSONArray(others))
+        if (vcard != null) payload.put("vcard", vcard)
+        return execute(write(url(hex, "merge"), "POST", payload, key)) { body -> row(JSONObject(body)) }
     }
 
     /**
-     * Removes [group] from every member in one call; the contacts stay.
-     *
-     * Proposed server route, not deployed yet: `DELETE /user/contacts/group/{group}`,
-     * answering `{"changed": n}`. Until it exists the server answers 405 (or
-     * 404); callers then update member by member with [groups].
+     * Imports a vCard file of one or more cards (`POST /user/contacts/import`,
+     * `text/vcard`): a card whose UID is stored replaces that contact, or is
+     * skipped when identical; any other is created. At most 5000 cards.
      */
-    fun dissolve(group: String) {
-        execute(Request.Builder().url(url("group", group).build()).delete().build()) { }
+    fun import(vcf: String, key: String? = null): ImportReport {
+        val builder = Request.Builder().url(url("import").build()).post(vcf.toRequestBody(mediaVcard))
+        if (!key.isNullOrBlank()) builder.header("Idempotency-Key", key)
+        return execute(builder.build()) { body ->
+            val obj = JSONObject(body)
+            val errors = obj.optJSONArray("errors") ?: JSONArray()
+            ImportReport(
+                created = obj.getInt("created"),
+                updated = obj.getInt("updated"),
+                skipped = obj.getInt("skipped"),
+                errors = (0 until errors.length()).map { errors.getJSONObject(it) }.map { it.getInt("index") to it.optString("error") }
+            )
+        }
     }
 
     /** Deletes [hex] (`DELETE /user/contacts/{hex}`). */
@@ -150,10 +200,6 @@ class Contacts(
                 pages = if (obj.has("pages")) obj.optInt("pages") else null
             )
         }
-
-        /** [vcard] without its `VERSION` line (see the class note). */
-        fun bare(vcard: String): String =
-            vcard.split("\r\n", "\n").filterNot { it.trim().uppercase().startsWith("VERSION:") }.joinToString("\r\n")
 
         // The server overrides `FN` with the name sent; send the card's own.
         private fun name(vcard: String): String = runCatching { Vcard.parse(vcard).name }

@@ -1,6 +1,8 @@
 package pro.aduki.sdk
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.withContext
 import pro.aduki.core.models.Card
 import pro.aduki.core.vcard.Vcard
 import pro.aduki.store.entities.Contact
@@ -118,15 +120,26 @@ class Contacts internal constructor(
     }
 
     /**
-     * Imports a vCard file (3.0 or 4.0, one or more cards). A card whose UID
+     * Imports a vCard file (3.0 or 4.0, one or more cards).
+     *
+     * With a local store it runs on the device, so it works offline and
+     * each card goes through the outbox like any write: a card whose UID
      * matches a stored contact, else one sharing an e-mail address with it,
      * updates that contact (the file's values win for a UID match; for an
      * e-mail match addresses, phones and groups are added and blank fields
      * filled); a card that changes nothing is skipped; any other is created.
+     *
+     * Without a local store the file goes to the server in one call
+     * (`POST /user/contacts/import`, at most 5000 cards), which matches by
+     * UID only.
      */
     suspend fun import(vcf: InputStream): Imported {
-        val book = book()
         val text = vcf.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        if (book == null) {
+            val report = withContext(Dispatchers.IO) { client.contactsApi.import(text) }
+            return Imported(report.created, report.updated, report.skipped, report.errors.map { (i, error) -> "card ${i + 1}: $error" })
+        }
+        val book = book()
         val stored = repo?.all().orEmpty()
         val uids = stored.filter { it.uid.isNotBlank() }.associateBy { it.uid }.toMutableMap()
         val emails = HashMap<String, Contact>()
@@ -222,7 +235,8 @@ class Contacts internal constructor(
      * Merges [others] into [keep] in one operation: e-mail addresses, phones
      * and groups are combined (so [keep] takes the others' group
      * memberships), blank fields of [keep] are filled from the others, the
-     * notes are joined, and the others are deleted.
+     * notes are joined, and the others are deleted. Applied locally at once
+     * and sent as one atomic server merge (`POST /user/contacts/{hex}/merge`).
      */
     suspend fun merge(keep: String, others: List<String>): Contact {
         val contact = book().merge(keep, others)
@@ -242,12 +256,11 @@ class Contacts internal constructor(
 }
 
 /**
- * Groups of contacts. The server keeps groups as tags on each contact (no
- * group object), so a group exists while it has members: it is created with
- * its first members and is gone when the last one leaves. Every change is
- * queued in the outbox and synced like other contact writes: adding and
- * removing members writes each member's group list; rename and delete are
- * one group-wide action each.
+ * Groups of contacts. Members carry a group as a tag; a group created by
+ * name ([create]) stays listed with no members until it is deleted. Every
+ * change is queued in the outbox and synced like other contact writes:
+ * adding and removing members writes each member's group list; create,
+ * rename and delete are one group-wide action each.
  */
 class Groups internal constructor(
     private val repo: ContactRepo?,
@@ -256,16 +269,16 @@ class Groups internal constructor(
 ) {
     private fun book(): Book = book ?: throw IllegalStateException("no local store")
 
-    /** Observes the group names in use, sorted. */
+    /** Observes the group names (with members, or created empty), sorted. */
     fun observe(): StateFlow<List<String>>? = repo?.groups()
 
-    /** The group names in use now, sorted. */
-    fun list(): List<String> = repo?.all().orEmpty().flatMap { it.groups }.distinct().sortedBy { it.lowercase() }
+    /** The group names now (with members, or created empty), sorted. */
+    fun list(): List<String> = repo?.names().orEmpty()
 
-    /** Creates [group] with [members] (at least one: the server has no empty groups). */
-    suspend fun create(group: String, members: List<String>) {
-        require(members.isNotEmpty()) { "a group needs at least one member" }
-        add(group, members)
+    /** Creates [group], with [members] or none; it stays listed while empty. */
+    suspend fun create(group: String, members: List<String> = emptyList()) {
+        book().group(group)
+        if (members.isEmpty()) worker?.drain() else add(group, members)
     }
 
     /**

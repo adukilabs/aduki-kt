@@ -2,8 +2,10 @@ package pro.aduki.sync.http
 
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
+import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -13,11 +15,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import pro.aduki.core.errors.AdukiException
+import pro.aduki.core.models.GroupRow
 import pro.aduki.net.http.Contacts
 import pro.aduki.store.entities.Contact as ContactEntity
 import pro.aduki.store.entities.Sync
 import pro.aduki.sync.engine.Contact
 import pro.aduki.sync.engine.ContactStorage
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 
 /** The contacts transport against the shape of `GET /user/contacts` (aduki docs/http/src/user/contacts.md). */
 class HttpContactTransportTest {
@@ -30,13 +35,24 @@ class HttpContactTransportTest {
 
     private fun page(rows: List<String>, next: String? = null) = """{"success":true,"data":{"items":[${rows.joinToString(",")}],"total":3${if (next != null) ",\"next\":\"$next\"" else ""}}}"""
 
+    private val replies = LinkedBlockingQueue<MockResponse>()
+
+    // What `GET /user/contacts/groups` answers; list pages come from [reply].
+    @Volatile private var groups: MockResponse = MockResponse().setBody("""{"success":true,"data":{"items":[{"name":"friends","count":3},{"name":"empty","count":0}]}}""")
+
     private fun reply(body: String, code: Int = 200) {
-        server.enqueue(MockResponse().setResponseCode(code).setBody(body))
+        replies.add(MockResponse().setResponseCode(code).setBody(body))
     }
 
     @Before
     fun setUp() {
-        server = MockWebServer().also { it.start() }
+        server = MockWebServer()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                if (request.path!!.startsWith("/v1/user/contacts/groups")) groups
+                else replies.poll(5, TimeUnit.SECONDS) ?: MockResponse().setResponseCode(500)
+        }
+        server.start()
         transport = HttpContactTransport(Contacts(OkHttpClient(), server.url("/v1").toString()), pageSize = 2)
     }
 
@@ -45,6 +61,8 @@ class HttpContactTransportTest {
 
     private class Book : ContactStorage {
         val contacts = mutableMapOf<String, ContactEntity>()
+        var groups: List<GroupRow>? = null
+        override fun putGroups(groups: List<GroupRow>) { this.groups = groups }
         var record: Sync? = null
         override fun getSync(target: String) = record
         override fun putSync(sync: Sync) { record = sync }
@@ -108,6 +126,7 @@ class HttpContactTransportTest {
         assertTrue(Contact(book, transport).sync("t1"))
 
         assertEquals(setOf("c1", "c2"), book.contacts.keys)
+        assertEquals(listOf(GroupRow("friends", 3), GroupRow("empty", 0)), book.groups)
         assertEquals("N c1", book.contacts["c1"]!!.name)
         assertEquals("BEGIN:VCARD", book.contacts["c1"]!!.vcard)
         assertTrue(book.record!!.token.isNotEmpty())
@@ -148,11 +167,21 @@ class HttpContactTransportTest {
     }
 
     @Test
-    fun aGroupChangeChangesTheCtag() = runBlocking {
+    fun theCtagIsTheEtagsAndTheGroupsComeEveryTime() = runBlocking {
         reply(page(listOf(row("c1", "e1"))))
         val a = transport.fetch("t1", "")
+        // The etag covers the groups: an equal etag is an unchanged contact.
         reply(page(listOf(row("c1", "e1").replace("[\"friends\"]", "[\"work\"]"))))
-        assertTrue(transport.fetch("t1", a.ctag).full)
+        val b = transport.fetch("t1", a.ctag)
+        assertFalse(b.full)
+        assertEquals(listOf("friends", "empty"), b.groups?.map { it.name })
+    }
+
+    @Test
+    fun aServerWithoutTheGroupListLeavesGroupsUnknown() = runBlocking {
+        groups = MockResponse().setResponseCode(404)
+        reply(page(listOf(row("c1", "e1"))))
+        assertNull(transport.fetch("t1", "").groups)
     }
 
     @Test

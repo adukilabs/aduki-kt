@@ -5,6 +5,7 @@ import io.objectbox.converter.PropertyConverter
 import pro.aduki.crypto.cipher.Vault
 import pro.aduki.store.entities.Appointment
 import pro.aduki.store.entities.Contact
+import pro.aduki.store.entities.Group
 import pro.aduki.store.entities.Mailbox
 import pro.aduki.store.entities.Service
 import pro.aduki.store.entities.Message
@@ -17,7 +18,7 @@ import pro.aduki.store.entities.Outbox
  * With no vault installed, values are written in the clear and sealed values
  * cannot be read (they fail closed). Sealed: every personal text column
  * (message subject, sender, recipients, preview, blob; contact name, e-mails,
- * phones, groups, company, notes, photo, vCard; appointment title, location,
+ * phones, groups, company, notes, photo, vCard; group names; appointment title, location,
  * notes, organizer, attendees and iCalendar object; mailbox and service names
  * and descriptions; cached message bodies and attachment lists) and the outbox
  * payload (through the outbox storage, not a converter: the ObjectBox
@@ -106,7 +107,8 @@ object Sealing {
      */
     fun reseal(store: BoxStore): Int {
         var count = resave(store, Message::class.java) + resave(store, Appointment::class.java) +
-            resave(store, Mailbox::class.java) + resave(store, Service::class.java)
+            resave(store, Mailbox::class.java) + resave(store, Service::class.java) +
+            resave(store, Group::class.java)
         val contacts = store.boxFor(Contact::class.java)
         val all = contacts.all
         all.forEach(::reindex)

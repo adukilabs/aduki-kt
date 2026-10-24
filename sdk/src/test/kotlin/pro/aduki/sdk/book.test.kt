@@ -21,7 +21,7 @@ import pro.aduki.core.vcard.Vcard
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
-/** `client.contacts` writes, groups, vCard import/export and duplicates over a local store (#36-#39). */
+/** `client.contacts` writes, groups, vCard import/export and duplicates over a local store (#36-#39), and import without one. */
 class BookTest {
 
     @get:Rule
@@ -38,11 +38,25 @@ class BookTest {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 paths += "${request.method} ${request.path}"
-                return when (request.method) {
-                    "POST" -> MockResponse().setResponseCode(201).setBody(
+                val path = request.path.orEmpty()
+                return when {
+                    path == "/v1/user/contacts/import" -> MockResponse().setBody(
+                        """{"success":true,"data":{"created":1,"updated":0,"skipped":0,"errors":[{"index":1,"error":"no FN"}]}}"""
+                    )
+                    path == "/v1/user/contacts/groups" && request.method == "POST" ->
+                        MockResponse().setResponseCode(201).setBody("""{"success":true,"data":{"name":"g","count":0}}""")
+                    path == "/v1/user/contacts/groups" -> MockResponse().setBody("""{"success":true,"data":{"items":[]}}""")
+                    path.startsWith("/v1/user/contacts/group/") && request.method == "PATCH" ->
+                        MockResponse().setBody("""{"success":true,"data":{"group":"g","changed":1}}""")
+                    path.startsWith("/v1/user/contacts/group/") && request.method == "DELETE" ->
+                        MockResponse().setBody("""{"success":true,"data":{"changed":1}}""")
+                    path.endsWith("/merge") -> MockResponse().setBody(
+                        """{"success":true,"data":{"hex":"${path.split("/")[4]}","uid":"","etag":"m","vcard":"","name":"x","emails":[],"phones":[],"groups":[],"meta":{},"created":"2026-10-24T10:00:00Z","updated":"2026-10-24T10:00:00Z"}}"""
+                    )
+                    request.method == "POST" -> MockResponse().setResponseCode(201).setBody(
                         """{"success":true,"data":{"hex":"srv${serial.incrementAndGet()}","uid":"","etag":"e","vcard":"","name":"x","emails":[],"phones":[],"groups":[],"meta":{},"created":"2026-10-24T10:00:00Z","updated":"2026-10-24T10:00:00Z"}}"""
                     )
-                    "GET" -> MockResponse().setBody("""{"success":true,"data":{"items":[],"total":0,"page":1,"pages":0}}""")
+                    request.method == "GET" -> MockResponse().setBody("""{"success":true,"data":{"items":[],"total":0,"page":1,"pages":0}}""")
                     else -> MockResponse().setResponseCode(204)
                 }
             }
@@ -71,13 +85,23 @@ class BookTest {
             { bare.contacts.update("c1", Card(name = "A")) },
             { bare.contacts.delete("c1") },
             { bare.contacts.merge("c1", listOf("c2")) },
-            { bare.contacts.import("".byteInputStream()) },
-            { bare.contacts.groups.add("g", listOf("c1")) }
+            { bare.contacts.groups.add("g", listOf("c1")) },
+            { bare.contacts.groups.create("g") }
         )) {
             val e = runCatching { write() }.exceptionOrNull()
             assertTrue("expected IllegalStateException, got $e", e is IllegalStateException)
             assertEquals("no local store", e?.message)
         }
+    }
+
+    @Test
+    fun importWithoutAStoreGoesToTheServer() = runBlocking<Unit> {
+        val bare = Aduki.builder().key("opaque").endpoint(server.url("/v1").toString()).build()
+
+        val imported = bare.contacts.import("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:A\r\nEND:VCARD\r\n".byteInputStream())
+
+        assertEquals(Imported(created = 1, errors = listOf("card 2: no FN")), imported)
+        assertEquals(listOf("POST /v1/user/contacts/import"), paths)
     }
 
     @Test
@@ -112,7 +136,13 @@ class BookTest {
         val a = aduki.contacts.create(Card(name = "Ann")).let { aduki.contacts.get("srv1")!! }
         val b = aduki.contacts.create(Card(name = "Bob")).let { aduki.contacts.get("srv2")!! }
 
-        assertThrows(IllegalArgumentException::class.java) { runBlocking { aduki.contacts.groups.create("empty", emptyList()) } }
+        aduki.contacts.groups.create("empty")
+        assertEquals(listOf("empty"), aduki.contacts.groups.list())
+        withTimeout(5_000) { aduki.contacts.groups.observe()!!.first { it == listOf("empty") } }
+        assertTrue(paths.contains("POST /v1/user/contacts/groups"))
+        aduki.contacts.groups.delete("empty")
+        assertEquals(emptyList<String>(), aduki.contacts.groups.list())
+
         aduki.contacts.groups.create("friends", listOf(a.hex, b.hex))
         assertEquals(listOf("friends"), aduki.contacts.groups.list())
         val members = withTimeout(5_000) { aduki.contacts.observe("friends")!!.first { it.size == 2 } }
@@ -185,7 +215,8 @@ class BookTest {
         assertEquals(listOf("+44 7700 900123"), merged.phones)
         assertEquals(listOf("friends", "work"), merged.groups)
         assertEquals(1, aduki.contacts.duplicates().size)
-        assertEquals(2, paths.count { it.startsWith("DELETE") })
+        assertEquals(0, paths.count { it.startsWith("DELETE") })
+        assertEquals(1, paths.count { it.endsWith("/merge") })
         assertEquals(0, aduki.sync.outbox.value)
     }
 }

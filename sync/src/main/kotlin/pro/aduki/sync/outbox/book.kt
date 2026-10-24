@@ -9,6 +9,7 @@ import pro.aduki.core.vcard.Vcard
 import pro.aduki.store.box.Sealing
 import pro.aduki.store.entities.Contact
 import pro.aduki.store.entities.Contact_
+import pro.aduki.store.entities.Group
 import java.util.UUID
 
 /**
@@ -20,18 +21,23 @@ import java.util.UUID
  *   (`contact_...`) until [created] gives it the server's.
  * - `contact.update`: `{vcard, groups}`.
  * - `contact.groups`: `{groups}`, the contact's whole group list.
+ * - `contact.group`: `{name}`, a group created without members.
  * - `contact.rename`: `{group, name}`, a group renamed on every member.
  * - `contact.dissolve`: `{group}`, a group removed from every member.
+ * - `contact.merge`: `{others, vcard}`, the others merged into the contact
+ *   and deleted, in one server call.
  * - `contact.delete`: `{}`.
  *
- * The two group-wide actions have no hex: a contact sync waits while one is
- * queued.
+ * The three group-wide actions have no hex: a contact sync waits while one
+ * is queued. Groups created here are kept as `Group` rows until a sync
+ * replaces them with the server's list.
  *
  * The vCard is always written as 4.0, keeping the unmodelled properties of
  * the card's source vCard.
  */
 class Book(private val store: BoxStore, private val manager: Manager) {
     private val box = store.boxFor(Contact::class.java)
+    private val groupBox = store.boxFor(Group::class.java)
 
     /** Stores [card] as a new contact and queues its creation. */
     fun create(card: Card): Contact {
@@ -79,18 +85,41 @@ class Book(private val store: BoxStore, private val manager: Manager) {
         return contacts
     }
 
+    /**
+     * Creates the group [name] without members: it is kept as a `Group` row
+     * and queued, so it stays listed while empty. Nothing is queued for a
+     * group that is already listed.
+     */
+    fun group(name: String) {
+        val group = name.trim()
+        require(group.isNotEmpty()) { "group name is required" }
+        require(group.length <= 200) { "group name is longer than 200 characters" }
+        require(group.none { it.isISOControl() }) { "group name has a control character" }
+        store.runInTx {
+            if (groupBox.all.any { it.name == group }) return@runInTx
+            groupBox.put(Group(name = group))
+            manager.enqueue(GROUP, JSONObject().put("name", group).toString().toByteArray())
+        }
+    }
+
     /** Renames [group] to [name] on every local member and queues it as one action. */
     fun rename(group: String, name: String): List<Contact> =
-        wide(RENAME, JSONObject().put("group", group).put("name", name.trim()), group) { groups ->
+        wide(RENAME, JSONObject().put("group", group).put("name", name.trim()), group, name.trim()) { groups ->
             groups.map { if (it == group) name.trim() else it }.distinct()
         }
 
     /** Removes [group] from every local member and queues it as one action. */
     fun dissolve(group: String): List<Contact> =
-        wide(DISSOLVE, JSONObject().put("group", group), group) { groups -> groups - group }
+        wide(DISSOLVE, JSONObject().put("group", group), group, null) { groups -> groups - group }
 
-    private fun wide(action: String, payload: JSONObject, group: String, edit: (List<String>) -> List<String>): List<Contact> =
+    // [renamed] is the group's new name, or null when it goes.
+    private fun wide(action: String, payload: JSONObject, group: String, renamed: String?, edit: (List<String>) -> List<String>): List<Contact> =
         store.callInTx {
+            val rows = groupBox.all
+            groupBox.remove(rows.filter { it.name == group })
+            if (renamed != null && rows.any { it.name == group } && rows.none { it.name == renamed }) {
+                groupBox.put(Group(name = renamed))
+            }
             val members = box.all.filter { group in it.groups }
             for (contact in members) {
                 contact.groups = edit(contact.groups)
@@ -113,7 +142,8 @@ class Book(private val store: BoxStore, private val manager: Manager) {
      * Folds [others] into [keep] and deletes them, in one transaction: e-mail
      * addresses, phones and groups are combined, blank fields of [keep] are
      * filled from the others and the notes are joined. Unmodelled vCard
-     * properties of the others are not carried over.
+     * properties of the others are not carried over. It is queued as one
+     * `contact.merge` (an update when every other one was never sent).
      */
     fun merge(keep: String, others: List<String>): Contact {
         val gone = others.filter { it != keep }.distinct()
@@ -123,8 +153,14 @@ class Book(private val store: BoxStore, private val manager: Manager) {
             card.validate()
             fill(kept, card)
             box.put(kept)
-            manager.enqueue(UPDATE, payload(kept.vcard, kept.groups), keep)
-            gone.forEach(::remove)
+            // Ones never sent are just dropped; the server deletes the rest.
+            val sent = gone.filterNot { hex -> unsent(hex).also { if (it) manager.drop(hex) } }
+            gone.forEach { hex -> box.query(Contact_.hex.equal(hex)).build().findFirst()?.let(box::remove) }
+            if (sent.isEmpty()) {
+                manager.enqueue(UPDATE, payload(kept.vcard, kept.groups), keep)
+            } else {
+                manager.enqueue(MERGE, JSONObject().put("others", JSONArray(sent)).put("vcard", kept.vcard).put("groups", JSONArray(kept.groups)).toString().toByteArray(), keep)
+            }
             kept
         }
     }
@@ -153,7 +189,7 @@ class Book(private val store: BoxStore, private val manager: Manager) {
 
     private fun remove(hex: String) {
         val contact = box.query(Contact_.hex.equal(hex)).build().findFirst()
-        val unsent = hex.startsWith(PLACEHOLDER) && manager.pending().any { it.hex == hex && it.action == CREATE }
+        val unsent = unsent(hex)
         if (contact != null) box.remove(contact)
         if (unsent) {
             manager.drop(hex)
@@ -162,11 +198,17 @@ class Book(private val store: BoxStore, private val manager: Manager) {
         }
     }
 
+    // A contact whose creation is still queued.
+    private fun unsent(hex: String): Boolean =
+        hex.startsWith(PLACEHOLDER) && manager.pending().any { it.hex == hex && it.action == CREATE }
+
     companion object {
         const val PREFIX = "contact."
         const val CREATE = "contact.create"
         const val UPDATE = "contact.update"
         const val GROUPS = "contact.groups"
+        const val GROUP = "contact.group"
+        const val MERGE = "contact.merge"
         const val RENAME = "contact.rename"
         const val DISSOLVE = "contact.dissolve"
         const val DELETE = "contact.delete"

@@ -7,12 +7,15 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import java.util.concurrent.ConcurrentHashMap
 import pro.aduki.store.entities.Contact as ContactEntity
 import pro.aduki.store.box.Sealing
 import pro.aduki.store.entities.Contact_
+import pro.aduki.store.entities.Group as GroupEntity
 
 /**
  * ContactSource abstracts reactive entity streams for contacts.
@@ -29,6 +32,12 @@ interface ContactSource {
 
     /** Every stored contact, read now; empty when the source cannot list. */
     fun all(): List<ContactEntity> = emptyList()
+
+    /** The names of the stored groups (`Group` rows, which keep groups without members). */
+    fun groups(): Flow<List<String>> = flowOf(emptyList())
+
+    /** The names of the stored groups, read now. */
+    fun names(): List<String> = emptyList()
 }
 
 /**
@@ -55,6 +64,15 @@ class Contact(
                 box.query(Contact_.hex.equal(hex)).build().findFirst()
 
             override fun all(): List<ContactEntity> = box.all
+
+            private val groupBox = store.boxFor(GroupEntity::class.java)
+
+            override fun groups(): Flow<List<String>> = callbackFlow {
+                val sub = groupBox.query().build().subscribe().observer { data -> trySend(data.map { it.name }) }
+                awaitClose { sub.cancel() }
+            }
+
+            override fun names(): List<String> = groupBox.all.map { it.name }
 
             // Through the keyed blind index when the vault is attached; otherwise
             // a scan over the decrypted rows (every contact is read and opened).
@@ -88,12 +106,14 @@ class Contact(
     private val searchCache = ConcurrentHashMap<String, StateFlow<List<ContactEntity>>>()
     private val groupCache = ConcurrentHashMap<String, StateFlow<List<ContactEntity>>>()
 
-    // Group names are tags on contacts: the list is derived from them.
+    // Group names are the tags on contacts plus the stored groups (which
+    // keep a group without members listed).
     private val groupsFlow: StateFlow<List<String>> by lazy {
-        source.contacts()
-            .map { list -> list.flatMap { it.groups }.distinct().sortedBy { it.lowercase() } }
+        combine(source.contacts(), source.groups()) { list, names -> merge(list.flatMap { it.groups } + names) }
             .stateIn(scope = scope, started = SharingStarted.Eagerly, initialValue = emptyList())
     }
+
+    private fun merge(names: List<String>): List<String> = names.distinct().sortedBy { it.lowercase() }
 
     /**
      * Hot StateFlow of all contacts sorted by name.
@@ -133,8 +153,11 @@ class Contact(
             .stateIn(scope = scope, started = SharingStarted.Eagerly, initialValue = emptyList())
     }
 
-    /** Hot StateFlow of the group names in use, sorted. */
+    /** Hot StateFlow of the group names (in use, or kept without members), sorted. */
     fun groups(): StateFlow<List<String>> = groupsFlow
+
+    /** The group names now (in use, or kept without members), sorted. */
+    fun names(): List<String> = merge(source.all().flatMap { it.groups } + source.names())
 
     /** Every stored contact, read now. */
     fun all(): List<ContactEntity> = source.all()
