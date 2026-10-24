@@ -84,7 +84,8 @@ class Mailbox(
         return storage.tx {
             val local = storage.mailboxes().associateBy { it.hex }
             val kept = remote.map { it.hex }.toSet()
-            for (gone in local.values.filter { it.hex !in kept }) {
+            // A mailbox created offline is not on the server yet: keep it.
+            for (gone in local.values.filter { it.hex !in kept && !it.pending() }) {
                 storage.clearMailbox(gone.hex)
                 storage.removeMailbox(gone)
             }

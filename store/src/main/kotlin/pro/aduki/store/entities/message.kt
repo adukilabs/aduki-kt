@@ -63,6 +63,9 @@ data class Message(
         fun bits(flags: List<String>): Int =
             flags.fold(0) { acc, f -> acc or (SYSTEM[f.lowercase()] ?: 0) }
 
+        /** Keyword prefix of a snoozed message: `$snoozed-<epoch seconds>`. */
+        const val SNOOZED = "\$snoozed-"
+
         /** The flags in [flags] that are not system flags, space-separated. */
         fun keywords(flags: List<String>): String =
             flags.filter { SYSTEM[it.lowercase()] == null }.joinToString(" ")
@@ -79,6 +82,13 @@ data class Message(
         flags = flags xor flag
         dirty = true
     }
+
+    /** The keywords as a list. */
+    fun keywordList(): List<String> = keywords.split(' ').filter { it.isNotBlank() }
+
+    /** Epoch millis this message is snoozed until, or 0 when it is not snoozed. */
+    fun snoozed(): Long =
+        keywordList().firstOrNull { it.startsWith(SNOOZED) }?.removePrefix(SNOOZED)?.toLongOrNull()?.times(1000) ?: 0L
 
     fun recipients(): List<String> {
         if (to.isBlank()) return emptyList()

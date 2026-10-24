@@ -100,3 +100,87 @@ data class Moved(
     val uid: Long = 0,
     val modseq: Long = 0
 )
+
+/**
+ * Attachment is one attachment of a message; [blob] downloads it.
+ */
+data class Attachment(
+    val blob: String = "",
+    val name: String = "",
+    val type: String = "",
+    val size: Long = 0,
+    /** Content-ID of an inline part (an image the HTML refers to), or null. */
+    val cid: String? = null,
+    /** Shown inline in the body rather than listed. */
+    val inline: Boolean = false
+)
+
+/**
+ * Body is the full content of a message: its text and HTML parts (either
+ * may be empty) and its attachments.
+ */
+data class Body(
+    val hex: String = "",
+    val text: String = "",
+    val html: String = "",
+    val attachments: List<Attachment> = emptyList()
+)
+
+/**
+ * Upload is a file to attach: [bytes] in memory, or a [path] on disk that
+ * must stay readable until the message is sent (better for large files:
+ * the outbox then holds only the path).
+ */
+data class Upload(
+    val name: String,
+    val type: String = "application/octet-stream",
+    val bytes: ByteArray? = null,
+    val path: String? = null
+) {
+    // Arrays compare by content.
+    override fun equals(other: Any?): Boolean {
+        if (other !is Upload) return false
+        val a = bytes
+        val b = other.bytes
+        val same = if (a == null || b == null) a == b else a.contentEquals(b)
+        return same && name == other.name && type == other.type && path == other.path
+    }
+
+    override fun hashCode(): Int =
+        listOf(name, type, path, bytes?.contentHashCode()).hashCode()
+}
+
+/**
+ * Draft is an outgoing message. [reply] or [forward] is the hex of the
+ * message answered or forwarded: the reply threads on the server
+ * (`In-Reply-To`, `References`) and the original is marked answered or
+ * forwarded once sent.
+ */
+data class Draft(
+    val to: List<String> = emptyList(),
+    val cc: List<String> = emptyList(),
+    val bcc: List<String> = emptyList(),
+    val subject: String = "",
+    val text: String = "",
+    val html: String? = null,
+    /** An address the account may send as; the account's own when null. */
+    val from: String? = null,
+    /** Display name for [from]. */
+    val name: String? = null,
+    val attachments: List<Upload> = emptyList(),
+    val reply: String? = null,
+    val forward: String? = null
+) {
+    /** Throws [IllegalArgumentException] when the draft cannot be sent. */
+    fun validate() {
+        val all = to + cc + bcc
+        require(all.isNotEmpty()) { "at least one recipient" }
+        all.forEach { require('@' in it && it.isNotBlank()) { "not an address: $it" } }
+        require(reply == null || forward == null) { "a draft replies or forwards, not both" }
+        attachments.forEach { require(it.bytes != null || it.path != null) { "attachment ${it.name} has no bytes or path" } }
+    }
+
+    /** Sendable over the plain REST route: text only, no bcc, attachments, html or threading. */
+    fun plain(): Boolean =
+        bcc.isEmpty() && html == null && attachments.isEmpty() && reply == null && forward == null && name == null
+}

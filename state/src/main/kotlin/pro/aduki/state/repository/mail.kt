@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import java.util.concurrent.ConcurrentHashMap
@@ -17,6 +18,15 @@ import pro.aduki.store.entities.Message_
 import pro.aduki.sync.outbox.Manager
 
 /**
+ * Conversation is one thread of a mailbox: its newest message and counts.
+ */
+data class Conversation(
+    val latest: Message,
+    val count: Int,
+    val unread: Int
+)
+
+/**
  * MailSource abstracts reactive entity streams.
  */
 interface MailSource {
@@ -25,6 +35,18 @@ interface MailSource {
     fun message(hex: String): Flow<Message?>
     fun getMessage(hex: String): Message?
     fun getMailbox(hex: String): Mailbox?
+
+    /** The messages of a mailbox now, unordered. */
+    fun getMessages(mailboxHex: String): List<Message> = emptyList()
+
+    /** Every mailbox now. */
+    fun getMailboxes(): List<Mailbox> = emptyList()
+
+    /** Every message, in every mailbox. */
+    fun messages(): Flow<List<Message>> = emptyFlow()
+
+    /** The messages of one thread, in any mailbox. */
+    fun thread(threadId: String): Flow<List<Message>> = emptyFlow()
 }
 
 /**
@@ -68,6 +90,23 @@ class Mail(
             override fun getMailbox(hex: String): Mailbox? {
                 return mailboxBox.query(Mailbox_.hex.equal(hex)).build().findFirst()
             }
+
+            override fun getMailboxes(): List<Mailbox> = mailboxBox.all
+
+            override fun messages(): Flow<List<Message>> = callbackFlow {
+                val query = messageBox.query().build()
+                val sub = query.subscribe().observer { data -> trySend(data) }
+                awaitClose { sub.cancel() }
+            }
+
+            override fun thread(threadId: String): Flow<List<Message>> = callbackFlow {
+                val query = messageBox.query(Message_.threadId.equal(threadId)).build()
+                val sub = query.subscribe().observer { data -> trySend(data) }
+                awaitClose { sub.cancel() }
+            }
+
+            override fun getMessages(mailboxHex: String): List<Message> =
+                messageBox.query(Message_.mailbox.equal(mailboxHex)).build().use { it.find() }
         },
         manager = manager,
         scope = scope
@@ -131,6 +170,66 @@ class Mail(
                 )
         }
     }
+
+    /**
+     * Messages matching [query], newest first: every word must appear in the
+     * subject, sender, recipients or preview (case-insensitive). The columns
+     * are sealed, so matching runs in memory. Only [mailbox] when given.
+     * Not cached: the flow lives while it is collected (and 5 s after).
+     */
+    fun search(query: String, mailbox: String? = null): StateFlow<List<Message>> {
+        val words = query.lowercase().split(Regex("\\s+")).filter { it.isNotBlank() }
+        val rows = if (mailbox == null) source.messages() else source.messages(mailbox)
+        return rows.map { list ->
+            if (words.isEmpty()) return@map emptyList()
+            list.filter { msg ->
+                if (msg.deleted()) return@filter false
+                val text = listOf(msg.subject, msg.fromName, msg.fromEmail, msg.to, msg.preview).joinToString("\n").lowercase()
+                words.all { it in text }
+            }.sortedByDescending { it.receivedAt }
+        }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    }
+
+    /**
+     * The messages of a thread across mailboxes, oldest first; deleted ones hidden.
+     */
+    fun thread(threadId: String): StateFlow<List<Message>> =
+        source.thread(threadId)
+            .map { list -> list.filterNot { it.deleted() }.sortedBy { it.receivedAt } }
+            .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * The threads of a mailbox, newest first: one [Conversation] per thread
+     * with its latest message, message count and unread count.
+     */
+    fun conversations(mailboxHex: String): StateFlow<List<Conversation>> =
+        source.messages(mailboxHex)
+            .map { list ->
+                list.filterNot { it.deleted() }
+                    .groupBy { it.threadId.ifBlank { it.hex } }
+                    .values
+                    .map { group ->
+                        Conversation(
+                            latest = group.maxBy { it.receivedAt },
+                            count = group.size,
+                            unread = group.count { !it.seen() }
+                        )
+                    }
+                    .sortedByDescending { it.latest.receivedAt }
+            }
+            .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** The mailboxes now (not a flow), e.g. to find one by role or name. */
+    fun listMailboxes(): List<Mailbox> = source.getMailboxes()
+
+    /** The messages of a mailbox now (not a flow). */
+    fun listMessages(mailboxHex: String): List<Message> = source.getMessages(mailboxHex)
+
+    /**
+     * Hexes of the unread messages of a mailbox, read from the store now.
+     */
+    fun unseen(mailboxHex: String): List<String> =
+        source.getMessages(mailboxHex).filter { !it.seen() && !it.deleted() }.map { it.hex }
 
     /**
      * Toggles a flag optimistically via the Outbox Manager.

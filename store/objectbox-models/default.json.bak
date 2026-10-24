@@ -111,7 +111,7 @@
     },
     {
       "id": "2:8280994424801829309",
-      "lastPropertyId": "9:6351147272854077307",
+      "lastPropertyId": "11:6051939936355421854",
       "name": "Contact",
       "properties": [
         {
@@ -130,16 +130,12 @@
         {
           "id": "3:3332701905434976475",
           "name": "name",
-          "indexId": "8:4029574177425006642",
-          "type": 9,
-          "flags": 2048
+          "type": 9
         },
         {
           "id": "4:7672568988570896100",
           "name": "email",
-          "indexId": "9:5837476069643144096",
-          "type": 9,
-          "flags": 2048
+          "type": 9
         },
         {
           "id": "5:1355644239946890606",
@@ -165,6 +161,20 @@
           "id": "9:6351147272854077307",
           "name": "updated",
           "type": 6
+        },
+        {
+          "id": "10:4896721229333736016",
+          "name": "emailIndex",
+          "indexId": "25:8211107054101087750",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "11:6051939936355421854",
+          "name": "phoneIndex",
+          "indexId": "26:244079525061328731",
+          "type": 9,
+          "flags": 2048
         }
       ],
       "relations": []
@@ -516,13 +526,16 @@
     }
   ],
   "lastEntityId": "7:2953707000071179245",
-  "lastIndexId": "24:4591105093807168692",
+  "lastIndexId": "26:244079525061328731",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,
   "modelVersionParserMinimum": 5,
   "retiredEntityUids": [],
-  "retiredIndexUids": [],
+  "retiredIndexUids": [
+    4029574177425006642,
+    5837476069643144096
+  ],
   "retiredPropertyUids": [],
   "retiredRelationUids": [],
   "version": 1

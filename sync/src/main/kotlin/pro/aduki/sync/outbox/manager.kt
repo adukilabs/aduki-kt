@@ -4,9 +4,13 @@ import io.objectbox.BoxStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONArray
 import org.json.JSONObject
 import pro.aduki.store.box.Sealing
+import pro.aduki.store.entities.Mailbox
+import pro.aduki.store.entities.Mailbox_
 import pro.aduki.store.entities.Message
+import pro.aduki.store.entities.Message_
 import pro.aduki.store.entities.Outbox
 
 /**
@@ -23,6 +27,15 @@ interface Storage {
 
     /** How many actions are queued. */
     fun size(): Int = pending().size
+
+    fun getMailbox(hex: String): Mailbox? = null
+    fun putMailbox(mailbox: Mailbox) {}
+
+    /** Drops a mailbox row and the messages in it. */
+    fun removeMailbox(hex: String) {}
+
+    /** Gives mailbox [old] the hex [new], moving its messages along. */
+    fun renameMailbox(old: String, new: String) {}
 
     /** Gives the local message [old] the server's id [new] (after a send). */
     fun renameMessage(old: String, new: String) {
@@ -50,6 +63,24 @@ class Manager(private val storage: Storage) {
         override fun pending(): List<Outbox> = outbox.all.map(Sealing::opened).sortedBy { it.created }
         override fun <T> tx(block: () -> T): T = store.callInTx(block)
         override fun size(): Int = outbox.count().toInt()
+
+        private val mailboxes = store.boxFor(Mailbox::class.java)
+
+        override fun getMailbox(hex: String): Mailbox? =
+            mailboxes.query(Mailbox_.hex.equal(hex)).build().use { it.findFirst() }
+        override fun putMailbox(mailbox: Mailbox) { mailboxes.put(mailbox) }
+        override fun removeMailbox(hex: String) {
+            mailboxes.query(Mailbox_.hex.equal(hex)).build().use { it.remove() }
+            messages.query(Message_.mailbox.equal(hex)).build().use { it.remove() }
+        }
+        override fun renameMailbox(old: String, new: String) {
+            val row = getMailbox(old) ?: return
+            row.hex = new
+            mailboxes.put(row)
+            val moved = messages.query(Message_.mailbox.equal(old)).build().use { it.find() }
+            moved.forEach { it.mailbox = new }
+            messages.put(moved)
+        }
     })
 
     private val counter = MutableStateFlow(storage.size())
@@ -61,6 +92,15 @@ class Manager(private val storage: Storage) {
     fun recount() {
         counter.value = storage.size()
     }
+
+    /** The queued action with [id] as stored now, or null when it is gone. */
+    fun entry(id: Long): Outbox? = storage.getOutbox(id)
+
+    // Placeholder mailbox hexes adopted in this process, to their server hex:
+    // a caller may still hold a placeholder it got from [createMailbox].
+    private val adopted = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    private fun box(hex: String): String = adopted[hex] ?: hex
 
     /** The local message with [hex], or null. */
     fun message(hex: String): Message? = storage.getMessage(hex)
@@ -99,7 +139,8 @@ class Manager(private val storage: Storage) {
     /**
      * Optimistically moves a message to a destination mailbox and journals an outbox action.
      */
-    fun move(hex: String, dest: String): Outbox {
+    fun move(hex: String, target: String): Outbox {
+        val dest = box(target)
         return storage.tx {
             val msg = storage.getMessage(hex)
                 ?: throw IllegalArgumentException("Message not found: $hex")
@@ -126,14 +167,14 @@ class Manager(private val storage: Storage) {
      * (`{to, cc, subject, text, from?}`); a non-JSON payload (0.1.x) is
      * sent as the text with the message's own recipients and subject.
      */
-    fun send(msg: Message, raw: ByteArray): Outbox {
+    fun send(msg: Message, raw: ByteArray, action: String = "send"): Outbox {
         return storage.tx {
             msg.dirty = true
             storage.putMessage(msg)
 
             val entry = Outbox(
                 hex = msg.hex,
-                action = "send",
+                action = action,
                 payload = raw,
                 created = System.currentTimeMillis()
             )
@@ -167,6 +208,138 @@ class Manager(private val storage: Storage) {
     }
 
     /**
+     * Sets ([on]) or clears [flag] on a message and journals a `flag` action.
+     * Idempotent: returns null and queues nothing when the flag already is so.
+     */
+    fun set(hex: String, flag: Int, on: Boolean): Outbox? {
+        val msg = storage.getMessage(hex) ?: throw IllegalArgumentException("Message not found: $hex")
+        if (((msg.flags and flag) != 0) == on) return null
+        return flag(hex, flag)
+    }
+
+    /**
+     * Sets or clears [flag] on every message in [hexes] that is not so yet,
+     * in one `flags` action. Unknown hexes are skipped; returns null when
+     * nothing changes.
+     */
+    fun set(hexes: List<String>, flag: Int, on: Boolean): Outbox? {
+        return storage.tx {
+            val changed = hexes.distinct().mapNotNull(storage::getMessage).filter { ((it.flags and flag) != 0) != on }
+            if (changed.isEmpty()) return@tx null
+            for (msg in changed) {
+                msg.flags = if (on) msg.flags or flag else msg.flags and flag.inv()
+                msg.dirty = true
+                storage.putMessage(msg)
+            }
+            val payload = JSONObject().put("hexes", JSONArray(changed.map { it.hex })).put("flag", flag).put("set", on)
+            journal("flags", payload)
+        }.also { recount() }
+    }
+
+    /**
+     * Moves every message in [hexes] to [dest] in one `moves` action.
+     * Unknown hexes and messages already there are skipped.
+     */
+    fun move(hexes: List<String>, target: String): Outbox? {
+        val dest = box(target)
+        return storage.tx {
+            val moved = hexes.distinct().mapNotNull(storage::getMessage).filter { it.mailbox != dest }
+            if (moved.isEmpty()) return@tx null
+            for (msg in moved) {
+                msg.mailbox = dest
+                msg.dirty = true
+                storage.putMessage(msg)
+            }
+            journal("moves", JSONObject().put("hexes", JSONArray(moved.map { it.hex })).put("mailbox", dest))
+        }.also { recount() }
+    }
+
+    /**
+     * Marks every message in [hexes] deleted in one `deletes` action.
+     */
+    fun remove(hexes: List<String>): Outbox? {
+        val unique = hexes.distinct()
+        if (unique.isEmpty()) return null
+        return storage.tx {
+            for (msg in unique.mapNotNull(storage::getMessage)) {
+                msg.flags = msg.flags or Message.DELETED
+                msg.dirty = true
+                storage.putMessage(msg)
+            }
+            journal("deletes", JSONObject().put("hexes", JSONArray(unique)))
+        }.also { recount() }
+    }
+
+    /**
+     * Creates a mailbox locally under a placeholder hex (`Mailbox.PENDING`)
+     * and journals a `mailbox_create`; [adopt] gives it the server's hex.
+     */
+    fun createMailbox(name: String, under: String? = null): Mailbox {
+        require(name.isNotBlank()) { "Mailbox name cannot be empty" }
+        val parent = under?.let(::box)
+        return storage.tx {
+            val box = Mailbox(hex = Mailbox.PENDING + java.util.UUID.randomUUID(), name = name)
+            storage.putMailbox(box)
+            val payload = JSONObject().put("hex", box.hex).put("name", name)
+            if (!parent.isNullOrBlank()) payload.put("parent", parent)
+            journal("mailbox_create", payload, box.hex)
+            box
+        }.also { recount() }
+    }
+
+    /** Renames a mailbox locally and journals a `mailbox_rename`. */
+    fun renameMailbox(target: String, name: String): Outbox {
+        require(name.isNotBlank()) { "Mailbox name cannot be empty" }
+        val hex = box(target)
+        return storage.tx {
+            val box = storage.getMailbox(hex) ?: throw IllegalArgumentException("Mailbox not found: $hex")
+            box.name = name
+            storage.putMailbox(box)
+            journal("mailbox_rename", JSONObject().put("hex", hex).put("name", name))
+        }.also { recount() }
+    }
+
+    /** Drops a mailbox and its messages locally and journals a `mailbox_delete`. */
+    fun deleteMailbox(target: String): Outbox {
+        val hex = box(target)
+        return storage.tx {
+            storage.removeMailbox(hex)
+            journal("mailbox_delete", JSONObject().put("hex", hex))
+        }.also { recount() }
+    }
+
+    /**
+     * Gives the mailbox created offline as [old] the server's hex [new]:
+     * the row, its messages, and every queued action that names it.
+     */
+    fun adopt(old: String, new: String) {
+        if (new.isBlank() || old == new) return
+        adopted[old] = new
+        storage.tx {
+            storage.renameMailbox(old, new)
+            val quoted = JSONObject.quote(old)
+            for (entry in storage.pending()) {
+                val text = String(entry.payload, Charsets.UTF_8)
+                if (quoted !in text && entry.hex != old) continue
+                entry.payload = text.replace(quoted, JSONObject.quote(new)).toByteArray(Charsets.UTF_8)
+                if (entry.hex == old) entry.hex = new
+                storage.putOutbox(entry)
+            }
+        }
+    }
+
+    // Stores one action with a JSON payload; call inside a transaction.
+    private fun journal(action: String, payload: JSONObject, hex: String = ""): Outbox {
+        val entry = Outbox(
+            hex = hex,
+            action = action,
+            payload = payload.toString().toByteArray(Charsets.UTF_8),
+            created = System.currentTimeMillis()
+        )
+        return entry.copy(id = storage.putOutbox(entry))
+    }
+
+    /**
      * Manually enqueues an outbox action.
      */
     fun enqueue(action: String, payload: ByteArray, hex: String = ""): Outbox {
@@ -192,14 +365,31 @@ class Manager(private val storage: Storage) {
      * Marks an outbox action completed: removes from outbox and clears message dirty state.
      */
     fun complete(id: Long, hex: String? = null) {
+        complete(id, listOfNotNull(hex))
+    }
+
+    /**
+     * Adds and removes keywords (non-system flags such as `$Junk`) on a
+     * message and journals a `keywords` action.
+     */
+    fun keywords(hex: String, add: List<String> = emptyList(), remove: List<String> = emptyList()): Outbox {
+        return storage.tx {
+            val msg = storage.getMessage(hex) ?: throw IllegalArgumentException("Message not found: $hex")
+            msg.keywords = ((msg.keywordList() - remove.toSet()) + add).distinct().joinToString(" ")
+            msg.dirty = true
+            storage.putMessage(msg)
+            journal("keywords", JSONObject().put("hex", hex).put("add", JSONArray(add)).put("remove", JSONArray(remove)))
+        }.also { recount() }
+    }
+
+    /** Like `complete(id, hex)` for an action over several messages. */
+    fun complete(id: Long, hexes: List<String>) {
         storage.tx {
             storage.removeOutbox(id)
-            if (hex != null) {
-                val msg = storage.getMessage(hex)
-                if (msg != null) {
-                    msg.dirty = false
-                    storage.putMessage(msg)
-                }
+            for (hex in hexes) {
+                val msg = storage.getMessage(hex) ?: continue
+                msg.dirty = false
+                storage.putMessage(msg)
             }
         }
         recount()

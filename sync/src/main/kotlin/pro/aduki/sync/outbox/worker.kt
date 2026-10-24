@@ -36,7 +36,10 @@ class Worker(
         val now = System.currentTimeMillis()
         var successCount = 0
 
-        for (action in manager.pending()) {
+        for (queued in manager.pending()) {
+            // Re-read it: an earlier action in this drain may have rewritten
+            // it (a mailbox placeholder adopted its server hex) or removed it.
+            val action = manager.entry(queued.id) ?: continue
             if (action.nextRetry > now) {
                 // Break to preserve sequential outbox ordering
                 break
@@ -58,13 +61,12 @@ class Worker(
     suspend fun process(action: Outbox): Boolean {
         return try {
             dispatcher.dispatch(action)
-            val hex = action.hex.ifBlank { extractHex(action) }
-            manager.complete(action.id, hex)
+            manager.complete(action.id, hexes(action))
             true
         } catch (e: Rejected) {
             // Permanent: drop it (and clear the message's dirty mark so the
             // next sync restores the server's state) and move on.
-            manager.complete(action.id, action.hex.ifBlank { extractHex(action) })
+            manager.complete(action.id, hexes(action))
             onRejected(action, e)
             true
         } catch (_: Exception) {
@@ -72,6 +74,19 @@ class Worker(
             manager.fail(action.id, delay)
             false
         }
+    }
+
+    // The messages an action touched: its own hex, or the payload's `hex` or `hexes`.
+    private fun hexes(action: Outbox): List<String> {
+        if (action.hex.isNotBlank()) return listOf(action.hex)
+        val many = try {
+            val str = String(action.payload, Charsets.UTF_8)
+            if (str.trimStart().startsWith("{")) org.json.JSONObject(str).optJSONArray("hexes") else null
+        } catch (_: Exception) {
+            null
+        }
+        if (many != null) return (0 until many.length()).map { many.getString(it) }
+        return listOfNotNull(extractHex(action))
     }
 
     private fun extractHex(action: Outbox): String? {

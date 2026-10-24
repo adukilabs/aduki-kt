@@ -55,6 +55,19 @@ class Mail(
         list(paged(url("user", "mail", "thread", thread), page, limit))
 
     /**
+     * Server-side search over the whole account, or one [mailbox] (a hex):
+     * subject, sender and recipients, including messages not synced locally.
+     */
+    fun search(query: String, mailbox: String? = null, page: Int = 1, limit: Int = 50): Listing<MessageRow> {
+        if (mailbox.isNullOrBlank()) return list(paged(url("user", "mail", "search", query), page, limit))
+        val request = Request.Builder()
+            .url(paged(url("user", "mail", "search", query, "advanced"), page, limit))
+            .post(JSONObject().put("mailbox", mailbox).toString().toRequestBody(mediaJson))
+            .build()
+        return execute(request) { body -> listing(JSONObject(body), ::parseRow) }
+    }
+
+    /**
      * What changed in [mailbox] since [since] (a MODSEQ from a previous call,
      * or 0 for a first sync). Pass the [uidvalidity] last seen, if any: a
      * mismatch comes back as [MailChanges.reset].
@@ -145,21 +158,32 @@ class Mail(
     /** The account's mailboxes. */
     fun mailboxes(page: Int = 1, limit: Int = 200): Listing<MailboxRow> {
         val request = Request.Builder().url(paged(url("user", "mailbox"), page, limit)).get().build()
-        return execute(request) { body ->
-            listing(JSONObject(body)) { item ->
-                MailboxRow(
-                    hex = item.optString("hex"),
-                    name = item.optString("name"),
-                    delimiter = item.optString("delimiter", "."),
-                    flags = strings(item.optJSONArray("flags")),
-                    uidvalidity = item.optLong("uidvalidity"),
-                    uidnext = item.optLong("uidnext"),
-                    role = text(item, "role").ifEmpty { null },
-                    messages = item.optLong("messages"),
-                    unread = item.optLong("unread")
-                )
-            }
-        }
+        return execute(request) { body -> listing(JSONObject(body), ::parseMailbox) }
+    }
+
+    /** Creates a mailbox, under [parent] (a mailbox hex) when given. */
+    fun createMailbox(name: String, parent: String? = null): MailboxRow {
+        val payload = JSONObject().put("name", name)
+        if (!parent.isNullOrBlank()) payload.put("parent", parent)
+        val request = Request.Builder()
+            .url(url("user", "mailbox").build())
+            .post(payload.toString().toRequestBody(mediaJson))
+            .build()
+        return execute(request) { body -> parseMailbox(JSONObject(body)) }
+    }
+
+    /** Renames a mailbox. */
+    fun renameMailbox(hex: String, name: String): MailboxRow {
+        val request = Request.Builder()
+            .url(url("user", "mailbox", hex, "name").build())
+            .patch(JSONObject().put("name", name).toString().toRequestBody(mediaJson))
+            .build()
+        return execute(request) { body -> parseMailbox(JSONObject(body)) }
+    }
+
+    /** Deletes a mailbox and the messages in it. */
+    fun deleteMailbox(hex: String) {
+        execute(Request.Builder().url(url("user", "mailbox", hex).build()).delete().build()) { }
     }
 
     private fun cursor(builder: HttpUrl.Builder, after: String?, limit: Int): HttpUrl {
@@ -233,6 +257,19 @@ class Mail(
                 modseq = obj.optLong("modseq")
             )
         }
+
+        /** Parses one mailbox (a `/user/mailbox` row). */
+        fun parseMailbox(item: JSONObject): MailboxRow = MailboxRow(
+            hex = item.optString("hex"),
+            name = item.optString("name"),
+            delimiter = item.optString("delimiter", "."),
+            flags = strings(item.optJSONArray("flags")),
+            uidvalidity = item.optLong("uidvalidity"),
+            uidnext = item.optLong("uidnext"),
+            role = text(item, "role").ifEmpty { null },
+            messages = item.optLong("messages"),
+            unread = item.optLong("unread")
+        )
 
         /** Parses a `/user/mail/changes` response. */
         fun parseChanges(obj: JSONObject): MailChanges {

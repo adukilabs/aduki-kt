@@ -20,4 +20,12 @@ data class Mailbox(
     var modseq: Long = 0,
     var exists: Int = 0,
     var unseen: Int = 0
-)
+) {
+    companion object {
+        /** Hex prefix of a mailbox created offline, until the server names it. */
+        const val PENDING = "local-"
+    }
+
+    /** Created offline and not on the server yet. */
+    fun pending(): Boolean = hex.startsWith(PENDING)
+}

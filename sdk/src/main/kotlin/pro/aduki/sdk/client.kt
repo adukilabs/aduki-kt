@@ -41,6 +41,8 @@ import pro.aduki.sync.engine.ContactStorage
 import pro.aduki.sync.http.HttpContactTransport
 import pro.aduki.sync.http.HttpDispatcher
 import pro.aduki.sync.http.HttpMailboxTransport
+import pro.aduki.sync.http.JmapContentTransport
+import pro.aduki.sync.engine.Content as ContentEngine
 import pro.aduki.sync.outbox.Rejected
 import pro.aduki.store.box.Factory
 import pro.aduki.store.entities.Outbox
@@ -221,7 +223,7 @@ class Aduki internal constructor(
 
     private val outboxWorker: Worker? = worker ?: store?.let {
         outbox?.let { queue ->
-            Worker(queue, HttpDispatcher(mailApi, queue::message, queue::rename), onRejected = rejected)
+            Worker(queue, HttpDispatcher(mailApi, queue::message, queue::rename, jmap = jmap, adopt = queue::adopt), onRejected = rejected)
         }
     }
 
@@ -233,7 +235,9 @@ class Aduki internal constructor(
     private val mailboxSync: MailboxEngine? = mailboxEngine
         ?: store?.let { MailboxEngine(it, HttpMailboxTransport(mailApi)) }
 
-    val mail = Mail(this, outbox, mailRepo ?: store?.let { MailRepo(it, outbox, scope) }, outboxWorker)
+    private val bodies: ContentEngine? = store?.let { ContentEngine(it, JmapContentTransport(jmap)) }
+
+    val mail = Mail(this, outbox, mailRepo ?: store?.let { MailRepo(it, outbox, scope) }, outboxWorker, bodies)
     val contacts = Contacts(this, contactRepo ?: store?.let { ContactRepo(it, scope) }, contactSync)
     val sync = Sync(this, mailboxSync, contactSync, outboxWorker, outbox)
     val scheduling = Scheduling(
