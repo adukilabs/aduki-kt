@@ -17,12 +17,13 @@ import pro.aduki.store.entities.Outbox
  * With no vault installed, values are written in the clear and sealed values
  * cannot be read (they fail closed). Sealed: every personal text column
  * (message subject, sender, recipients, preview, blob; contact name, e-mails,
- * phones, groups, company, notes, photo, vCard; appointment location and notes;
- * mailbox and service names and descriptions; cached message bodies and
- * attachment lists) and the outbox payload (through the outbox storage, not a
- * converter: the ObjectBox generator cannot convert a byte-array column).
- * Clear: ids, hexes, uids, flags, keywords, timestamps, counters,
- * sequence numbers, roles, statuses and tenant/host/service ids. Contacts also
+ * phones, groups, company, notes, photo, vCard; appointment title, location,
+ * notes, organizer, attendees and iCalendar object; mailbox and service names
+ * and descriptions; cached message bodies and attachment lists) and the outbox
+ * payload (through the outbox storage, not a converter: the ObjectBox
+ * generator cannot convert a byte-array column). Clear: ids, hexes, uids,
+ * flags, keywords, timestamps, counters, sequence numbers, roles, statuses,
+ * recurrence rules, reminder offsets and tenant/calendar/service ids. Contacts also
  * carry keyed blind indexes of e-mail and phone for exact lookups.
  */
 object Sealing {

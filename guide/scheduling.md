@@ -10,10 +10,11 @@ This guide details the scheduling and appointment subsystem integrated into the 
 
 The scheduling capability is distributed across the SDK modules following clean separation of concerns:
 
-- **`:store`**: ObjectBox FlatBuffers models (`Appointment`, `Service`) and memory-efficient `Slot` models.
-- **`:net`**: Pure OkHttp JSON client executing `/user/appointments`, `/user/services`, `/user/availability`, and public `/book/{slug}` requests.
-- **`:sync`**: Delta synchronizer updating local appointments cache with local ID retention, and enqueuing offline booking mutations in the outbox.
-- **`:state`**: Reactive `AppointmentRepository` exposing hot `StateFlow<List<Appointment>>` feeds via live ObjectBox query observers.
+- **`:core`**: iCalendar reading and writing (`calendar.Ics`, `calendar.Events`) and recurrence expansion (`calendar.Recurrence`).
+- **`:store`**: ObjectBox FlatBuffers models (`Appointment`, which keeps each event's iCalendar object, `Service`) and memory-efficient `Slot` models.
+- **`:net`**: Pure OkHttp JSON client for `/user/events` (events as iCalendar objects), `/user/pages` (services), `/user/schedules` (availability), `/user/book/pages/{hex}/slots`, `/user/bookings`, `/user/schedule/services` and the public `/book/pages/{hex}/bookings`. The `/user/appointments`, `/user/services`, `/user/availability` and `/book/{slug}` routes of 0.4 do not exist on the server.
+- **`:sync`**: `engine.Schedule` reconciles the calendar and applies event writes optimistically, journaling them in the outbox through `Manager`; `http.ScheduleDispatcher` sends them, as a fallback of `HttpDispatcher`.
+- **`:state`**: Reactive `Appointment` repository exposing hot `StateFlow<List<Appointment>>` feeds and `observe(start, end)` occurrences, repeats expanded.
 - **`:sdk`**: High-level `Scheduling` service facade attached to `Aduki`.
 
 ---
@@ -30,27 +31,28 @@ lifecycleScope.launch {
 }
 ```
 
-### Fetch Free / Busy Slots
+### Fetch Open Slots of a Service
 ```kotlin
 val slots = client.scheduling.slots(
-    service = "srv_consultation",
-    start = "2026-10-15T09:00:00",
-    end = "2026-10-15T17:00:00"
+    service = consult.hex,
+    start = Instant.parse("2026-10-15T00:00:00Z"),
+    end = Instant.parse("2026-10-16T00:00:00Z")
 )
 ```
 
-### Book Appointment (Host or Authenticated User)
+### Create an Event
 ```kotlin
 val appointment = client.scheduling.create(
-    service = "srv_consultation",
-    start = "2026-10-15T14:00:00",
-    end = "2026-10-15T14:30:00",
-    timezone = "America/New_York",
-    notes = "Architecture review"
+    EventRequest(
+        title = "Architecture review",
+        start = Instant.parse("2026-10-15T18:00:00Z"),
+        end = Instant.parse("2026-10-15T18:30:00Z"),
+        timezone = "America/New_York"
+    )
 )
 ```
 
-### Cancel Appointment
+### Cancel an Event
 ```kotlin
 client.scheduling.cancel(
     hex = appointment.hex,
@@ -58,3 +60,4 @@ client.scheduling.cancel(
 )
 ```
 
+See `docs/services/scheduling.md` for the full surface.

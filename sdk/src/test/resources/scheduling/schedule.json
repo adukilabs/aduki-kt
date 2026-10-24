@@ -1,0 +1,1 @@
+{"success":true,"data":{"hex":"39ff21cbd4760d8e","name":"sdk-fixture","zone":"Africa/Nairobi","main":false,"created":"2026-10-24T16:41:56.336943Z","updated":"2026-10-24T16:41:56.336943Z","rules":[{"days":["mon","tue","wed","thu","fri"],"begins":"09:00","finishes":"17:00","kind":"open","place":null}],"template":null}}

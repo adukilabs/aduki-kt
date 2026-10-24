@@ -1,5 +1,7 @@
 package pro.aduki.net.http
 
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -7,12 +9,35 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import pro.aduki.core.errors.AdukiException
+import pro.aduki.core.models.Address
 import pro.aduki.core.models.AppointmentRecord
+import pro.aduki.core.models.BookRequest
+import pro.aduki.core.models.BookingRecord
+import pro.aduki.core.models.OfferRecord
+import pro.aduki.core.models.Place
+import pro.aduki.core.models.ServiceRequest
 import pro.aduki.core.models.ServiceRecord
 import pro.aduki.core.models.Slot
+import pro.aduki.core.models.Stats
+import pro.aduki.core.models.Window
+import java.time.Instant
 
 /**
- * Scheduling provides network operations for appointments, services, availability, and public booking.
+ * Scheduling is the REST client for calendar events, booking pages
+ * ("services"), their schedules and bookings (ADK-CAL-002):
+ *
+ * - events: `GET /user/events`, `GET /user/events/range/{start}/{end}`
+ *   (pages of `{items, total, page, pages}`), `POST /user/events`
+ *   `{ical, calendar?}`, `PATCH /user/events/{hex}` `{ical}`,
+ *   `DELETE /user/events/{hex}`. An event is an iCalendar object; the
+ *   server derives every other field from it.
+ * - services: `GET|POST /user/pages`, `GET|PATCH|DELETE /user/pages/{hex}`.
+ * - availability: `GET|POST /user/schedules`, `PUT /user/schedules/{hex}/rules`.
+ * - offers a page sells: `GET /user/schedule/services?page=`.
+ * - slots and bookings: `GET /user/book/pages/{hex}/slots?from&to&length`,
+ *   `POST /user/book/pages/{hex}/bookings` (signed in),
+ *   `POST /book/pages/{hex}/bookings` (public, guest), `GET /user/bookings`,
+ *   `GET|PATCH /user/bookings/{hex}`.
  */
 class Scheduling(
     private val client: OkHttpClient,
@@ -20,209 +45,423 @@ class Scheduling(
 ) {
     private val mediaJson = "application/json; charset=utf-8".toMediaType()
 
-    private fun url(path: String): String {
+    private fun url(path: String): HttpUrl {
         val clean = endpoint.trimEnd('/')
-        val rel = path.trimStart('/')
-        return "$clean/$rel"
+        return "$clean/${path.trimStart('/')}".toHttpUrl()
     }
 
-    /**
-     * Lists active appointments for the authenticated user.
-     */
-    fun appointments(activeOnly: Boolean = true): List<AppointmentRecord> {
-        val path = if (activeOnly) "user/appointments/active" else "user/appointments"
-        val request = Request.Builder()
-            .url(url(path))
-            .get()
+    // ── Events ───────────────────────────────────────────────────────
+
+    /** Every event of the account (`GET /user/events`, all pages). */
+    fun events(): List<AppointmentRecord> = paged(url("user/events"), ::parseEvent)
+
+    /** Events overlapping `[start, end)` (`GET /user/events/range/{start}/{end}`). Repeating events are matched by their first occurrence only. */
+    fun range(start: Instant, end: Instant): List<AppointmentRecord> {
+        val path = url("user/events/range").newBuilder()
+            .addPathSegment(start.toString())
+            .addPathSegment(end.toString())
             .build()
+        return paged(path, ::parseEvent)
+    }
 
-        return execute(request) { body ->
-            val result = mutableListOf<AppointmentRecord>()
-            val array = if (body.trimStart().startsWith("[")) {
-                JSONArray(body)
-            } else {
-                val obj = JSONObject(body)
-                obj.optJSONArray("items") ?: obj.optJSONArray("data") ?: JSONArray()
-            }
-            for (i in 0 until array.length()) {
-                val item = array.getJSONObject(i)
-                result.add(parseAppointment(item))
-            }
-            result
-        }
+    /** Creates an event from an iCalendar object, in [calendar] (a hex) or the default calendar. */
+    fun createEvent(ical: String, calendar: String = ""): AppointmentRecord {
+        val payload = JSONObject().put("ical", ical)
+        if (calendar.isNotBlank()) payload.put("calendar", calendar)
+        val request = Request.Builder().url(url("user/events")).post(json(payload)).build()
+        return execute(request) { parseEvent(JSONObject(it)) }
     }
 
     /**
-     * Fetches a specific appointment by its hex identifier.
+     * Replaces an event's iCalendar object. The whole object is sent: the
+     * server's field edit (`summary`, `location`, ...) re-renders the object
+     * and drops attendees and alarms.
      */
-    fun appointment(hex: String): AppointmentRecord {
+    fun replaceEvent(hex: String, ical: String): AppointmentRecord {
         val request = Request.Builder()
-            .url(url("user/appointments/$hex"))
-            .get()
+            .url(url("user/events").newBuilder().addPathSegment(hex).build())
+            .patch(json(JSONObject().put("ical", ical)))
             .build()
-
-        return execute(request) { body ->
-            parseAppointment(JSONObject(body))
-        }
+        return execute(request) { parseEvent(JSONObject(it)) }
     }
 
     /**
-     * Creates a new appointment on the server.
+     * Answers an invitation: `POST /user/events/{hex}/reply` `{partstat}`
+     * (`ACCEPTED`, `DECLINED`, `TENTATIVE`) answers with the event.
+     * Proposed route: the server sets the account's `PARTSTAT` and sends the
+     * organizer an iTIP REPLY. Null where the server does not have it
+     * (`404`, `405`).
      */
-    fun create(
-        service: String,
-        start: String,
-        end: String,
-        timezone: String = "UTC",
-        notes: String = "",
-        location: String = ""
-    ): AppointmentRecord {
-        val payload = JSONObject().apply {
-            put("service", service)
-            put("start", start)
-            put("end", end)
-            put("timezone", timezone)
-            put("notes", notes)
-            if (location.isNotBlank()) {
-                put("location", JSONObject().put("type", location))
-            }
-        }
-
+    fun reply(hex: String, partstat: String): AppointmentRecord? {
         val request = Request.Builder()
-            .url(url("user/appointments"))
-            .post(payload.toString().toRequestBody(mediaJson))
+            .url(url("user/events").newBuilder().addPathSegment(hex).addPathSegment("reply").build())
+            .post(json(JSONObject().put("partstat", partstat)))
             .build()
-
-        return execute(request) { body ->
-            parseAppointment(JSONObject(body))
-        }
+        return missing { execute(request) { parseEvent(JSONObject(it)) } }
     }
 
-    /**
-     * Cancels an appointment.
-     */
-    fun cancel(hex: String, reason: String = ""): Boolean {
-        val payload = JSONObject().apply {
-            if (reason.isNotBlank()) {
-                put("reason", reason)
-            }
-        }
-
+    /** Deletes an event. */
+    fun removeEvent(hex: String) {
         val request = Request.Builder()
-            .url(url("user/appointments/$hex/cancel"))
-            .patch(payload.toString().toRequestBody(mediaJson))
+            .url(url("user/events").newBuilder().addPathSegment(hex).build())
+            .delete()
             .build()
-
-        return execute(request) { true }
+        execute(request) { }
     }
 
-    /**
-     * Lists booking services configured by the user.
-     */
+    // ── Services (booking pages) ─────────────────────────────────────
+
+    /** The account's booking pages (`GET /user/pages`). */
     fun services(): List<ServiceRecord> {
-        val request = Request.Builder()
-            .url(url("user/services"))
-            .get()
-            .build()
+        val request = Request.Builder().url(url("user/pages")).get().build()
+        return execute(request) { body -> objects(JSONArray(body)).map(::parseService) }
+    }
 
+    /** One booking page (`GET /user/pages/{hex}`). */
+    fun service(hex: String): ServiceRecord {
+        val request = Request.Builder().url(url("user/pages").newBuilder().addPathSegment(hex).build()).get().build()
+        return execute(request) { parseService(JSONObject(it)) }
+    }
+
+    /** Creates a booking page on [schedule] (a hex; the main schedule when blank). */
+    fun createService(service: ServiceRequest, schedule: String = ""): ServiceRecord {
+        val request = Request.Builder().url(url("user/pages")).post(json(page(service, schedule))).build()
+        return execute(request) { parseService(JSONObject(it)) }
+    }
+
+    /** Edits a booking page; null fields of [service] keep their value. A non-blank [schedule] moves it to that schedule. */
+    fun editService(hex: String, service: ServiceRequest, schedule: String = ""): ServiceRecord {
+        val request = Request.Builder()
+            .url(url("user/pages").newBuilder().addPathSegment(hex).build())
+            .patch(json(page(service, schedule)))
+            .build()
+        return execute(request) { parseService(JSONObject(it)) }
+    }
+
+    /** Deletes a booking page; the server pauses one that has bookings instead (`409`). */
+    fun removeService(hex: String) {
+        val request = Request.Builder().url(url("user/pages").newBuilder().addPathSegment(hex).build()).delete().build()
+        execute(request) { }
+    }
+
+    // ── Schedules (availability) ─────────────────────────────────────
+
+    /** The account's schedules as `(hex, name)` (`GET /user/schedules`). */
+    fun schedules(): List<Pair<String, String>> {
+        val request = Request.Builder().url(url("user/schedules")).get().build()
         return execute(request) { body ->
-            val result = mutableListOf<ServiceRecord>()
-            val array = JSONArray(body)
-            for (i in 0 until array.length()) {
-                result.add(parseService(array.getJSONObject(i)))
-            }
-            result
+            objects(JSONArray(body)).map { it.optString("hex") to it.optString("name") }
+        }
+    }
+
+    /** Creates a schedule open in [windows], read in [zone]; returns its hex. */
+    fun createSchedule(name: String, zone: String, windows: List<Window>): String {
+        val payload = JSONObject().put("name", name).put("zone", zone).put("rules", rules(windows))
+        val request = Request.Builder().url(url("user/schedules")).post(json(payload)).build()
+        return execute(request) { JSONObject(it).getString("hex") }
+    }
+
+    /** Replaces the weekly windows of [schedule] (`PUT /user/schedules/{hex}/rules`). */
+    fun rules(schedule: String, windows: List<Window>) {
+        val request = Request.Builder()
+            .url(url("user/schedules").newBuilder().addPathSegment(schedule).addPathSegment("rules").build())
+            .put(rules(windows).toString().toRequestBody(mediaJson))
+            .build()
+        execute(request) { }
+    }
+
+    // ── Slots and bookings ───────────────────────────────────────────
+
+    /**
+     * Open slots of a booking page in `[from, to)` (at most 62 days), for
+     * [length] minutes or the page's default
+     * (`GET /user/book/pages/{hex}/slots`).
+     */
+    fun slots(service: String, from: Instant, to: Instant, length: Int? = null): List<Slot> {
+        val path = url("user/book/pages").newBuilder()
+            .addPathSegment(service)
+            .addPathSegment("slots")
+            .addQueryParameter("from", from.toString())
+            .addQueryParameter("to", to.toString())
+            .apply { if (length != null) addQueryParameter("length", length.toString()) }
+            .build()
+        val request = Request.Builder().url(path).get().build()
+        return execute(request) { body ->
+            objects(JSONArray(body)).map { Slot(start = it.optString("start"), end = it.optString("end")) }
         }
     }
 
     /**
-     * Computes available booking slots within [start, end].
+     * Books a slot as a guest (`POST /book/pages/{hex}/bookings`, public).
+     * The returned booking carries the guest's manage token, shown once.
+     * A taken slot answers `409` (`slot.taken`).
      */
-    fun availability(start: String, end: String, service: String = ""): List<Slot> {
-        val query = if (service.isNotBlank()) "?service=$service" else ""
+    fun book(service: String, booking: BookRequest): BookingRecord {
+        val payload = JSONObject()
+            .put("start", booking.start.toString())
+            .put("zone", booking.zone)
+            .put("name", booking.name)
+            .put("email", booking.email)
+            .put("answers", JSONObject(booking.answers))
+        booking.length?.let { payload.put("length", it) }
+        if (booking.phone.isNotBlank()) payload.put("phone", booking.phone)
+        if (booking.notes.isNotBlank()) payload.put("notes", booking.notes)
+        if (booking.offer.isNotBlank()) payload.put("service", booking.offer)
         val request = Request.Builder()
-            .url(url("user/availability/$start/$end$query"))
-            .get()
+            .url(url("book/pages").newBuilder().addPathSegment(service).addPathSegment("bookings").build())
+            .post(json(payload))
             .build()
-
         return execute(request) { body ->
             val obj = JSONObject(body)
-            val slotsArray = obj.optJSONArray("slots") ?: JSONArray()
-            val slots = mutableListOf<Slot>()
-            for (i in 0 until slotsArray.length()) {
-                val s = slotsArray.getJSONObject(i)
-                slots.add(
-                    Slot(
-                        start = s.optString("start", ""),
-                        end = s.optString("end", ""),
-                        available = true
-                    )
+            parseBooking(obj.optJSONObject("booking") ?: obj).copy(token = obj.optString("token"))
+        }
+    }
+
+    /**
+     * Booking counts of one page for bookings starting in `[from, to)`:
+     * `GET /user/pages/{hex}/stats?from&to` answers
+     * `{views, bookings, confirmed, pending, cancelled, done, noshow}`.
+     * Proposed route; null where the server does not have it (`404`, `405`).
+     */
+    fun stats(service: String, from: Instant, to: Instant): Stats? {
+        val path = url("user/pages").newBuilder()
+            .addPathSegment(service)
+            .addPathSegment("stats")
+            .addQueryParameter("from", from.toString())
+            .addQueryParameter("to", to.toString())
+            .build()
+        val request = Request.Builder().url(path).get().build()
+        return missing {
+            execute(request) { body ->
+                val obj = JSONObject(body)
+                Stats(
+                    service = service,
+                    views = if (obj.isNull("views") || !obj.has("views")) null else obj.optInt("views"),
+                    bookings = obj.optInt("bookings"),
+                    confirmed = obj.optInt("confirmed"),
+                    pending = obj.optInt("pending"),
+                    cancelled = obj.optInt("cancelled"),
+                    done = obj.optInt("done"),
+                    noshow = obj.optInt("noshow")
                 )
             }
-            slots
         }
     }
 
     /**
-     * Guest books an appointment using public service slug.
+     * Books a slot as the signed-in account (`POST /user/book/pages/{hex}/bookings`
+     * `{start, length?, zone, notes?, answers, service?}`): no e-mail
+     * confirmation, and `internal` pages are open too.
      */
-    fun book(
-        slug: String,
-        start: String,
-        end: String,
-        guestName: String,
-        guestEmail: String,
-        answers: Map<String, String> = emptyMap()
-    ): AppointmentRecord {
-        val payload = JSONObject().apply {
-            put("start", start)
-            put("end", end)
-            put("guest_name", guestName)
-            put("guest_email", guestEmail)
-            if (answers.isNotEmpty()) {
-                put("answers", JSONObject(answers))
-            }
-        }
-
+    fun reserve(service: String, booking: BookRequest): BookingRecord {
+        val payload = JSONObject()
+            .put("start", booking.start.toString())
+            .put("zone", booking.zone)
+            .put("answers", JSONObject(booking.answers))
+        booking.length?.let { payload.put("length", it) }
+        if (booking.notes.isNotBlank()) payload.put("notes", booking.notes)
+        if (booking.offer.isNotBlank()) payload.put("service", booking.offer)
         val request = Request.Builder()
-            .url(url("book/$slug"))
-            .post(payload.toString().toRequestBody(mediaJson))
+            .url(url("user/book/pages").newBuilder().addPathSegment(service).addPathSegment("bookings").build())
+            .post(json(payload))
             .build()
+        return execute(request) { parseBooking(JSONObject(it)) }
+    }
 
-        return execute(request) { body ->
-            val obj = JSONObject(body)
-            val appt = obj.optJSONObject("appointment") ?: obj
-            parseAppointment(appt)
+    /** One booking with its guests (`GET /user/bookings/{hex}`). */
+    fun booking(hex: String): BookingRecord {
+        val request = Request.Builder().url(url("user/bookings").newBuilder().addPathSegment(hex).build()).get().build()
+        return execute(request) { parseBooking(JSONObject(it)) }
+    }
+
+    /**
+     * Sets a booking's state (`PATCH /user/bookings/{hex}` `{state}`):
+     * `confirmed`, `cancelled`, `done` or `noshow`. The server takes no reason.
+     */
+    fun updateBooking(hex: String, state: String): BookingRecord {
+        val request = Request.Builder()
+            .url(url("user/bookings").newBuilder().addPathSegment(hex).build())
+            .patch(json(JSONObject().put("state", state)))
+            .build()
+        return execute(request) { parseBooking(JSONObject(it)) }
+    }
+
+    /** The offers of the account's pages, of one page when [service] is set (`GET /user/schedule/services?page=`). */
+    fun offers(service: String = ""): List<OfferRecord> {
+        val path = url("user/schedule/services").newBuilder()
+            .apply { if (service.isNotBlank()) addQueryParameter("page", service) }
+            .build()
+        val request = Request.Builder().url(path).get().build()
+        return execute(request) { body -> objects(JSONArray(body)).map(::parseOffer) }
+    }
+
+    /** The bookings of the account's pages (`GET /user/bookings`, all pages). */
+    fun bookings(upcoming: Boolean = false): List<BookingRecord> {
+        val path = url("user/bookings").newBuilder()
+            .apply { if (upcoming) addQueryParameter("upcoming", "true") }
+            .build()
+        return paged(path, ::parseBooking)
+    }
+
+    // ── Wire shapes ──────────────────────────────────────────────────
+
+    private fun json(obj: JSONObject) = obj.toString().toRequestBody(mediaJson)
+
+    private fun rules(windows: List<Window>): JSONArray = JSONArray().apply {
+        for (w in windows) {
+            put(
+                JSONObject()
+                    .put("days", JSONArray(w.days.map { it.lowercase() }))
+                    .put("begins", w.begins)
+                    .put("finishes", w.finishes)
+            )
         }
     }
 
-    private fun parseAppointment(obj: JSONObject): AppointmentRecord {
+    private fun page(s: ServiceRequest, schedule: String): JSONObject = JSONObject().apply {
+        if (schedule.isNotBlank()) put("schedule", schedule)
+        s.slug?.let { put("slug", it) }
+        s.name?.let { put("name", it) }
+        s.description?.let { put("about", it.ifBlank { JSONObject.NULL }) }
+        s.lengths?.let { put("lengths", JSONArray(it)) }
+        s.before?.let { put("before", it) }
+        s.after?.let { put("after", it) }
+        s.notice?.let { put("notice", it) }
+        s.horizon?.let { put("horizon", it) }
+        s.increment?.let { put("step", it) }
+        s.visibility?.let { put("visibility", it) }
+        s.confirm?.let { put("confirm", it) }
+        s.place?.let { put("place", JSONObject().put("kind", it.kind).put("value", it.value)) }
+        s.questions?.let { put("questions", JSONArray(it)) }
+        s.reminders?.let { put("remind", JSONArray(it)) }
+        s.paused?.let { put("paused", it) }
+    }
+
+    // Reads `{items, total}` pages until `total` items came.
+    private fun <T> paged(base: HttpUrl, parse: (JSONObject) -> T): List<T> {
+        val out = mutableListOf<T>()
+        var page = 1
+        while (true) {
+            val path = base.newBuilder()
+                .addQueryParameter("page", page.toString())
+                .addQueryParameter("limit", LIMIT.toString())
+                .build()
+            val request = Request.Builder().url(path).get().build()
+            val (items, total) = execute(request) { body ->
+                val obj = JSONObject(body)
+                objects(obj.optJSONArray("items") ?: JSONArray()) to obj.optInt("total", 0)
+            }
+            items.mapTo(out, parse)
+            if (items.isEmpty() || out.size >= total) return out
+            page++
+        }
+    }
+
+    // Null for a route the server does not have yet.
+    private fun <T> missing(call: () -> T): T? = try {
+        call()
+    } catch (e: AdukiException.Network) {
+        if (e.code == 404 || e.code == 405) null else throw e
+    }
+
+    private fun objects(array: JSONArray): List<JSONObject> =
+        (0 until array.length()).mapNotNull { array.optJSONObject(it) }
+
+    private fun text(obj: JSONObject, key: String): String =
+        if (obj.isNull(key)) "" else obj.optString(key, "")
+
+    private fun strings(array: JSONArray?): List<String> =
+        if (array == null) emptyList() else (0 until array.length()).map { array.optString(it) }
+
+    private fun parseEvent(obj: JSONObject): AppointmentRecord {
+        val hex = text(obj, "hex")
+        val ical = text(obj, "ical")
+        if (hex.isBlank()) throw AdukiException.Network("Event without a hex in the reply")
         return AppointmentRecord(
-            hex = obj.optString("hex", ""),
-            service = obj.optString("service", ""),
-            host = obj.optString("host", ""),
-            start = obj.optString("start", ""),
-            end = obj.optString("end", ""),
-            timezone = obj.optString("timezone", "UTC"),
-            status = obj.optString("status", "confirmed"),
-            uid = obj.optString("uid", ""),
-            location = obj.opt("location")?.toString() ?: "",
-            notes = obj.optString("notes", "")
+            hex = hex,
+            uid = text(obj, "uid"),
+            title = text(obj, "summary"),
+            start = text(obj, "start"),
+            end = text(obj, "end"),
+            timezone = text(obj, "timezone").ifBlank { "UTC" },
+            status = text(obj, "status"),
+            location = text(obj, "location"),
+            notes = text(obj, "description"),
+            attendees = strings(obj.optJSONArray("attendees")),
+            organizer = text(obj, "organizer"),
+            sequence = obj.optInt("sequence", 0),
+            rrule = text(obj, "rrule"),
+            recurring = obj.optBoolean("recurring", false),
+            etag = text(obj, "etag"),
+            ical = ical,
+            created = text(obj, "created"),
+            updated = text(obj, "updated")
         )
     }
 
     private fun parseService(obj: JSONObject): ServiceRecord {
+        val hex = text(obj, "hex")
+        if (hex.isBlank()) throw AdukiException.Network("Booking page without a hex in the reply")
+        val place = obj.optJSONObject("place")
+        val remind = if (obj.isNull("remind")) null else obj.optJSONArray("remind")
         return ServiceRecord(
-            hex = obj.optString("hex", ""),
-            slug = obj.optString("slug", ""),
-            name = obj.optString("name", ""),
-            description = obj.optString("description", ""),
-            duration = obj.optInt("duration", 30),
-            buffer = obj.optInt("buffer", 0),
+            hex = hex,
+            slug = text(obj, "slug"),
+            name = text(obj, "name"),
+            description = text(obj, "about"),
+            lengths = obj.optJSONArray("lengths")?.let { a -> (0 until a.length()).map { a.optInt(it) } } ?: listOf(30),
+            before = obj.optInt("before", 0),
+            after = obj.optInt("after", 0),
             notice = obj.optInt("notice", 60),
-            horizon = obj.optInt("horizon", 30),
-            increment = obj.optInt("increment", 15),
-            active = obj.optBoolean("active", true)
+            horizon = obj.optInt("horizon", 60),
+            increment = obj.optInt("step", 30),
+            visibility = text(obj, "visibility").ifBlank { "public" },
+            confirm = text(obj, "confirm").ifBlank { "auto" },
+            place = place?.takeIf { it.length() > 0 }?.let { Place(text(it, "kind"), text(it, "value")) },
+            questions = obj.optJSONArray("questions")?.toString() ?: "[]",
+            reminders = remind?.let { a -> (0 until a.length()).map { a.optInt(it) } },
+            active = obj.isNull("paused") || !obj.has("paused"),
+            schedule = text(obj, "schedule"),
+            created = text(obj, "created"),
+            updated = text(obj, "updated")
+        )
+    }
+
+    private fun parseOffer(obj: JSONObject): OfferRecord = OfferRecord(
+        hex = text(obj, "hex"),
+        page = text(obj, "page"),
+        slug = text(obj, "slug"),
+        name = text(obj, "name"),
+        description = text(obj, "about"),
+        length = obj.optInt("length", 30),
+        before = if (obj.isNull("before")) null else obj.optInt("before"),
+        after = if (obj.isNull("after")) null else obj.optInt("after"),
+        price = obj.optLong("price", 0),
+        currency = text(obj, "currency"),
+        questions = obj.optJSONArray("questions")?.toString() ?: "[]",
+        active = obj.isNull("paused") || !obj.has("paused")
+    )
+
+    private fun parseBooking(obj: JSONObject): BookingRecord {
+        val span = obj.optJSONObject("span")
+        val place = obj.optJSONObject("place")
+        return BookingRecord(
+            hex = text(obj, "hex"),
+            page = text(obj, "page"),
+            start = span?.let { text(it, "start") }.orEmpty(),
+            end = span?.let { text(it, "end") }.orEmpty(),
+            zone = text(obj, "zone"),
+            state = text(obj, "state"),
+            uid = text(obj, "uid"),
+            sequence = obj.optInt("sequence", 0),
+            notes = text(obj, "notes"),
+            cancelled = text(obj, "cancelled"),
+            reason = text(obj, "reason"),
+            created = text(obj, "created"),
+            place = place?.let { Place(text(it, "kind"), text(it, "value")) },
+            guests = objects(obj.optJSONArray("guests") ?: JSONArray()).map {
+                Address(name = text(it, "name").ifBlank { null }, email = text(it, "email"))
+            }
         )
     }
 
@@ -243,9 +482,11 @@ class Scheduling(
                 val why = Envelope.failure(raw) ?: resp.message
                 throw AdukiException.Network("HTTP error ${resp.code}: $why", code = resp.code)
             }
-            val body = Envelope.data(raw)
-            return transform(body)
+            return transform(Envelope.data(raw))
         }
     }
-}
 
+    private companion object {
+        const val LIMIT = 200
+    }
+}

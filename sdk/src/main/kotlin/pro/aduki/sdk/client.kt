@@ -45,6 +45,8 @@ import pro.aduki.sync.http.HttpDispatcher
 import pro.aduki.sync.http.HttpMailboxTransport
 import pro.aduki.sync.http.JmapContentTransport
 import pro.aduki.sync.engine.Content as ContentEngine
+import pro.aduki.sync.http.ScheduleDispatcher
+import pro.aduki.sync.outbox.Dispatcher
 import pro.aduki.sync.outbox.Rejected
 import pro.aduki.store.box.Factory
 import pro.aduki.store.entities.Outbox
@@ -226,13 +228,22 @@ class Aduki internal constructor(
     // Contact writes: applied to the store, journaled in the outbox.
     private val book: Book? = store?.let { s -> outbox?.let { Book(s, it) } }
 
-    // Mail actions, then contact actions (`fallback` chains further dispatchers).
+    private val scheduleSync: ScheduleEngine? = scheduleEngine
+        ?: store?.let { s -> outbox?.let { ScheduleEngine(s, schedulingApi, it) } }
+
+    // Outbox dispatchers after mail's, in order: each sends its own actions
+    // and hands anything else to the next.
+    private val dispatchers: List<(Dispatcher?) -> Dispatcher?> = listOf(
+        { next -> ContactDispatcher(contactsApi, { old, row -> book?.created(old, row) }, next) },
+        { next -> scheduleSync?.let { ScheduleDispatcher(schedulingApi, it, next) } ?: next }
+    )
+
     private val outboxWorker: Worker? = worker ?: store?.let {
         outbox?.let { queue ->
-            val contacts = ContactDispatcher(contactsApi, { old, row -> book?.created(old, row) })
+            val fallback = dispatchers.foldRight(null as Dispatcher?) { make, next -> make(next) }
             Worker(
                 queue,
-                HttpDispatcher(mailApi, queue::message, queue::rename, fallback = contacts, jmap = jmap, adopt = queue::adopt),
+                HttpDispatcher(mailApi, queue::message, queue::rename, fallback, jmap = jmap, adopt = queue::adopt),
                 onRejected = rejected
             )
         }
@@ -254,8 +265,9 @@ class Aduki internal constructor(
     val scheduling = Scheduling(
         this,
         appointmentRepo ?: store?.let { AppointmentRepo(it, scope) },
-        scheduleEngine ?: store?.let { ScheduleEngine(it, schedulingApi) },
-        schedulingApi
+        scheduleSync,
+        schedulingApi,
+        outboxWorker
     )
     /** Filter rules, vacation reply, senders and new-mail push, kept on the server. */
     val settings = Settings(this)

@@ -162,7 +162,47 @@ class LiveTest {
     }
 
     /**
-     * T5-LIVE-07: Vacation reply round trip; left off afterwards.
+     * T5-LIVE-07: Live event create, reschedule, answer, cancel and delete through
+     * the outbox (`/user/events`), then the account's services and bookings.
+     */
+    @Test
+    fun events() = runBlocking {
+        val client = live(store = true)
+        val start = java.time.Instant.now().plus(java.time.Duration.ofDays(30)).truncatedTo(java.time.temporal.ChronoUnit.HOURS)
+        val made = client.scheduling.create(
+            pro.aduki.core.models.EventRequest(
+                title = "SDK live check", start = start, end = start.plusSeconds(1800), timezone = "Africa/Nairobi",
+                attendees = listOf("sdk-live@example.com"), rrule = "FREQ=WEEKLY;COUNT=2", reminders = listOf(10)
+            )
+        )
+        assertEquals(0, client.sync.pending())
+        val hex = withTimeout(5_000) {
+            client.scheduling.appointments!!.first { list -> list.any { it.uid == made.uid && !it.local() } }
+        }.first { it.uid == made.uid }.hex
+        try {
+            client.scheduling.reschedule(hex, start.plusSeconds(3600), start.plusSeconds(5400))
+            // Cancelled events are left out of occurrences, so count before cancelling.
+            assertEquals(2, client.scheduling.expand(start, start.plus(java.time.Duration.ofDays(15))).count { it.appointment.hex == hex })
+            client.scheduling.cancel(hex, "live check")
+            assertEquals(0, client.sync.pending())
+            client.scheduling.sync()
+            val back = client.scheduling.get(hex)!!
+            assertEquals(start.plusSeconds(3600).toEpochMilli(), back.start)
+            assertEquals("cancelled", back.status)
+            assertEquals(listOf(10), back.alarms())
+        } finally {
+            client.scheduling.remove(hex)
+        }
+        assertEquals(0, client.sync.pending())
+        client.scheduling.sync()
+        assertNull(client.scheduling.get(hex))
+        client.scheduling.services()
+        client.scheduling.bookings()
+        client.close()
+    }
+
+    /**
+     * T5-LIVE-08: Vacation reply round trip; left off afterwards.
      */
     @Test
     fun vacation() = runBlocking<Unit> {

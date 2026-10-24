@@ -85,7 +85,7 @@ val dispatcher = HttpDispatcher(
     api = client.mailApi,
     lookup = { hex -> messageBox.query(Message_.hex.equal(hex)).build().use { it.findFirst() } },
     rename = manager::rename,
-    fallback = null // or a Dispatcher for non-mail actions such as "appointment_cancel"
+    fallback = null // or a Dispatcher for non-mail actions, e.g. ScheduleDispatcher for "event_*"
 )
 val worker = Worker(manager, dispatcher, onRejected = { entry, e -> /* tell the user */ })
 ```
