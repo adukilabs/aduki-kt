@@ -28,8 +28,13 @@ jobs:
       - name: gradle
         uses: gradle/actions/setup-gradle@v3
 
+      - name: android
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-34 build-tools;35.0.0'
+
       - name: test
-        run: ./gradlew --no-daemon test
+        run: ./gradlew --no-daemon -Paduki.android=true test
 
       - name: github
         env:
@@ -37,13 +42,13 @@ jobs:
           GITHUB_ACTOR: ${{ github.actor }}
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
           SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
-        run: ./gradlew --no-daemon --continue publishMavenPublicationToGithubRepository || echo "GitHub packages already published"
+        run: ./gradlew --no-daemon -Paduki.android=true --continue publishMavenPublicationToGithubRepository || echo "GitHub packages already published"
 
       - name: bundle
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
           SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
-        run: ./gradlew --no-daemon bundle
+        run: ./gradlew --no-daemon -Paduki.android=true bundle
 
       - name: central
         env:

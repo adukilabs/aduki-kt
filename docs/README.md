@@ -43,7 +43,7 @@ implementations on a plain JVM.
 
 ## Status
 
-Version 0.4.0 is published on Maven Central under the `pro.aduki` namespace.
+Version 0.5.0 is published on Maven Central under the `pro.aduki` namespace.
 
 Android platform integrations (`AndroidKey`, `AdukiAuthenticator`, `SignIn`, `PasskeyFlow`) are provided in the optional `pro.aduki:android` module. They are verified with unit and Robolectric tests, and on an Android 14 emulator with software keys; verification on physical devices with hardware-backed Keystores, StrongBox, and live Credential Manager providers is pending device testing.
 
