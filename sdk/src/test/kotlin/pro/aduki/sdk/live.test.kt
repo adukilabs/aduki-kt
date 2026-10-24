@@ -262,4 +262,52 @@ class LiveTest {
         }
         assertEquals(0, settings.unregisterPush(device))
     }
+
+    /**
+     * T5-LIVE-12: A session bound to a device key (DPoP) on mail REST and
+     * JMAP, with a P-256 (ES256) and an Ed25519 key. Needs a full sign-in:
+     * ADUKI_LOGIN_HANDLE, ADUKI_LOGIN_PASSWORD and ADUKI_LOGIN_TOTP (the
+     * authenticator's base32 secret of a dedicated test account).
+     */
+    @Test
+    fun dpop() = runBlocking<Unit> {
+        val handle = System.getenv("ADUKI_LOGIN_HANDLE")
+        val password = System.getenv("ADUKI_LOGIN_PASSWORD")
+        val secret = System.getenv("ADUKI_LOGIN_TOTP")
+        assumeTrue("Skipping live DPoP: set ADUKI_LOGIN_HANDLE, ADUKI_LOGIN_PASSWORD and ADUKI_LOGIN_TOTP",
+            !handle.isNullOrBlank() && !password.isNullOrBlank() && !secret.isNullOrBlank())
+        for (key in listOf(pro.aduki.crypto.dpop.Software.p256(), pro.aduki.crypto.dpop.Software.ed25519())) {
+            // An authenticator code is single use: start each sign-in in a fresh 30-second window.
+            Thread.sleep(30_000 - System.currentTimeMillis() % 30_000 + 1_000)
+            val client = Aduki.login(handle!!, password!!, code = totp(secret!!), endpoint = liveEndpoint(), dpop = key)
+            assertNotNull("no session for ${key.alg}", client.session.tokens.value)
+            assertTrue("mailboxes over REST with ${key.alg}", client.mailApi.mailboxes().items.isNotEmpty())
+            assertTrue("JMAP session with ${key.alg}", client.jmap.session(refresh = true).account.isNotBlank())
+            client.logout()
+        }
+    }
+
+    // RFC 6238 code for [secret] (base32) at the current 30-second step.
+    private fun totp(secret: String): String {
+        val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+        var bits = 0
+        var value = 0
+        val out = java.io.ByteArrayOutputStream()
+        for (c in secret.uppercase().filter { it in alphabet }) {
+            value = (value shl 5) or alphabet.indexOf(c)
+            bits += 5
+            if (bits >= 8) {
+                out.write((value shr (bits - 8)) and 0xff)
+                bits -= 8
+            }
+        }
+        val mac = javax.crypto.Mac.getInstance("HmacSHA1")
+        mac.init(javax.crypto.spec.SecretKeySpec(out.toByteArray(), "HmacSHA1"))
+        val step = System.currentTimeMillis() / 1000 / 30
+        val hash = mac.doFinal(java.nio.ByteBuffer.allocate(8).putLong(step).array())
+        val offset = hash.last().toInt() and 0x0f
+        val number = ((hash[offset].toInt() and 0x7f) shl 24) or ((hash[offset + 1].toInt() and 0xff) shl 16) or
+            ((hash[offset + 2].toInt() and 0xff) shl 8) or (hash[offset + 3].toInt() and 0xff)
+        return "%06d".format(number % 1_000_000)
+    }
 }
