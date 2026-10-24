@@ -15,6 +15,7 @@ import pro.aduki.net.http.Client as HttpClient
 import pro.aduki.net.http.Dpop
 import pro.aduki.net.http.Events
 import pro.aduki.net.http.Id
+import pro.aduki.net.http.Jmap
 import pro.aduki.net.http.Login
 import pro.aduki.net.http.Signup
 import pro.aduki.net.http.Requirements
@@ -200,6 +201,16 @@ class Aduki internal constructor(
      */
     val mailApi: NetMail by lazy { NetMail(activeHttpClient(), options.endpoint) }
 
+    /**
+     * JMAP client of the mail host (`{endpoint without /v1}/jmap`) on this
+     * client's authenticated connection: message bodies, attachments, rich
+     * send and the account settings that have no REST route.
+     */
+    val jmap: Jmap by lazy { Jmap(activeHttpClient(), host()) }
+
+    // The mail host root: the REST endpoint without its `/v1`.
+    private fun host(): String = options.endpoint.removeSuffix("/").removeSuffix("/v1")
+
     /** Typed REST scheduling client on this client's authenticated connection. */
     val schedulingApi: NetScheduling by lazy { NetScheduling(activeHttpClient(), options.endpoint) }
 
@@ -304,7 +315,7 @@ class Aduki internal constructor(
      * its `/v1`. Calling it again replaces the previous subscription; stop it
      * with [unwatchRights] (also done by [logout]).
      */
-    fun watchRights(host: String = options.endpoint.removeSuffix("/").removeSuffix("/v1")) {
+    fun watchRights(host: String = host()) {
         val http = activeHttpClient().newBuilder().readTimeout(90, java.util.concurrent.TimeUnit.SECONDS).build()
         val events = Events(http, host, { payload -> applyRights(payload) })
         synchronized(renewal) {
