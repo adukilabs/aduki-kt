@@ -61,7 +61,7 @@ class Contact(
             }
 
             override fun get(hex: String): ContactEntity? =
-                box.query(Contact_.hex.equal(hex)).build().findFirst()
+                box.query(Contact_.hex.equal(hex)).build().use { it.findFirst() }
 
             override fun all(): List<ContactEntity> = box.all
 
@@ -78,14 +78,14 @@ class Contact(
             // a scan over the decrypted rows (every contact is read and opened).
             override fun byEmail(email: String): ContactEntity? {
                 val key = Sealing.index("email", email)
-                if (key.isNotEmpty()) return box.query(Contact_.emailIndex.equal(key)).build().findFirst()
+                if (key.isNotEmpty()) return box.query(Contact_.emailIndex.equal(key)).build().use { it.findFirst() }
                 val q = email.trim().lowercase()
                 return if (q.isEmpty()) null else box.all.firstOrNull { it.email.trim().lowercase() == q }
             }
 
             override fun byPhone(phone: String): ContactEntity? {
                 val key = Sealing.index("phone", phone)
-                if (key.isNotEmpty()) return box.query(Contact_.phoneIndex.equal(key)).build().findFirst()
+                if (key.isNotEmpty()) return box.query(Contact_.phoneIndex.equal(key)).build().use { it.findFirst() }
                 val q = phone.filter { it.isDigit() || it == '+' }
                 return if (q.isEmpty()) null else box.all.firstOrNull { c -> c.phone.filter { it.isDigit() || it == '+' } == q }
             }

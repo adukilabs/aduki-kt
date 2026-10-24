@@ -155,7 +155,7 @@ class Book(private val store: BoxStore, private val manager: Manager) {
             box.put(kept)
             // Ones never sent are just dropped; the server deletes the rest.
             val sent = gone.filterNot { hex -> unsent(hex).also { if (it) manager.drop(hex) } }
-            gone.forEach { hex -> box.query(Contact_.hex.equal(hex)).build().findFirst()?.let(box::remove) }
+            gone.forEach { hex -> box.query(Contact_.hex.equal(hex)).build().use { it.findFirst() }?.let(box::remove) }
             if (sent.isEmpty()) {
                 manager.enqueue(UPDATE, payload(kept.vcard, kept.groups), keep)
             } else {
@@ -172,7 +172,7 @@ class Book(private val store: BoxStore, private val manager: Manager) {
     fun created(old: String, row: ContactRow) {
         if (row.hex.isBlank()) return
         store.callInTx {
-            val contact = box.query(Contact_.hex.equal(old)).build().findFirst()
+            val contact = box.query(Contact_.hex.equal(old)).build().use { it.findFirst() }
             if (contact != null) {
                 contact.hex = row.hex
                 contact.ctag = row.etag
@@ -185,10 +185,10 @@ class Book(private val store: BoxStore, private val manager: Manager) {
     }
 
     private fun find(hex: String): Contact =
-        box.query(Contact_.hex.equal(hex)).build().findFirst() ?: throw IllegalArgumentException("Contact not found: $hex")
+        box.query(Contact_.hex.equal(hex)).build().use { it.findFirst() } ?: throw IllegalArgumentException("Contact not found: $hex")
 
     private fun remove(hex: String) {
-        val contact = box.query(Contact_.hex.equal(hex)).build().findFirst()
+        val contact = box.query(Contact_.hex.equal(hex)).build().use { it.findFirst() }
         val unsent = unsent(hex)
         if (contact != null) box.remove(contact)
         if (unsent) {

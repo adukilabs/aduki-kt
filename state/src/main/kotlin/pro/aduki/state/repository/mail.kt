@@ -84,11 +84,11 @@ class Mail(
             }
 
             override fun getMessage(hex: String): Message? {
-                return messageBox.query(Message_.hex.equal(hex)).build().findFirst()
+                return messageBox.query(Message_.hex.equal(hex)).build().use { it.findFirst() }
             }
 
             override fun getMailbox(hex: String): Mailbox? {
-                return mailboxBox.query(Mailbox_.hex.equal(hex)).build().findFirst()
+                return mailboxBox.query(Mailbox_.hex.equal(hex)).build().use { it.findFirst() }
             }
 
             override fun getMailboxes(): List<Mailbox> = mailboxBox.all
