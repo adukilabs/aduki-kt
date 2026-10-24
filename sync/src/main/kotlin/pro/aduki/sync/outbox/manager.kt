@@ -355,6 +355,32 @@ class Manager(private val storage: Storage) {
     }
 
     /**
+     * Points every queued action on [old] at [new] (a placeholder id the
+     * server replaced), so actions queued after a create reach the right row.
+     */
+    fun repoint(old: String, new: String) {
+        if (old == new || new.isBlank()) return
+        storage.tx {
+            for (entry in storage.pending().filter { it.hex == old }) {
+                entry.hex = new
+                storage.putOutbox(entry)
+            }
+        }
+    }
+
+    /** Drops every queued action on [hex]; returns how many there were. */
+    fun drop(hex: String): Int {
+        val gone = storage.tx {
+            val entries = storage.pending().filter { it.hex == hex }
+            entries.forEach { storage.removeOutbox(it.id) }
+            entries.size
+        }
+        recount()
+        return gone
+    }
+
+
+    /**
      * Retrieves all pending outbox actions ordered by creation time.
      */
     fun pending(): List<Outbox> {

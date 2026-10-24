@@ -1,9 +1,13 @@
 package pro.aduki.sync.engine
 
 import io.objectbox.BoxStore
+import io.objectbox.query.QueryBuilder.StringOrder
 import pro.aduki.store.box.Sealing
 import pro.aduki.store.entities.Contact as ContactEntity
+import pro.aduki.store.entities.Outbox
+import pro.aduki.store.entities.Outbox_
 import pro.aduki.store.entities.Sync
+import pro.aduki.sync.outbox.Book
 import pro.aduki.sync.reconcile.Reconcile
 
 /**
@@ -38,6 +42,13 @@ interface ContactStorage {
     fun putContacts(contacts: List<ContactEntity>)
     fun removeContacts(hexes: List<String>)
     fun <T> tx(block: () -> T): T
+
+    /**
+     * Hexes of contacts with a queued outbox write: a sync leaves them as
+     * they are locally until the write is sent. "" stands for a group-wide
+     * write, which holds the whole sync back.
+     */
+    fun pending(): Set<String> = emptySet()
 }
 
 /**
@@ -65,6 +76,9 @@ class Contact(
                 contactBox.remove(toRemove)
             }
             override fun <T> tx(block: () -> T): T = store.callInTx(block)
+            override fun pending(): Set<String> = store.boxFor(Outbox::class.java)
+                .query(Outbox_.action.startsWith(Book.PREFIX, StringOrder.CASE_SENSITIVE)).build()
+                .property(Outbox_.hex).findStrings().toSet()
         }
     }
 
@@ -73,29 +87,37 @@ class Contact(
      */
     suspend fun sync(tenant: String): Boolean {
         val syncRecord = storage.getSync("contacts") ?: Sync(target = "contacts", token = "")
+        // A queued group-wide write (no hex) touches contacts this cannot
+        // tell apart: apply nothing until it is sent.
+        if ("" in storage.pending()) return true
         val delta = transport.fetch(tenant, syncRecord.token)
 
         return storage.tx {
+            // Contacts with a queued write keep their local state; the next
+            // sync after it is sent picks up the server's.
+            val pending = storage.pending()
             val removed = if (delta.full) {
                 val kept = delta.changed.map { it.hex }.toSet()
                 delta.removed + storage.getContacts().map { it.hex }.filter { it !in kept }
             } else {
                 delta.removed
-            }
+            }.filter { it !in pending }
             if (removed.isNotEmpty()) {
                 storage.removeContacts(removed)
             }
 
-            if (delta.changed.isNotEmpty()) {
+            val changed = delta.changed.filter { it.hex !in pending }
+            if (changed.isNotEmpty()) {
                 val existingMap = storage.getContacts().associateBy { it.hex }
-                val merged = delta.changed.map { serverContact ->
+                val merged = changed.map { serverContact ->
                     val local = existingMap[serverContact.hex]
                     Reconcile.contact(local, serverContact)
                 }
                 storage.putContacts(merged)
             }
 
-            syncRecord.token = delta.ctag
+            // Skipped rows must be read again: no cursor until nothing is pending.
+            syncRecord.token = if (pending.isEmpty()) delta.ctag else ""
             syncRecord.timestamp = System.currentTimeMillis()
             storage.putSync(syncRecord)
             true
