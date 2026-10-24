@@ -17,6 +17,23 @@ class ContactTest {
 
         override fun contacts(): Flow<List<ContactEntity>> = flow
         override fun get(hex: String): ContactEntity? = flow.value.firstOrNull { it.hex == hex }
+        override fun all(): List<ContactEntity> = flow.value
+
+        val stored = MutableStateFlow<List<String>>(emptyList())
+        override fun groups(): Flow<List<String>> = stored
+        override fun names(): List<String> = stored.value
+    }
+
+    @Test
+    fun groupsAreTheTagsAndTheStoredGroups() = runBlocking {
+        val source = TestContactSource()
+        val repo = Contact(source = source, scope = CoroutineScope(Dispatchers.Unconfined))
+
+        source.flow.value = listOf(ContactEntity(hex = "c1", name = "Ann", groups = listOf("work", "Friends")))
+        source.stored.value = listOf("empty", "work")
+
+        assertEquals(listOf("empty", "Friends", "work"), repo.groups().value)
+        assertEquals(listOf("empty", "Friends", "work"), repo.names())
     }
 
     @Test

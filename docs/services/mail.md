@@ -284,7 +284,7 @@ client.mail.send(draft)
 - A plain draft (text only, no bcc, attachments, HTML, display name, reply or forward) is sent with `POST /v1/user/mail/send` and an `Idempotency-Key`.
 - Any other draft is sent with JMAP. The attachments are uploaded, the message is created in Drafts (`Email/set`) and submitted (`EmailSubmission/set`). On success it is filed in Sent and `$draft` is cleared.
 - A reply carries `In-Reply-To` and `References` built from the original's Message-ID, so it threads on the server. The original gets `$answered` (a forward gets `$forwarded`).
-- `from` must be one of the account's sending identities; the server refuses any other address.
+- `from` must be one of the account's sending identities; the server refuses any other address. Without `from`, the default sender (`Sender.default`, JMAP `isDefault`) is used, over REST and JMAP alike.
 - Retries are safe. The Message-ID is derived from the outbox entry, so a retry whose first attempt got through finds that message and does not send again.
 - An `Upload` holds `bytes` or a `path`. Bytes are kept in the (sealed) outbox until sent. A path must stay readable until then: use one for large files.
 

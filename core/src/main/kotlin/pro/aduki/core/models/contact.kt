@@ -58,3 +58,25 @@ data class Card(
     /** Whether the fields (not the source vCard) are the same as [other]'s. */
     fun same(other: Card): Boolean = copy(uid = "", vcard = "") == other.copy(uid = "", vcard = "")
 }
+
+/**
+ * GroupRow is one item of `GET /user/contacts/groups`: a group name and how
+ * many contacts carry it (0 for a group created without members).
+ */
+data class GroupRow(
+    val name: String,
+    val count: Int = 0
+)
+
+/**
+ * ImportReport is the reply to `POST /user/contacts/import`: what the
+ * server did with each card of the file.
+ */
+data class ImportReport(
+    val created: Int = 0,
+    val updated: Int = 0,
+    /** Cards already stored exactly as sent. */
+    val skipped: Int = 0,
+    /** The cards not stored: their position in the file (from 0) and why. */
+    val errors: List<Pair<Int, String>> = emptyList()
+)

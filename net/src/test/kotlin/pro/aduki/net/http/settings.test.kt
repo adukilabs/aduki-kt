@@ -292,8 +292,19 @@ class SettingsTest {
         val fcm = Subscription(device = "phone", fcm = "tok123")
         fcm.validate()
         assertEquals("tok123", fcm.json().getString("fcmToken"))
-        assertFalse(fcm.json().has("url"))
+        // Alone, as the server requires: no url and no keys property.
+        assertEquals(setOf("fcmToken", "deviceClientId", "types"), fcm.json().keySet())
         assertThrows(IllegalArgumentException::class.java) { Subscription("https://x.example/p", "phone", fcm = "t").validate() }
+    }
+
+    @Test
+    fun anFcmDataMessageCarriesThePushAsAString() {
+        val body = """{"@type":"StateChange","changed":{"acc1":{"Email":"e2","Thread":"e2","Mailbox":"m2"}},"mailboxes":{"acc1":["aa11"]}}"""
+        val data = JSONObject().put("push", body).toString()
+        val change = Push.parse(data) as Push.Change
+        assertEquals(listOf("aa11"), change.targets())
+        assertNull(Push.parse("""{"push":5}"""))
+        assertNull(Push.parse("""{"other":"x"}"""))
     }
 
     @Test

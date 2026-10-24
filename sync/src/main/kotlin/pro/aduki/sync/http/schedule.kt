@@ -15,17 +15,17 @@ import pro.aduki.sync.outbox.Rejected
 /**
  * ScheduleDispatcher sends the calendar actions [Schedule] journals:
  *
- * - `event_create`: `POST /user/events` `{ical, calendar?}`; the local
+ * - `event_create`: `POST /user/events` `{ical, calendar?, notify?}`; the local
  *   `local-...` hex is then replaced by the server's. A `409` (the UID is
  *   already there, e.g. after a lost reply) completes it: the next sync
  *   adopts the server's copy by UID.
- * - `event_update`: `PATCH /user/events/{hex}` `{ical}`.
- * - `event_reply`: `POST /user/events/{hex}/reply` `{partstat}` (proposed:
- *   the server sets the answer and sends the organizer an iTIP REPLY);
- *   where the server lacks it (`404`/`405`), the answered object is sent
- *   with `PATCH /user/events/{hex}` instead, which stores the answer but
- *   tells nobody.
- * - `event_delete`: `DELETE /user/events/{hex}`.
+ * - `event_update`: `PATCH /user/events/{hex}` `{ical, notify?}`.
+ * - `event_reply`: `POST /user/events/{hex}/reply` `{partstat, comment?}`:
+ *   the server sets the answer and sends the organizer an iTIP REPLY. An
+ *   event the server will not answer for (no organizer, or the account is
+ *   not among its attendees: `422`) gets the answered object with
+ *   `PATCH /user/events/{hex}` instead, which stores it but tells nobody.
+ * - `event_delete`: `DELETE /user/events/{hex}?notify=`.
  * - `appointment_cancel` (journaled by 0.4): sent as an update with
  *   `STATUS:CANCELLED`.
  *
@@ -52,9 +52,9 @@ class ScheduleDispatcher(
             try {
                 when (action.action) {
                     Schedule.CREATE -> create(payload)
-                    Schedule.UPDATE -> api.replaceEvent(hex(payload), payload.getString("ical"))
+                    Schedule.UPDATE -> api.replaceEvent(hex(payload), payload.getString("ical"), payload.optBoolean("notify"))
                     Schedule.REPLY -> reply(payload)
-                    Schedule.DELETE -> api.removeEvent(hex(payload))
+                    Schedule.DELETE -> api.removeEvent(hex(payload), payload.optBoolean("notify"))
                     Schedule.LEGACY -> legacy(payload)
                 }
             } catch (e: AdukiException.Network) {
@@ -70,7 +70,7 @@ class ScheduleDispatcher(
     }
 
     private fun create(payload: JSONObject) {
-        val made = api.createEvent(payload.getString("ical"), payload.optString("calendar"))
+        val made = api.createEvent(payload.getString("ical"), payload.optString("calendar"), payload.optBoolean("notify"))
         engine.created(payload.optString("hex"), made)
     }
 
@@ -85,7 +85,12 @@ class ScheduleDispatcher(
 
     private fun reply(payload: JSONObject) {
         val hex = hex(payload)
-        if (api.reply(hex, payload.getString("partstat")) == null) api.replaceEvent(hex, payload.getString("ical"))
+        try {
+            api.reply(hex, payload.getString("partstat"), payload.optString("comment").ifBlank { null })
+        } catch (e: AdukiException.Network) {
+            if (e.code != 422) throw e
+            api.replaceEvent(hex, payload.getString("ical"))
+        }
     }
 
     private fun legacy(payload: JSONObject) {

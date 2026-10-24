@@ -86,7 +86,7 @@ client.settings.remove(alias)
 
 JMAP `Identity` (RFC 8621 section 6): `email`, `name`, `textSignature` (`signature`), `htmlSignature` (`html`), `replyTo` (`reply`) and `bcc`. The server only accepts addresses the account may send as (its own, its aliases, addresses delegated to it); others are refused with `forbiddenFrom`. The number of senders is capped by plan (`overQuota`). An address never changes: remove the sender and create another.
 
-`main` is the account's login address; it cannot be removed (`forbidden`). `default` is the sender new mail starts from. The mail host does not keep a default yet, so today `default` is the `main` sender; `client.settings.prefer(sender)` sets the proposed `isDefault` extension and is refused with `invalidProperties` until the server supports it.
+`main` is the account's login address; it cannot be removed (`forbidden`). `default` is the sender new mail starts from (JMAP `isDefault`; exactly one sender has it, the `main` one until another is chosen). `client.settings.prefer(sender)` makes `sender` the default and clears the flag on the others. Mail sent without a `from` (`client.mail.send`, REST `POST /user/mail/send`) goes out as the default sender.
 
 ---
 
@@ -108,16 +108,51 @@ client.settings.receive(body)
 client.settings.unregisterPush(installId)
 ```
 
-JMAP `PushSubscription` (RFC 8620 section 7.2), delivered as Web Push (RFC 8030). Subscriptions belong to the user, not an account. `registerPush` first removes the earlier subscriptions of the same `device`, so calling it again replaces the registration; the server caps `expires` at seven days, so register again at least weekly (for example on each app start). With `keys` (the device's RFC 8291 P-256 public key and auth secret, base64url) each push is encrypted (`Content-Encoding: aes128gcm`) and the app decrypts it (the UnifiedPush connector does this); without them the body is plain JSON.
+JMAP `PushSubscription` (RFC 8620 section 7.2), delivered as Web Push (RFC 8030) or as native FCM (below). Subscriptions belong to the user, not an account. `registerPush` first removes the earlier subscriptions of the same `device`, so calling it again replaces the registration; the server caps `expires` at seven days, so register again at least weekly (for example on each app start). With `keys` (the device's RFC 8291 P-256 public key and auth secret, base64url) each push is encrypted (`Content-Encoding: aes128gcm`) and the app decrypts it (the UnifiedPush connector does this); without them the body is plain JSON.
 
 `receive(body)` parses the body and acts on it, returning the `Push` (or null for anything else):
 
 | Body | Action |
 | :--- | :--- |
 | `{"@type": "PushVerification", "pushSubscriptionId": "p1", "verificationCode": "…"}` | Sends the code back (`PushSubscription/set`). Until then the server pushes nothing else. |
-| `{"@type": "StateChange", "changed": {"<accountId>": {"Email": "…", "Thread": "…", "Mailbox": "…"}}}` | `client.sync.all(...)`: the listed mailboxes when the push names them (`Push.Change.targets()`), else every mailbox. |
+| `{"@type": "StateChange", "changed": {"<accountId>": {"Email": "…", "Thread": "…", "Mailbox": "…"}}, "mailboxes": {"<accountId>": ["<mailbox hex>"]}}` | `client.sync.all(...)` on the mailboxes the push names (`Push.Change.targets()`); a push without `mailboxes` syncs every mailbox. |
 | `{"@type": "Rights", "epoch": 7}` | Renews the access token, like `client.rights(body)`. |
 
-The mail host sends `Email`, `Thread` and `Mailbox` together on any change to the account's mail. A push carries no message content. Today it names no mailbox, so every mailbox syncs. The proposed `mailboxes` extension, `{"mailboxes": {"<accountId>": ["<mailbox hex>", ...]}}` next to `changed`, would let the SDK sync only those mailboxes; the SDK already reads it.
+The mail host sends `Email`, `Thread` and `Mailbox` together on any change to the account's mail, with `mailboxes` naming the mailboxes (REST hexes) whose content or counts changed, so only those sync. A push carries no message content.
 
-**FCM.** The server delivers to Web Push URLs only. `Subscription(device = installId, fcm = token)` sends a native FCM registration token as the proposed `fcmToken` extension (each push would arrive as an FCM data message whose `push` entry is the JSON body, passed to `receive`). Until the server supports it, such a registration is refused with `invalidProperties`.
+### Native FCM
+
+`Subscription(device = installId, fcm = token)` registers a Firebase Cloud Messaging registration token instead of a Web Push URL. It is sent as the `fcmToken` extension of `PushSubscription/set`, alone (`{"fcmToken", "deviceClientId", "types"}`, no `url` and no `keys`), as the server requires. Each push, the verification included, then arrives as an FCM data message whose `push` entry is the JSON body as a string. Hand that string, or the whole data map, to `receive`:
+
+```kotlin
+client.settings.receive(message.data["push"]!!)   // the body
+client.settings.receive(message.data)             // or the data map: its "push" entry
+```
+
+`receive(data)` returns null for a data message without `push` (one not from the mail server). The server drops a subscription whose token FCM reports as unregistered, and refuses an `fcmToken` (`invalidProperties`) when it has no FCM service account.
+
+The SDK has no Firebase dependency: the app wires its own `FirebaseMessagingService`. `client` is the app's `Aduki` and `installId` a stable id per install.
+
+```kotlin
+class MailMessaging : FirebaseMessagingService() {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // A new or rotated token: register it (this replaces the device's earlier registration).
+    override fun onNewToken(token: String) {
+        scope.launch { client.settings.registerPush(Subscription(device = installId, fcm = token)) }
+    }
+
+    // Called on a background thread; finish before returning.
+    override fun onMessageReceived(message: RemoteMessage) {
+        val body = message.data["push"] ?: return
+        runBlocking { client.settings.receive(body) }
+    }
+
+    override fun onDestroy() {
+        scope.cancel()
+        super.onDestroy()
+    }
+}
+```
+
+Registrations expire after at most seven days, so also register on app start with the current token (`FirebaseMessaging.getInstance().token`). On sign-out, call `client.settings.unregisterPush(installId)`.

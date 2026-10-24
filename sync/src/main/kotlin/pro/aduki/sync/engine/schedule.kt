@@ -22,10 +22,11 @@ import java.util.UUID
  * the outbox (through [manager], so its count stays right) for
  * `ScheduleDispatcher` to send.
  *
- * Outbox actions, payload `{hex, uid, ical?, calendar?, partstat?}`:
+ * Outbox actions, payload `{hex, uid, ical?, calendar?, partstat?, comment?, notify?}`:
  * `event_create`, `event_update` (the whole object after the edit, so
  * retries and reordering converge), `event_reply` (an RSVP: the object and
- * the answer), `event_delete`.
+ * the answer), `event_delete`. `notify: true` asks the server to send the
+ * attendees an iTIP message for an event the account organizes.
  */
 class Schedule(
     private val store: BoxStore,
@@ -67,48 +68,51 @@ class Schedule(
     fun get(hex: String): Appointment? =
         box.query(Appointment_.hex.equal(hex)).build().use { it.findFirst() }
 
-    /** Creates an event locally (hex `local-...`) and queues it. */
-    fun create(request: EventRequest): Appointment {
+    /** Creates an event locally (hex `local-...`) and queues it; [notify] invites the attendees. */
+    fun create(request: EventRequest, notify: Boolean = false): Appointment {
         request.validate()
-        return insert(Events.build(request), request.calendar)
+        return insert(Events.build(request), request.calendar, notify)
     }
 
-    /** Applies [changes] to an event and queues the new object. */
-    fun update(hex: String, changes: EventChanges): Appointment {
+    /** Applies [changes] to an event and queues the new object; [notify] sends it to the attendees. */
+    fun update(hex: String, changes: EventChanges, notify: Boolean = false): Appointment {
         changes.validate()
         val row = find(hex)
         val ical = Events.change(source(row), changes)
         val moved = if (changes.start != null && changes.start!!.toEpochMilli() != row.start) row.start else row.moved
-        return write(row, ical, UPDATE) { it.moved = moved }
+        return write(row, ical, UPDATE, Extra(notify = notify)) { it.moved = moved }
     }
 
     /** Moves an event to [start] .. [end]. */
-    fun reschedule(hex: String, start: Instant, end: Instant): Appointment {
+    fun reschedule(hex: String, start: Instant, end: Instant, notify: Boolean = false): Appointment {
         require(end.isAfter(start)) { "end must follow start" }
-        return update(hex, EventChanges(start = start, end = end))
+        return update(hex, EventChanges(start = start, end = end), notify)
     }
 
     /**
      * Answers an invitation as [address]. Throws [IllegalArgumentException]
      * when [address] is not an attendee.
      */
-    fun respond(hex: String, response: Response, address: String): Appointment {
+    fun respond(hex: String, response: Response, address: String, comment: String = ""): Appointment {
         val row = find(hex)
         val ical = Events.respond(source(row), address, response)
             ?: throw IllegalArgumentException("$address is not an attendee of $hex")
-        return write(row, ical, REPLY, response.partstat) { }
+        return write(row, ical, REPLY, Extra(partstat = response.partstat, comment = comment)) { }
     }
 
-    /** Marks an event cancelled (`STATUS:CANCELLED`); it stays in the calendar. */
-    fun cancel(hex: String, reason: String = ""): Appointment {
+    /**
+     * Marks an event cancelled (`STATUS:CANCELLED`); it stays in the
+     * calendar. [notify] sends the cancelled object to the attendees.
+     */
+    fun cancel(hex: String, reason: String = "", notify: Boolean = false): Appointment {
         val row = find(hex)
-        return write(row, Events.cancel(source(row), reason), UPDATE) {
+        return write(row, Events.cancel(source(row), reason), UPDATE, Extra(notify = notify)) {
             it.cancelled = System.currentTimeMillis()
         }
     }
 
-    /** Deletes an event locally and queues the delete. */
-    fun remove(hex: String) {
+    /** Deletes an event locally and queues the delete; [notify] sends the attendees an iTIP CANCEL. */
+    fun remove(hex: String, notify: Boolean = false) {
         val row = find(hex)
         store.runInTx {
             box.remove(row)
@@ -117,7 +121,7 @@ class Schedule(
                 // Never reached the server: forget both.
                 manager.complete(create.id)
             } else {
-                manager.enqueue(DELETE, body(row.hex, row.uid), row.hex)
+                manager.enqueue(DELETE, body(row.hex, row.uid, extra = Extra(notify = notify)), row.hex)
             }
         }
     }
@@ -158,27 +162,28 @@ class Schedule(
 
     // ── Internals ────────────────────────────────────────────────────
 
-    private fun insert(ical: String, calendar: String): Appointment {
+    // What an action carries besides the object.
+    private data class Extra(val partstat: String = "", val comment: String = "", val notify: Boolean = false)
+
+    private fun insert(ical: String, calendar: String, notify: Boolean = false): Appointment {
         val event = Events.read(ical) ?: throw IllegalArgumentException("no VEVENT in the object")
         require(event.uid.isNotBlank()) { "the event has no UID" }
         val row = Appointment(hex = Appointment.LOCAL + UUID.randomUUID(), calendar = calendar)
         apply(row, event, ical)
         store.runInTx {
             box.put(row)
-            manager.enqueue(CREATE, body(row.hex, row.uid, ical, calendar), row.hex)
+            manager.enqueue(CREATE, body(row.hex, row.uid, ical, calendar, Extra(notify = notify)), row.hex)
         }
         return row
     }
 
-    private fun write(row: Appointment, ical: String, action: String, partstat: String = "", extra: (Appointment) -> Unit): Appointment {
+    private fun write(row: Appointment, ical: String, action: String, extra: Extra = Extra(), edit: (Appointment) -> Unit): Appointment {
         val event = Events.read(ical) ?: throw IllegalArgumentException("no VEVENT in the object")
         apply(row, event, ical)
-        extra(row)
+        edit(row)
         store.runInTx {
             box.put(row)
-            val payload = body(row.hex, row.uid, ical)
-            val sent = if (partstat.isBlank()) payload else JSONObject(String(payload)).put("partstat", partstat).toString().toByteArray()
-            manager.enqueue(action, sent, row.hex)
+            manager.enqueue(action, body(row.hex, row.uid, ical, extra = extra), row.hex)
         }
         return row
     }
@@ -265,11 +270,14 @@ class Schedule(
 
     private fun payload(bytes: ByteArray): JSONObject = runCatching { JSONObject(String(bytes, Charsets.UTF_8)) }.getOrDefault(JSONObject())
 
-    private fun body(hex: String, uid: String, ical: String? = null, calendar: String = ""): ByteArray =
+    private fun body(hex: String, uid: String, ical: String? = null, calendar: String = "", extra: Extra = Extra()): ByteArray =
         JSONObject().put("hex", hex).put("uid", uid)
             .apply {
                 if (ical != null) put("ical", ical)
                 if (calendar.isNotBlank()) put("calendar", calendar)
+                if (extra.partstat.isNotBlank()) put("partstat", extra.partstat)
+                if (extra.comment.isNotBlank()) put("comment", extra.comment)
+                if (extra.notify) put("notify", true)
             }
             .toString().toByteArray(Charsets.UTF_8)
 

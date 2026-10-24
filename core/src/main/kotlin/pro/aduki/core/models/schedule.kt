@@ -83,10 +83,7 @@ data class ServiceRecord(
     /** Reminder offsets, minutes before the start; null is the server default (24 h and 1 h). */
     val reminders: List<Int>? = null,
     val active: Boolean = true,
-    /**
-     * The hex of the schedule whose windows it offers. Proposed server
-     * field (`schedule` of a page view); empty until the server sends it.
-     */
+    /** The hex of the schedule whose windows it offers (`schedule` of a page view). */
     val schedule: String = "",
     val created: String = "",
     val updated: String = ""
@@ -124,7 +121,7 @@ data class OfferRecord(
  */
 data class BookingRecord(
     val hex: String = "",
-    /** The page (service) hex it was booked on. Proposed server field; empty until the server sends it. */
+    /** The page (service) hex it was booked on. */
     val page: String = "",
     val start: String = "",
     val end: String = "",
@@ -147,10 +144,9 @@ data class BookingRecord(
 )
 
 /**
- * Stats counts the bookings that start in a range, by state, for one
- * [service], or for the whole account when [service] is empty (the server
- * has no per-service count yet). [views] is null where the server keeps
- * none.
+ * Stats counts the bookings of one [service] that start in a range, by
+ * state, and the views of its public page on the days the range touches.
+ * [views] is null only when the reply has none.
  */
 data class Stats(
     val service: String = "",

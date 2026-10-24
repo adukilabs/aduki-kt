@@ -7,6 +7,7 @@ import org.json.JSONException
 import org.json.JSONObject
 import pro.aduki.core.errors.AdukiException
 import pro.aduki.core.models.ContactRow
+import pro.aduki.core.models.GroupRow
 import pro.aduki.core.vcard.Vcard
 import pro.aduki.net.http.Contacts
 import pro.aduki.store.entities.Contact as ContactEntity
@@ -25,13 +26,16 @@ import java.security.MessageDigest
  * `Contact/changes` uses ids this client does not hold), so every sync reads
  * the whole list and reconciles it: the delta says `full`, and the engine
  * removes local contacts the server no longer lists. To spare the database,
- * the "ctag" is a digest of every `hex:etag:groups` line (a group change
- * leaves the etag as it is); when it matches the stored one the delta is
- * empty.
+ * the "ctag" is a digest of every `hex:etag` line (the etag covers the
+ * groups too); when it matches the stored one the delta is empty. The list
+ * is walked with the `after` cursor (`next`), or by page number from a
+ * server that answers in page mode.
+ *
+ * Every sync also reads the group list (`GET /user/contacts/groups`), which
+ * names groups without members.
  *
  * Rows carry the vCard: company, notes and photo are read from it, and all
- * e-mail addresses and phones are kept. The server answers the list in page
- * mode (`page`, `pages`) and ignores the `after` cursor, so both are followed.
+ * e-mail addresses and phones are kept.
  */
 class HttpContactTransport(
     private val api: Contacts,
@@ -43,12 +47,20 @@ class HttpContactTransport(
         withContext(Dispatchers.IO) {
             val rows = all()
             val current = digest(rows)
+            val groups = groups()
             if (current == ctag) {
-                ContactDelta(ctag = current)
+                ContactDelta(ctag = current, groups = groups)
             } else {
-                ContactDelta(changed = rows.map(::contact), ctag = current, full = true)
+                ContactDelta(changed = rows.map(::contact), ctag = current, full = true, groups = groups)
             }
         }
+
+    // Null from a server without the group list.
+    private fun groups(): List<GroupRow>? = try {
+        api.groups()
+    } catch (e: AdukiException.Network) {
+        if (e.code == 404 || e.code == 405) null else throw e
+    }
 
     private fun all(): List<ContactRow> {
         val rows = LinkedHashMap<String, ContactRow>()
@@ -73,10 +85,10 @@ class HttpContactTransport(
     }
 
     companion object {
-        /** SHA-256 over the sorted `hex:etag:groups` lines. */
+        /** SHA-256 over the sorted `hex:etag` lines. */
         fun digest(rows: List<ContactRow>): String {
             val md = MessageDigest.getInstance("SHA-256")
-            rows.map { "${it.hex}:${it.etag}:${it.groups.joinToString(",")}\n" }.sorted().forEach { md.update(it.toByteArray()) }
+            rows.map { "${it.hex}:${it.etag}\n" }.sorted().forEach { md.update(it.toByteArray()) }
             return md.digest().joinToString("") { "%02x".format(it) }
         }
 
@@ -113,10 +125,13 @@ class HttpContactTransport(
  *   local placeholder through [created].
  * - `contact.update`: `PATCH /user/contacts/{hex}/vcard`, then `.../groups`.
  * - `contact.groups`: `PATCH /user/contacts/{hex}/groups`.
- * - `contact.rename` / `contact.dissolve`: the proposed group-wide routes
- *   (`PATCH` / `DELETE /user/contacts/group/{group}`, see `Contacts.rename`);
- *   while the server answers them with 405 or 404, the members are read
- *   from `GET /user/contacts/group/{group}` and each one's groups are set.
+ * - `contact.group`: `POST /user/contacts/groups` (an existing group is fine).
+ * - `contact.rename` / `contact.dissolve`: `PATCH` / `DELETE
+ *   /user/contacts/group/{group}`, one call for every member.
+ * - `contact.merge`: `POST /user/contacts/{hex}/merge` `{others, vcard}`,
+ *   one server transaction; the reply's row updates the local contact. A
+ *   404 (one of them is gone) falls back to an update of the contact and a
+ *   delete of each other one.
  * - `contact.delete`: `DELETE /user/contacts/{hex}`; a 404 completes it.
  *
  * Writes carry a stable `Idempotency-Key` per outbox entry, so a retry after
@@ -168,33 +183,31 @@ class ContactDispatcher(
             }
             Book.GROUPS -> api.groups(hex, strings(obj.optJSONArray("groups")), key)
             Book.DELETE -> api.delete(hex)
-            Book.RENAME -> {
-                val (group, name) = obj.getString("group") to obj.getString("name")
-                wide(group, key, { api.rename(group, name, key) }) { groups -> groups.map { if (it == group) name else it }.distinct() }
-            }
-            Book.DISSOLVE -> {
-                val group = obj.getString("group")
-                wide(group, key, { api.dissolve(group) }) { groups -> groups - group }
-            }
+            Book.GROUP -> api.createGroup(obj.getString("name"), key)
+            Book.RENAME -> api.rename(obj.getString("group"), obj.getString("name"), key)
+            Book.DISSOLVE -> api.dissolve(obj.getString("group"))
+            Book.MERGE -> merge(hex, obj, key)
             else -> throw Rejected("Unknown contact action '${action.action}'")
         }
     }
 
-    // The one-call route when the server has it, else member by member.
-    private fun wide(group: String, key: String, call: () -> Unit, edit: (List<String>) -> List<String>) {
+    private fun merge(hex: String, obj: JSONObject, key: String) {
+        val others = strings(obj.optJSONArray("others"))
+        val vcard = obj.getString("vcard")
         try {
-            call()
-            return
+            created(hex, api.merge(hex, others, vcard, key))
         } catch (e: AdukiException.Network) {
-            if (e.code != 404 && e.code != 405) throw e
-        }
-        var page = 1
-        while (true) {
-            val listing = api.members(group, page = page)
-            for (row in listing.items) api.groups(row.hex, edit(row.groups), key)
-            val pages = listing.pages ?: 1
-            if (listing.items.isEmpty() || page >= pages) return
-            page++
+            if (e.code != 404) throw e
+            // One of them is gone (a 404 changes nothing): what is left, one call each.
+            api.replace(hex, vcard, key)
+            api.groups(hex, strings(obj.optJSONArray("groups")), key)
+            for (other in others) {
+                try {
+                    api.delete(other)
+                } catch (gone: AdukiException.Network) {
+                    if (gone.code != 404) throw gone
+                }
+            }
         }
     }
 

@@ -2,6 +2,7 @@ package pro.aduki.sdk
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import pro.aduki.net.http.Filters
 import pro.aduki.net.http.Push
 import pro.aduki.net.http.Responder
@@ -83,9 +84,8 @@ class Settings internal constructor(private val client: Aduki) {
     suspend fun update(sender: Sender) = io { identities.update(sender) }
 
     /**
-     * Makes [sender] the default one. Proposed server contract (`isDefault`
-     * on `Identity`): refused with `invalidProperties` until the mail host
-     * supports it; until then the main sender is the default.
+     * Makes [sender] the default one (`isDefault` on `Identity`; the others
+     * lose it). Mail sent without a `from` goes out as the default sender.
      */
     suspend fun prefer(sender: Sender) = io { identities.prefer(sender.id) }
 
@@ -114,12 +114,13 @@ class Settings internal constructor(private val client: Aduki) {
 
     /**
      * Handles one push body (JSON, decrypted if the registration has keys;
-     * for an FCM registration, the data message's `push` entry)
-     * and returns what it was, or null for anything else:
+     * for an FCM registration, the data message's `push` entry, or the data
+     * message itself as JSON) and returns what it was, or null for anything
+     * else:
      * - [Push.Verification]: sends the code back, completing [registerPush];
      * - [Push.Change] of `Email`, `Thread` or `Mailbox`: runs `client.sync.all()`
      *   on the mailboxes it names ([Push.Change.targets]), else on every
-     *   mailbox (what the Aduki mail host sends today);
+     *   mailbox;
      * - [Push.Rights]: renews the access token, as `client.rights(payload)`.
      */
     suspend fun receive(payload: String): Push? {
@@ -127,8 +128,21 @@ class Settings internal constructor(private val client: Aduki) {
         when (push) {
             is Push.Verification -> io { subscriptions.verify(push) }
             is Push.Change -> if (push.mail()) client.sync.all(push.targets())
-            is Push.Rights -> client.rights(payload)
+            is Push.Rights -> client.rights(body(payload))
         }
         return push
+    }
+
+    /**
+     * Handles an FCM data message ([data] is `RemoteMessage.data`): its
+     * `push` entry is the push body. Null when it has none (a message not
+     * from the mail server) or for anything [receive] does not handle.
+     */
+    suspend fun receive(data: Map<String, String>): Push? = data["push"]?.let { receive(it) }
+
+    // The push body inside an FCM data message given as JSON.
+    private fun body(payload: String): String {
+        val obj = runCatching { JSONObject(payload) }.getOrNull() ?: return payload
+        return if (obj.has("@type")) payload else obj.opt("push") as? String ?: payload
     }
 }

@@ -28,12 +28,12 @@ class Scheduling internal constructor(...) {
     suspend fun sync(): Int
 
     // Event writes: optimistic, queued in the outbox
-    suspend fun create(request: EventRequest): Appointment
-    suspend fun update(hex: String, changes: EventChanges): Appointment
-    suspend fun reschedule(hex: String, start: Instant, end: Instant): Appointment
-    suspend fun respond(hex: String, response: Response, address: String? = null): Appointment
-    suspend fun cancel(hex: String, reason: String = ""): Appointment
-    suspend fun remove(hex: String)
+    suspend fun create(request: EventRequest, notify: Boolean = false): Appointment
+    suspend fun update(hex: String, changes: EventChanges, notify: Boolean = false): Appointment
+    suspend fun reschedule(hex: String, start: Instant, end: Instant, notify: Boolean = false): Appointment
+    suspend fun respond(hex: String, response: Response, address: String? = null, comment: String = ""): Appointment
+    suspend fun cancel(hex: String, reason: String = "", notify: Boolean = false): Appointment
+    suspend fun remove(hex: String, notify: Boolean = false)
     suspend fun importIcs(text: String, calendar: String = ""): List<Appointment>
     fun exportIcs(hexes: List<String>? = null): String
 
@@ -94,14 +94,37 @@ of `start` and `end` in `timezone`, `end` exclusive.
 ```kotlin
 client.scheduling.update(hex, EventChanges(location = "Room 4", reminders = emptyList()))
 client.scheduling.reschedule(hex, newStart, newEnd)
-client.scheduling.respond(hex, Response.Accepted)   // the account's own address
+client.scheduling.respond(hex, Response.Accepted, comment = "See you")  // the account's own address
 client.scheduling.cancel(hex, reason = "Off sick")  // STATUS:CANCELLED, kept
-client.scheduling.remove(hex)
+client.scheduling.remove(hex, notify = true)        // attendees get a CANCEL
 ```
 
 Each edit changes only what it is about in the stored iCalendar object (alarms,
 unknown properties and overrides are kept), bumps `SEQUENCE` (not for an
 answer) and sends the whole object, so retries converge.
+
+`respond` sends `POST /user/events/{hex}/reply`: the server sets the
+account's `PARTSTAT` and sends the organizer an iTIP REPLY with the
+`comment`. For an event the server will not answer for (no organizer, or the
+account is not an attendee; `422`), the answered object is stored with
+`PATCH` instead and nobody is told.
+
+### Telling the attendees
+
+Attendees hear nothing unless asked. Pass `notify = true` and, for an event
+the account organizes, the server sends each attendee an iTIP message by
+mail:
+
+- `create(request, notify = true)`, `update(..., notify = true)` and
+  `reschedule(..., notify = true)` send a REQUEST (`"notify": true` in the
+  body);
+- `cancel(hex, notify = true)` sends the cancelled event as a REQUEST
+  carrying `STATUS:CANCELLED`;
+- `remove(hex, notify = true)` sends a CANCEL (`DELETE ...?notify=true`).
+
+The flag is kept in the outbox entry, so a write made offline notifies when it
+is sent. Nothing is sent for an event the account does not organize, or one
+without attendees.
 
 ### Occurrences in a range
 
@@ -159,6 +182,13 @@ val month = client.scheduling.stats(consult.hex, from, to)
 
 A taken slot answers `409` (`slot.taken`): read the slots again.
 
+`stats` reads `GET /user/pages/{hex}/stats?from&to` (at most a year apart):
+the page's bookings that start in the range by state (`bookings`,
+`confirmed`, `pending`, `cancelled`, `done`, `noshow`) and `views`, the views
+of its public page on the days the range touches. Bookings carry the `page`
+they were made on, and pages their `schedule` (a hex), which `updateService`
+uses to change a service's windows.
+
 ---
 
 ## 4. Routes
@@ -166,10 +196,10 @@ A taken slot answers `409` (`slot.taken`): read the slots again.
 | Call | Route |
 |---|---|
 | `sync` | `GET /user/events?page&limit` |
-| outbox `event_create` | `POST /user/events` `{ical, calendar?}` |
-| outbox `event_update` | `PATCH /user/events/{hex}` `{ical}` |
-| outbox `event_reply` | `POST /user/events/{hex}/reply` `{partstat}` (proposed), else `PATCH /user/events/{hex}` |
-| outbox `event_delete` | `DELETE /user/events/{hex}` |
+| outbox `event_create` | `POST /user/events` `{ical, calendar?, notify?}` |
+| outbox `event_update` | `PATCH /user/events/{hex}` `{ical, notify?}` |
+| outbox `event_reply` | `POST /user/events/{hex}/reply` `{partstat, comment?}`; on `422`, `PATCH /user/events/{hex}` |
+| outbox `event_delete` | `DELETE /user/events/{hex}?notify=` |
 | `services`, `service` | `GET /user/pages`, `GET /user/pages/{hex}` |
 | `createService`, `updateService`, `removeService` | `POST /user/pages`, `PATCH /user/pages/{hex}`, `DELETE /user/pages/{hex}`; windows: `POST /user/schedules`, `PUT /user/schedules/{hex}/rules` |
 | `offers` | `GET /user/schedule/services?page=` |
@@ -177,22 +207,14 @@ A taken slot answers `409` (`slot.taken`): read the slots again.
 | `book` | `POST /book/pages/{hex}/bookings` (public) |
 | `reserve` | `POST /user/book/pages/{hex}/bookings` |
 | `bookings`, `booking`, `updateBooking` | `GET /user/bookings?upcoming`, `GET /user/bookings/{hex}`, `PATCH /user/bookings/{hex}` `{state}` |
-| `stats` | `GET /user/pages/{hex}/stats?from&to` (proposed), else counted on the device |
+| `stats` | `GET /user/pages/{hex}/stats?from&to` |
 
 ---
 
-## 5. Limits of the server today
+## 5. Notes
 
-- **Answers are not sent to the organizer.** Until `POST /user/events/{hex}/reply`
-  exists, `respond` stores the answer in the account's copy only.
-- **All-day events have no server times.** The server does not read
-  `DTSTART;VALUE=DATE`, so `/user/events/range` misses them; the SDK reads the
-  dates from the object.
-- **Range queries match the first occurrence only.** The SDK therefore syncs the
-  whole calendar and expands repeats on the device.
-- **Attendees are not notified** of events created or changed over REST.
-- **Statistics.** Until `GET /user/pages/{hex}/stats` exists, `stats` counts
-  bookings on the device for the whole account (`Stats.service` is empty,
-  `views` is null).
-- **A page does not show its schedule**, so `updateService` finds a service's
-  schedule by its slug.
+- The SDK syncs the whole calendar (`GET /user/events`) and expands repeats on
+  the device. `/user/events/range` also matches repeating events by later
+  occurrences, and all-day events carry their start and end.
+- A `PATCH` with field edits (`summary`, `description`, `location`) keeps
+  attendees and alarms; the SDK sends the whole object anyway.

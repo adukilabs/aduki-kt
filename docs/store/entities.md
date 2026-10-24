@@ -129,6 +129,22 @@ data class Contact(
 )
 ```
 
+### `Group`
+
+A contact group as the server last listed it (`GET /user/contacts/groups`),
+or one created on this device and not sent yet. Members carry groups as tags
+(`Contact.groups`); this row keeps a group without members listed. A contact
+sync replaces every row with the server's list.
+
+```kotlin
+@Entity
+data class Group(
+    @Id var id: Long = 0,
+    @Convert(converter = SealedText::class, dbType = String::class) var name: String = "",
+    var count: Int = 0 // members at the last sync
+)
+```
+
 ---
 
 ## 4. `Outbox` Entity

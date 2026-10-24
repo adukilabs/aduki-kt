@@ -26,6 +26,7 @@ import pro.aduki.store.box.Factory
 import pro.aduki.store.box.Sealing
 import pro.aduki.store.entities.Contact
 import pro.aduki.store.entities.Contact_
+import pro.aduki.store.entities.Group
 import pro.aduki.sync.engine.Contact as ContactEngine
 import pro.aduki.sync.http.ContactDispatcher
 import pro.aduki.sync.http.HttpContactTransport
@@ -47,8 +48,8 @@ class BookTest {
     private val bodies = CopyOnWriteArrayList<String>()
 
     @Volatile private var status = 200
-    // The group-wide routes are proposed: 405 stands for a server without them.
-    @Volatile private var wide = 405
+    @Volatile private var merge = 200
+    @Volatile private var groups = """{"items":[{"name":"empty","count":0},{"name":"friends","count":1}]}"""
     @Volatile private var list = """{"items":[],"total":0,"page":1,"pages":0}"""
 
     @Before
@@ -64,9 +65,16 @@ class BookTest {
                 if (status != 200) return MockResponse().setResponseCode(status)
                 val path = request.path.orEmpty()
                 return when {
-                    path.startsWith("/v1/user/contacts/group/") && request.method != "GET" -> MockResponse().setResponseCode(wide)
-                    path.startsWith("/v1/user/contacts/group/") -> MockResponse().setBody(
-                        """{"success":true,"data":{"items":[{"hex":"c1","etag":"e","name":"Ann","emails":[],"phones":[],"groups":["friends","x"],"vcard":""},{"hex":"c2","etag":"e","name":"Bo","emails":[],"phones":[],"groups":["friends"],"vcard":""}],"total":2,"page":1,"pages":1}}"""
+                    path.startsWith("/v1/user/contacts/group/") && request.method == "PATCH" ->
+                        MockResponse().setBody("""{"success":true,"data":{"group":"close","changed":2}}""")
+                    path.startsWith("/v1/user/contacts/group/") && request.method == "DELETE" ->
+                        MockResponse().setBody("""{"success":true,"data":{"changed":1}}""")
+                    path == "/v1/user/contacts/groups" && request.method == "POST" ->
+                        MockResponse().setResponseCode(201).setBody("""{"success":true,"data":{"name":"empty","count":0}}""")
+                    path == "/v1/user/contacts/groups" -> MockResponse().setBody("""{"success":true,"data":$groups}""")
+                    path.endsWith("/merge") && merge != 200 -> MockResponse().setResponseCode(merge)
+                    path.endsWith("/merge") -> MockResponse().setBody(
+                        """{"success":true,"data":{"hex":"a","uid":"u-a","etag":"e7","vcard":"","name":"Ann Lee","emails":[],"phones":[],"groups":["friends","work"],"meta":{},"created":"2026-10-24T10:00:00Z","updated":"2026-10-24T10:00:01Z"}}"""
                     )
                     request.method == "POST" -> MockResponse().setResponseCode(201).setBody(
                         """{"success":true,"data":{"hex":"srv1","uid":"u-srv","etag":"e1","vcard":"","name":"x","emails":[],"phones":[],"groups":[],"meta":{},"created":"2026-10-24T10:00:00Z","updated":"2026-10-24T10:00:01Z"}}"""
@@ -174,7 +182,7 @@ class BookTest {
     }
 
     @Test
-    fun renameIsOneActionThatFallsBackToMembers() = runBlocking {
+    fun renameIsOneGroupWideAction() = runBlocking {
         val box = store.boxFor(Contact::class.java)
         box.put(Contact(hex = "c1", name = "Ann", groups = listOf("friends", "x")))
         box.put(Contact(hex = "c2", name = "Bo", groups = listOf("friends")))
@@ -184,18 +192,12 @@ class BookTest {
         assertEquals(listOf(Book.RENAME), manager.pending().map { it.action })
         assertEquals(1, worker.drain())
 
-        assertEquals(
-            listOf("PATCH /v1/user/contacts/group/friends", "GET /v1/user/contacts/group/friends?limit=200&page=1", "PATCH /v1/user/contacts/c1/groups", "PATCH /v1/user/contacts/c2/groups"),
-            requests.map { it.substringBeforeLast(" ") }
-        )
-        assertEquals("""{"name":"close"}""", bodies[0])
-        assertEquals("""{"groups":["close","x"]}""", bodies[2])
-        assertEquals("""{"groups":["close"]}""", bodies[3])
+        assertEquals(listOf("PATCH /v1/user/contacts/group/friends"), requests.map { it.substringBeforeLast(" ") })
+        assertEquals("""{"name":"close"}""", bodies.single())
     }
 
     @Test
-    fun dissolveUsesTheGroupRouteWhenTheServerHasIt() = runBlocking {
-        wide = 200
+    fun dissolveIsOneGroupWideAction() = runBlocking {
         store.boxFor(Contact::class.java).put(Contact(hex = "c1", name = "Ann", groups = listOf("friends", "x")))
 
         book.dissolve("friends")
@@ -203,6 +205,46 @@ class BookTest {
         assertEquals(listOf("x"), stored("c1")!!.groups)
         assertEquals(1, worker.drain())
         assertEquals(listOf("DELETE /v1/user/contacts/group/friends"), requests.map { it.substringBeforeLast(" ") })
+    }
+
+    private fun names(): List<String> = store.boxFor(Group::class.java).all.map { it.name }.sorted()
+
+    @Test
+    fun anEmptyGroupIsKeptLocallyAndCreatedOnTheServer() = runBlocking<Unit> {
+        book.group(" empty ")
+        book.group("empty")
+
+        assertEquals(listOf("empty"), names())
+        assertEquals(listOf(Book.GROUP), manager.pending().map { it.action })
+        assertEquals(1, worker.drain())
+        assertEquals("POST /v1/user/contacts/groups", requests.single().substringBeforeLast(" "))
+        assertTrue(requests.single().substringAfterLast(" ").startsWith("outbox-"))
+        assertEquals("""{"name":"empty"}""", bodies.single())
+        assertThrows(IllegalArgumentException::class.java) { book.group(" ") }
+    }
+
+    @Test
+    fun renameAndDissolveCarryTheStoredGroup() {
+        book.group("empty")
+        book.rename("empty", "spare")
+        assertEquals(listOf("spare"), names())
+        book.dissolve("spare")
+        assertEquals(emptyList<String>(), names())
+        assertEquals(listOf(Book.GROUP, Book.RENAME, Book.DISSOLVE), manager.pending().map { it.action })
+    }
+
+    @Test
+    fun syncStoresTheServersGroupsOnceNothingGroupWideIsQueued() = runBlocking {
+        book.group("mine")
+        val engine = ContactEngine(store, HttpContactTransport(Contacts(OkHttpClient(), server.url("/v1").toString())))
+        // Held back while the create is queued: the local group stays.
+        assertTrue(engine.sync("t1"))
+        assertEquals(listOf("mine"), names())
+
+        worker.drain()
+        assertTrue(engine.sync("t1"))
+        assertEquals(listOf("empty", "friends"), names())
+        assertEquals(0, store.boxFor(Group::class.java).all.first { it.name == "empty" }.count)
     }
 
     @Test
@@ -230,7 +272,42 @@ class BookTest {
         assertEquals("Acme", kept.company)
         assertEquals(listOf("friends", "work"), kept.groups)
         assertNull(stored("b"))
-        assertEquals(listOf(Book.UPDATE, Book.DELETE), manager.pending().map { it.action })
+        assertEquals(listOf(Book.MERGE), manager.pending().map { it.action })
+
+        assertEquals(1, worker.drain())
+        assertEquals("POST /v1/user/contacts/a/merge", requests.single().substringBeforeLast(" "))
+        val body = JSONObject(bodies.single())
+        assertEquals(listOf("b"), body.getJSONArray("others").map { it as String })
+        assertTrue(body.getString("vcard").contains("EMAIL:b@x.example"))
+        assertEquals("e7", stored("a")!!.ctag)
+    }
+
+    @Test
+    fun mergeWithOnlyUnsentOthersIsAnUpdate() = runBlocking {
+        store.boxFor(Contact::class.java).put(Contact(hex = "a", name = "Ann"))
+        val other = book.create(Card(name = "Ann", emails = listOf("b@x.example")))
+
+        book.merge("a", listOf(other.hex))
+
+        assertNull(stored(other.hex))
+        assertEquals(listOf(Book.UPDATE), manager.pending().map { it.action })
+    }
+
+    @Test
+    fun aMergeWithAMissingContactFallsBackToOneCallEach() = runBlocking {
+        val box = store.boxFor(Contact::class.java)
+        box.put(Contact(hex = "a", name = "Ann", groups = listOf("friends")))
+        box.put(Contact(hex = "b", name = "Bo"))
+        book.merge("a", listOf("b"))
+        merge = 404
+
+        assertEquals(1, worker.drain())
+
+        assertEquals(
+            listOf("POST /v1/user/contacts/a/merge", "PATCH /v1/user/contacts/a/vcard", "PATCH /v1/user/contacts/a/groups", "DELETE /v1/user/contacts/b"),
+            requests.map { it.substringBeforeLast(" ") }
+        )
+        assertEquals(0, manager.count.value)
     }
 
     @Test

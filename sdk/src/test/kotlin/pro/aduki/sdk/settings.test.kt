@@ -131,6 +131,15 @@ class SettingsTest {
     }
 
     @Test
+    fun anFcmDataMessageIsReceivedFromItsPushEntry() = runBlocking<Unit> {
+        val body = """{"@type":"PushVerification","pushSubscriptionId":"new","verificationCode":"f1"}"""
+        assertEquals(Push.Verification("new", "f1"), client.settings.receive(mapOf("push" to body)))
+        assertEquals("f1", calls.last { it.first == "PushSubscription/set" }.second.getJSONObject("update").getJSONObject("new").getString("verificationCode"))
+        assertEquals(Push.Rights(4), client.settings.receive(JSONObject().put("push", """{"@type":"Rights","epoch":4}""").toString()))
+        assertNull(client.settings.receive(mapOf("other" to "x")))
+    }
+
+    @Test
     fun otherPushesAreHandledOrIgnored() = runBlocking<Unit> {
         assertEquals(Push.Rights(3), client.settings.receive("""{"@type":"Rights","epoch":3}"""))
         assertNull(client.settings.receive("""{"hello":"world"}"""))

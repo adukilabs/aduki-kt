@@ -264,6 +264,91 @@ class LiveTest {
     }
 
     /**
+     * T5-LIVE-13: The senders carry `isDefault`: exactly one is the default.
+     */
+    @Test
+    fun defaultSender() = runBlocking<Unit> {
+        val client = live()
+        val list = client.jmap.call("Identity/get", org.json.JSONObject(), setOf(pro.aduki.net.http.Jmap.CORE, pro.aduki.net.http.Jmap.MAIL, pro.aduki.net.http.Jmap.SUBMISSION))
+            .getJSONArray("list")
+        assertTrue((0 until list.length()).all { list.getJSONObject(it).has("isDefault") })
+        assertEquals(1, client.settings.senders().count { it.default })
+        assertTrue(client.settings.senders().first().default)
+    }
+
+    /**
+     * T5-LIVE-14: A native FCM registration (a made-up token): the server
+     * accepts the create and drops it later when FCM refuses the token.
+     */
+    @Test
+    fun fcm() = runBlocking<Unit> {
+        val settings = live().settings
+        val device = "aduki-sdk-live-fcm"
+        try {
+            val entry = settings.registerPush(Subscription(device = device, fcm = "aduki-sdk-live-test-not-a-real-token"))
+            assertTrue(entry.id.isNotBlank())
+        } finally {
+            settings.unregisterPush(device)
+        }
+        assertEquals(0, settings.unregisterPush(device))
+    }
+
+    /**
+     * T5-LIVE-15: A group created without members is kept on the server
+     * (`GET /user/contacts/groups` counts it 0) and locally across a sync,
+     * then deleted.
+     */
+    @Test
+    fun emptyGroup() = runBlocking<Unit> {
+        val client = live(store = true)
+        val name = "aduki-sdk-live-${System.currentTimeMillis()}"
+        try {
+            client.contacts.groups.create(name)
+            assertEquals(0, client.sync.pending())
+            assertEquals(0, client.contactsApi.groups().single { it.name == name }.count)
+            client.contacts.sync()
+            assertTrue(name in client.contacts.groups.list())
+        } finally {
+            client.contacts.groups.delete(name)
+        }
+        assertEquals(0, client.sync.pending())
+        assertTrue(client.contactsApi.groups().none { it.name == name })
+        client.contacts.sync()
+        assertTrue(name !in client.contacts.groups.list())
+        client.close()
+    }
+
+    /**
+     * T5-LIVE-16: Two created contacts merged with the atomic server merge:
+     * one is left with both addresses, the other is gone.
+     */
+    @Test
+    fun merge() = runBlocking<Unit> {
+        val client = live(store = true)
+        val tag = System.currentTimeMillis()
+        val a = client.contacts.create(pro.aduki.core.models.Card(name = "SDK Live $tag", emails = listOf("a$tag@example.com")))
+        val b = client.contacts.create(pro.aduki.core.models.Card(name = "SDK Live $tag", emails = listOf("b$tag@example.com")))
+        assertEquals(0, client.sync.pending())
+        val sent = withTimeout(5_000) {
+            client.contacts.observe()!!.first { list -> list.count { (it.uid == a.uid || it.uid == b.uid) && !it.hex.startsWith("contact_") } == 2 }
+        }
+        val keep = sent.first { it.uid == a.uid }.hex
+        val other = sent.first { it.uid == b.uid }.hex
+        try {
+            client.contacts.merge(keep, listOf(other))
+            assertEquals(0, client.sync.pending())
+            val rows = client.contactsApi.list().items
+            assertTrue(rows.none { it.hex == other })
+            assertEquals(setOf("a$tag@example.com", "b$tag@example.com"), rows.single { it.hex == keep }.emails.map { it.removePrefix("mailto:") }.toSet())
+        } finally {
+            client.contacts.delete(keep)
+            runCatching { client.contactsApi.delete(other) }
+        }
+        assertEquals(0, client.sync.pending())
+        client.close()
+    }
+
+    /**
      * T5-LIVE-12: A session bound to a device key (DPoP) on mail REST and
      * JMAP, with a P-256 (ES256) and an Ed25519 key. Needs a full sign-in:
      * ADUKI_LOGIN_HANDLE, ADUKI_LOGIN_PASSWORD and ADUKI_LOGIN_TOTP (the

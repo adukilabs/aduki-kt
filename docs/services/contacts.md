@@ -8,7 +8,8 @@ Writes are applied to the local store at once and queued in the outbox, like
 mail actions; they reach the server when the outbox drains (each write call
 drains it once, and `client.sync.flush()` does too). Writes need a local store
 (`Aduki.builder().store(dir)`); without one they throw
-`IllegalStateException("no local store")`.
+`IllegalStateException("no local store")`, except `import`, which then goes
+to the server in one call.
 
 ---
 
@@ -42,7 +43,7 @@ class Contacts internal constructor(...) {
 class Groups internal constructor(...) {
     fun observe(): StateFlow<List<String>>?
     fun list(): List<String>
-    suspend fun create(group: String, members: List<String>)
+    suspend fun create(group: String, members: List<String> = emptyList())
     suspend fun rename(group: String, name: String)
     suspend fun delete(group: String)
     suspend fun add(group: String, hexes: List<String>)
@@ -64,16 +65,20 @@ The server has no incremental contacts route over REST, so the transport
 (`pro.aduki.sync.http.HttpContactTransport`) reads `GET /v1/user/contacts`
 200 rows at a time and reconciles the whole list:
 
-- the sync token is a digest of every `hex:etag:groups` line (a group change
-  leaves the etag alone); if it equals the stored one nothing is touched;
+- the sync token is a digest of every `hex:etag` line (the etag covers the
+  groups too); if it equals the stored one no contact is touched;
 - otherwise every row is merged and local contacts the server no longer lists
   are removed;
+- the group list (`GET /v1/user/contacts/groups`) is read on every sync and
+  replaces the stored groups, so groups without members show up too;
 - contacts with a queued write are left as they are locally until the write
-  is sent, and a queued group rename or delete holds the whole sync back.
+  is sent, and a queued group create, rename or delete holds the whole sync
+  back.
 
 Rows carry the vCard: company, notes and photo are read from it, and every
-e-mail address and phone is kept. The server answers in page mode (`page`,
-`pages`) and ignores the `after` cursor; the transport follows either.
+e-mail address and phone is kept. The list is walked with the `after` cursor
+(each page's `next`, null on the last); a server answering in page mode
+(`page`, `pages`) is walked by page number.
 
 ```json
 {"success": true, "data": {"items": [
@@ -82,7 +87,7 @@ e-mail address and phone is kept. The server answers in page mode (`page`,
    "name": "Ann Lee", "emails": ["ann@example.com"], "phones": ["+15550001"],
    "groups": ["friends"], "meta": {}, "version": "4.0", "size": 134,
    "created": "2026-10-24T15:40:42.574184Z", "updated": "2026-10-24T15:42:29.310916Z"}
-], "total": 1, "page": 1, "pages": 1}}
+], "total": 1, "next": null}}
 ```
 
 ### `observe`, `search`, `get`, `card`
@@ -154,24 +159,24 @@ POST /v1/user/contacts HTTP/1.1
 Idempotency-Key: outbox-12-1761320000000
 Content-Type: application/json
 
-{"vcard": "BEGIN:VCARD\r\nUID:...\r\nFN:Ann Lee\r\nN:Lee;Ann;;;\r\nEMAIL:ann@example.com\r\nEND:VCARD\r\n",
+{"vcard": "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:...\r\nFN:Ann Lee\r\nN:Lee;Ann;;;\r\nEMAIL:ann@example.com\r\nEND:VCARD\r\n",
  "name": "Ann Lee", "groups": ["friends"], "meta": null}
 ```
 
-The `VERSION` line is left out of uploads: the server rebuilds the card and
-adds `VERSION:4.0` only when the source has none, so a card that carries one
-is refused with 422 "VERSION must be 3.0 or 4.0". The `name` sent is the
-card's `FN`.
+The vCard goes up as written, `VERSION:4.0` included; the server rebuilds it
+with one `VERSION:4.0`. The `name` sent is the card's `FN`.
 
 ---
 
 ## 4. Groups
 
-The server keeps groups as tags on each contact; there is no group object. A
-group exists while it has members:
+Members carry a group as a tag. A group created by name stays listed with no
+members until it is deleted; one that only ever existed as a tag goes when
+its last member leaves.
 
 ```kotlin
-client.contacts.groups.create("friends", listOf(annHex, bobHex)) // needs at least one member
+client.contacts.groups.create("family")                           // empty, kept
+client.contacts.groups.create("friends", listOf(annHex, bobHex))
 client.contacts.groups.add("friends", listOf(carolHex))
 client.contacts.groups.remove("friends", listOf(bobHex))
 client.contacts.groups.rename("friends", "close friends")
@@ -180,13 +185,18 @@ val names = client.contacts.groups.observe()                      // StateFlow<L
 val members = client.contacts.observe("friends")
 ```
 
-- `add`, `remove` and `create` set each member's group list
+- `create` stores the group locally (a `Group` row, so `list` and `observe`
+  show it at once) and queues `POST /user/contacts/groups` `{"name": "..."}`
+  (201 when new, 200 when it exists). With members, it then adds them.
+- `add` and `remove` set each member's group list
   (`PATCH /user/contacts/{hex}/groups`).
-- `rename` and `delete` are one queued action each. They use the group-wide
-  routes `PATCH /user/contacts/group/{group}` (`{"name": "..."}`) and
-  `DELETE /user/contacts/group/{group}`, which are proposed and not on the
-  server yet; while it answers them with 405 or 404, the members are read from
-  `GET /user/contacts/group/{group}` and each one's group list is set.
+- `rename` and `delete` are one queued action each:
+  `PATCH /user/contacts/group/{group}` `{"name": "..."}` (answers
+  `{"group", "changed"}`) and `DELETE /user/contacts/group/{group}` (answers
+  `{"changed"}`). Both apply to every member and to an empty group.
+- `list` and `observe` give the group names in use plus the stored groups:
+  after a sync, the server's whole list (`GET /user/contacts/groups`,
+  `{"items": [{"name", "count"}]}`, empty groups with count 0).
 - The groups also go into the vCard as `CATEGORIES`.
 
 ---
@@ -201,8 +211,15 @@ val vcf: String = client.contacts.export(listOf(annHex), version = Vcard.V3)
 client.contacts.export(outputStream)  // every contact, 4.0
 ```
 
-`import` reads vCard 3.0 and 4.0 (2.1 cards are reported as errors), one or
-more cards per file. Lines are unfolded, property groups (`item1.EMAIL`),
+With a local store, `import` runs on the device: it works offline, each card
+goes through the outbox like any write, and cards are matched by UID and
+then by e-mail address. Without a local store the file goes to the server in
+one call, `POST /user/contacts/import` (`text/vcard`, at most 5000 cards),
+which matches by UID only and answers `{created, updated, skipped, errors:
+[{index, error}]}`; `errors` become `"card N: reason"` as below.
+
+On the device, `import` reads vCard 3.0 and 4.0 (2.1 cards are reported as
+errors), one or more cards per file. Lines are unfolded, property groups (`item1.EMAIL`),
 quoted parameters and escapes are honoured, and a 3.0 inline photo
 (`PHOTO;ENCODING=b;TYPE=JPEG:...`) becomes a `data:` URI. For each card:
 
@@ -236,9 +253,15 @@ the set.
 `merge` folds `others` into `keep` in one local transaction: e-mail addresses,
 phones and groups are combined (so `keep` takes the others' group
 memberships), blank fields of `keep` are filled from the others, the notes are
-joined, and the others are deleted. It queues an update of `keep` and a
-delete of each other, sent in that order. Properties of the others' vCards
-that `Card` does not model are not carried over.
+joined, and the others are deleted. It queues one `contact.merge`, sent as
+`POST /user/contacts/{hex}/merge` `{"others": [hex], "vcard": "..."}`: the
+server merges in one transaction (the others' groups join `keep`'s, the
+vCard replaces `keep`'s, the others are deleted) and returns the card.
+Others whose creation was never sent are just dropped (when all are, an
+update of `keep` is queued instead). If the server answers 404 (one of them
+is gone, nothing changed), the merge falls back to an update of `keep` and
+a delete of each other. Properties of the others' vCards that `Card` does
+not model are not carried over.
 
 ---
 
@@ -271,3 +294,14 @@ data class Contact(
 
 Sealed columns are encrypted with the store's vault (see `Sealing`); lists
 are sealed as one text column.
+
+Groups kept without members are `Group` rows:
+
+```kotlin
+@Entity
+data class Group(
+    @Id var id: Long = 0,
+    var name: String = "",           // sealed
+    var count: Int = 0               // members on the server at the last sync
+)
+```
