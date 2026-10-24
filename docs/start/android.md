@@ -4,7 +4,7 @@
 
 ```kotlin
 dependencies {
-    implementation("pro.aduki:android:0.4.0")
+    implementation("pro.aduki:android:0.5.0")
 }
 ```
 

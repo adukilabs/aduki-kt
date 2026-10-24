@@ -29,7 +29,7 @@ plugins {
     signing
 }
 
-val release = "0.4.1-beta"
+val release = "0.5.0"
 val domain = "pro.aduki"
 
 // Java 17 bytecode whichever JDK (17 to 22) runs Gradle; Kotlin 2.0.x cannot target above 22.
@@ -62,29 +62,7 @@ subprojects {
                 create<MavenPublication>("maven") {
                     from(components["java"])
 
-                    pom {
-                        name.set(project.name)
-                        description.set("Aduki Android Kotlin SDK - ${project.name} module")
-                        url.set("https://github.com/adukilabs/aduki-kt")
-                        licenses {
-                            license {
-                                name.set("The Apache License, Version 2.0")
-                                url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
-                            }
-                        }
-                        developers {
-                            developer {
-                                id.set("adukilabs")
-                                name.set("Aduki Labs")
-                                email.set("dev@aduki.pro")
-                            }
-                        }
-                        scm {
-                            connection.set("scm:git:git://github.com/adukilabs/aduki-kt.git")
-                            developerConnection.set("scm:git:ssh://github.com:adukilabs/aduki-kt.git")
-                            url.set("https://github.com/adukilabs/aduki-kt")
-                        }
-                    }
+                    pom { adukiPom(project.name) }
                 }
             }
 
@@ -110,6 +88,75 @@ subprojects {
             if (!key.isNullOrBlank()) {
                 useInMemoryPgpKeys(key, pass ?: "")
                 sign(extensions.getByType<PublishingExtension>().publications["maven"])
+            }
+        }
+    }
+}
+
+
+// The Maven Central POM every module publishes (JVM jars and the Android AAR).
+fun MavenPom.adukiPom(module: String) {
+    name.set(module)
+    description.set("Aduki Android Kotlin SDK - $module module")
+    url.set("https://github.com/adukilabs/aduki-kt")
+    licenses {
+        license {
+            name.set("The Apache License, Version 2.0")
+            url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+        }
+    }
+    developers {
+        developer {
+            id.set("adukilabs")
+            name.set("Aduki Labs")
+            email.set("dev@aduki.pro")
+        }
+    }
+    scm {
+        connection.set("scm:git:git://github.com/adukilabs/aduki-kt.git")
+        developerConnection.set("scm:git:ssh://github.com:adukilabs/aduki-kt.git")
+        url.set("https://github.com/adukilabs/aduki-kt")
+    }
+}
+
+subprojects {
+    // The Android library publishes its release AAR (with sources and javadoc
+    // jars) under the same POM, repositories and signing as the JVM modules.
+    plugins.withId("com.android.library") {
+        afterEvaluate {
+            configure<PublishingExtension> {
+                publications {
+                    create<MavenPublication>("maven") {
+                        from(components["release"])
+                        // Maven Central requires a javadoc jar. AGP's bundled Dokka cannot
+                        // read sealed classes, so the AAR ships an empty one (the KDoc is
+                        // in the sources jar and the manual).
+                        artifact(tasks.register<Jar>("javadocJar") { archiveClassifier.set("javadoc") })
+                        pom { adukiPom(project.name) }
+                    }
+                }
+                repositories {
+                    maven {
+                        name = "github"
+                        url = uri("https://maven.pkg.github.com/adukilabs/aduki-kt")
+                        credentials {
+                            username = project.findProperty("gpr.user") as String? ?: System.getenv("GITHUB_ACTOR")
+                            password = project.findProperty("gpr.key") as String? ?: System.getenv("GITHUB_TOKEN")
+                        }
+                    }
+                    maven {
+                        name = "local"
+                        url = uri(rootProject.layout.buildDirectory.dir("repo"))
+                    }
+                }
+            }
+            configure<SigningExtension> {
+                val key = System.getenv("SIGNING_KEY") ?: project.findProperty("signing.key") as String?
+                val pass = System.getenv("SIGNING_PASSWORD") ?: project.findProperty("signing.password") as String?
+                if (!key.isNullOrBlank()) {
+                    useInMemoryPgpKeys(key, pass ?: "")
+                    sign(extensions.getByType<PublishingExtension>().publications["maven"])
+                }
             }
         }
     }
