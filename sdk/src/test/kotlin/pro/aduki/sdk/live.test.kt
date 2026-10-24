@@ -13,6 +13,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import pro.aduki.core.config.Endpoints
+import pro.aduki.core.models.Card
 
 /**
  * Tier 5: Live Aduki Server Integration Tests (SERVER REQUIRED - PUT LAST).
@@ -154,5 +155,45 @@ class LiveTest {
         client.sync.flush()
         assertEquals(0, client.sync.pending())
         client.close()
+    }
+
+    /**
+     * T5-LIVE-07: Contact create, update, groups and delete through the outbox; removes what it made.
+     */
+    @Test
+    fun contacts() = runBlocking {
+        val client = live(store = true)
+        val tag = "sdk-live-${System.currentTimeMillis()}"
+        var hex = ""
+        try {
+            val made = client.contacts.create(
+                Card(name = "SDK Live $tag", emails = listOf("$tag@example.com"), phones = listOf("+15550100"), company = "Aduki", notes = "live test")
+            )
+            assertEquals(0, client.sync.pending())
+            hex = client.contacts.observe()!!.value.firstOrNull { it.uid == made.uid }?.hex
+                ?: withTimeout(5_000) { client.contacts.observe()!!.first { list -> list.any { it.uid == made.uid } } }.first { it.uid == made.uid }.hex
+            assertTrue("expected the server's hex, got $hex", !hex.startsWith("contact_"))
+
+            client.contacts.update(hex, client.contacts.card(hex)!!.copy(name = "SDK Live Edited $tag", phones = listOf("+15550101")))
+            client.contacts.groups.add(tag, listOf(hex))
+            assertEquals(0, client.sync.pending())
+
+            val row = client.contactsApi.list().items.first { it.hex == hex }
+            assertEquals("SDK Live Edited $tag", row.name)
+            assertEquals(listOf("+15550101"), row.phones)
+            assertEquals(listOf(tag), row.groups)
+            assertTrue(row.vcard.contains("ORG:Aduki"))
+
+            assertTrue(client.contacts.sync())
+            assertEquals("SDK Live Edited $tag", client.contacts.get(hex)?.name)
+
+            client.contacts.delete(hex)
+            assertEquals(0, client.sync.pending())
+            assertTrue(client.contactsApi.list().items.none { it.hex == hex })
+            hex = ""
+        } finally {
+            if (hex.isNotBlank() && !hex.startsWith("contact_")) runCatching { client.contactsApi.delete(hex) }
+            client.close()
+        }
     }
 }

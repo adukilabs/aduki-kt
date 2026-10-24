@@ -119,6 +119,43 @@ class HttpContactTransportTest {
     }
 
     @Test
+    fun pageModeIsWalkedToTheLastPage() = runBlocking {
+        reply("""{"success":true,"data":{"items":[${row("c1", "e1")},${row("c2", "e2")}],"total":3,"page":1,"pages":2}}""")
+        reply("""{"success":true,"data":{"items":[${row("c3", "e3")}],"total":3,"page":2,"pages":2}}""")
+
+        val delta = transport.fetch("t1", "")
+
+        assertEquals(listOf("c1", "c2", "c3"), delta.changed.map { it.hex })
+        assertEquals("/v1/user/contacts?limit=2", server.takeRequest().path)
+        assertEquals("/v1/user/contacts?limit=2&page=2", server.takeRequest().path)
+    }
+
+    @Test
+    fun rowsKeepEveryValueAndTheVcardFields() = runBlocking {
+        val vcard = "BEGIN:VCARD\\r\\nVERSION:4.0\\r\\nFN:Ann\\r\\nEMAIL:a@x.example\\r\\nEMAIL:b@x.example\\r\\nTEL;VALUE=uri:tel:+1555\\r\\nORG:Acme\\r\\nNOTE:hi\\r\\nEND:VCARD\\r\\n"
+        reply("""{"success":true,"data":{"items":[{"hex":"c1","uid":"u1","etag":"e1","vcard":"$vcard","name":"Ann","emails":["a@x.example","b@x.example"],"phones":["tel:+1555"],"groups":["friends"],"created":"2026-10-24T10:00:00Z","updated":"2026-10-24T11:00:00Z"}],"total":1}}""")
+
+        val c = transport.fetch("t1", "").changed.single()
+
+        assertEquals(listOf("a@x.example", "b@x.example"), c.emails)
+        assertEquals(listOf("+1555"), c.phones)
+        assertEquals("+1555", c.phone)
+        assertEquals(listOf("friends"), c.groups)
+        assertEquals("Acme", c.company)
+        assertEquals("hi", c.notes)
+        assertEquals("u1", c.uid)
+        assertTrue(c.updated > 0)
+    }
+
+    @Test
+    fun aGroupChangeChangesTheCtag() = runBlocking {
+        reply(page(listOf(row("c1", "e1"))))
+        val a = transport.fetch("t1", "")
+        reply(page(listOf(row("c1", "e1").replace("[\"friends\"]", "[\"work\"]"))))
+        assertTrue(transport.fetch("t1", a.ctag).full)
+    }
+
+    @Test
     fun unauthorizedIsAnAuthError() {
         reply("""{"success":false,"error":{"status":401,"kind":"auth.unauthorized","message":"no"}}""", 401)
         assertThrows(AdukiException.Auth::class.java) { runBlocking { transport.fetch("t1", "") } }

@@ -1,18 +1,27 @@
 package pro.aduki.net.http
 
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import pro.aduki.core.errors.AdukiException
 import pro.aduki.core.models.ContactRow
 import pro.aduki.core.models.Listing
+import pro.aduki.core.vcard.Vcard
 
 /**
- * Contacts is the typed client for the REST address book
- * (`GET /user/contacts`, scope `contacts:read`). The tenant and user come
- * from the credential, never from the request.
+ * Contacts is the typed client for the REST address book (scopes
+ * `contacts:read` and `contacts:write`). The tenant and user come from the
+ * credential, never from the request.
+ *
+ * Writes send the vCard without its `VERSION` line: the server rebuilds the
+ * card and writes `VERSION:4.0` only when the source had none, so a card
+ * that carries one is refused as having no version. The display name sent
+ * alongside is the card's `FN`.
  *
  * Calls are blocking; run them off the main thread.
  */
@@ -21,16 +30,93 @@ class Contacts(
     private val endpoint: String
 ) {
 
+    private val mediaJson = "application/json; charset=utf-8".toMediaType()
+
+    private fun url(vararg segments: String): HttpUrl.Builder {
+        val builder = endpoint.trimEnd('/').toHttpUrl().newBuilder().addPathSegment("user").addPathSegment("contacts")
+        for (segment in segments) builder.addPathSegment(segment)
+        return builder
+    }
+
     /**
-     * One page of the address book, [limit] rows (the server caps it at 200);
-     * pass the previous page's `next` as [after].
+     * One page of the address book, [limit] rows (the server caps it at 200).
+     * Pass the previous page's `next` as [after]; a server that answers in
+     * page mode (no `next`, but `page` and `pages`) is walked with [page].
      */
-    fun list(after: String? = null, limit: Int = 200): Listing<ContactRow> {
-        val builder = endpoint.trimEnd('/').toHttpUrl().newBuilder()
-            .addPathSegment("user").addPathSegment("contacts")
-            .addQueryParameter("limit", limit.toString())
+    fun list(after: String? = null, limit: Int = 200, page: Int? = null): Listing<ContactRow> {
+        val builder = url().addQueryParameter("limit", limit.toString())
         if (!after.isNullOrBlank()) builder.addQueryParameter("after", after)
-        val request = Request.Builder().url(builder.build()).get().build()
+        if (page != null) builder.addQueryParameter("page", page.toString())
+        return execute(Request.Builder().url(builder.build()).get().build()) { body -> Companion.page(JSONObject(body)) }
+    }
+
+    /**
+     * Creates a contact from [vcard] (`POST /user/contacts`) tagged with
+     * [groups]; returns it as stored. Pass a stable [key] when retrying, so
+     * a retry replays the first result instead of creating a second card.
+     */
+    fun create(vcard: String, groups: List<String> = emptyList(), key: String? = null): ContactRow {
+        val payload = JSONObject()
+            .put("vcard", bare(vcard))
+            .put("name", name(vcard))
+            .put("meta", JSONObject.NULL)
+        if (groups.isNotEmpty()) payload.put("groups", JSONArray(groups))
+        return execute(write(url(), "POST", payload, key)) { body -> row(JSONObject(body)) }
+    }
+
+    /** Replaces the vCard of [hex] (`PATCH /user/contacts/{hex}/vcard`). */
+    fun replace(hex: String, vcard: String, key: String? = null) {
+        val payload = JSONObject().put("vcard", bare(vcard)).put("name", name(vcard))
+        execute(write(url(hex, "vcard"), "PATCH", payload, key)) { }
+    }
+
+    /** Sets the group tags of [hex] (`PATCH /user/contacts/{hex}/groups`); an empty list clears them. */
+    fun groups(hex: String, groups: List<String>, key: String? = null) {
+        execute(write(url(hex, "groups"), "PATCH", JSONObject().put("groups", JSONArray(groups)), key)) { }
+    }
+
+    /** One page of the members of [group] (`GET /user/contacts/group/{group}`). */
+    fun members(group: String, limit: Int = 200, page: Int? = null): Listing<ContactRow> {
+        val builder = url("group", group).addQueryParameter("limit", limit.toString())
+        if (page != null) builder.addQueryParameter("page", page.toString())
+        return execute(Request.Builder().url(builder.build()).get().build()) { body -> Companion.page(JSONObject(body)) }
+    }
+
+    /**
+     * Renames [group] to [name] on every member in one call.
+     *
+     * Proposed server route, not deployed yet: `PATCH /user/contacts/group/{group}`
+     * with `{"name": "..."}`, answering `{"group": "...", "changed": n}`
+     * (0 for a group without members, never 404). Until it exists the server
+     * answers 405 (or 404); callers then rename member by member with [groups].
+     */
+    fun rename(group: String, name: String, key: String? = null) {
+        execute(write(url("group", group), "PATCH", JSONObject().put("name", name), key)) { }
+    }
+
+    /**
+     * Removes [group] from every member in one call; the contacts stay.
+     *
+     * Proposed server route, not deployed yet: `DELETE /user/contacts/group/{group}`,
+     * answering `{"changed": n}`. Until it exists the server answers 405 (or
+     * 404); callers then update member by member with [groups].
+     */
+    fun dissolve(group: String) {
+        execute(Request.Builder().url(url("group", group).build()).delete().build()) { }
+    }
+
+    /** Deletes [hex] (`DELETE /user/contacts/{hex}`). */
+    fun delete(hex: String) {
+        execute(Request.Builder().url(url(hex).build()).delete().build()) { }
+    }
+
+    private fun write(url: HttpUrl.Builder, method: String, payload: JSONObject, key: String?): Request {
+        val builder = Request.Builder().url(url.build()).method(method, payload.toString().toRequestBody(mediaJson))
+        if (!key.isNullOrBlank()) builder.header("Idempotency-Key", key)
+        return builder.build()
+    }
+
+    private fun <T> execute(request: Request, transform: (String) -> T): T {
         val response = try {
             client.newCall(request).execute()
         } catch (e: Exception) {
@@ -45,7 +131,7 @@ class Contacts(
                 throw AdukiException.Network("HTTP error ${resp.code}: ${Envelope.failure(raw) ?: resp.message}", code = resp.code)
             }
             return try {
-                page(JSONObject(Envelope.data(raw)))
+                transform(Envelope.data(raw))
             } catch (e: Exception) {
                 throw AdukiException.Protocol("Unexpected response from ${request.url}", e)
             }
@@ -59,9 +145,19 @@ class Contacts(
             return Listing(
                 items = (0 until items.length()).map { row(items.getJSONObject(it)) },
                 total = obj.optLong("total"),
-                next = if (obj.isNull("next")) null else obj.optString("next").ifEmpty { null }
+                next = if (obj.isNull("next")) null else obj.optString("next").ifEmpty { null },
+                page = if (obj.has("page")) obj.optInt("page") else null,
+                pages = if (obj.has("pages")) obj.optInt("pages") else null
             )
         }
+
+        /** [vcard] without its `VERSION` line (see the class note). */
+        fun bare(vcard: String): String =
+            vcard.split("\r\n", "\n").filterNot { it.trim().uppercase().startsWith("VERSION:") }.joinToString("\r\n")
+
+        // The server overrides `FN` with the name sent; send the card's own.
+        private fun name(vcard: String): String = runCatching { Vcard.parse(vcard).name }
+            .getOrElse { throw IllegalArgumentException("Not a vCard 3.0 or 4.0 with a name", it) }
 
         private fun row(obj: JSONObject) = ContactRow(
             hex = obj.optString("hex"),
@@ -70,7 +166,10 @@ class Contacts(
             emails = strings(obj.optJSONArray("emails")),
             phones = strings(obj.optJSONArray("phones")),
             groups = strings(obj.optJSONArray("groups")),
-            created = if (obj.isNull("created")) 0L else Mail.timestamp(obj.optString("created"))
+            created = if (obj.isNull("created")) 0L else Mail.timestamp(obj.optString("created")),
+            uid = if (obj.isNull("uid")) "" else obj.optString("uid"),
+            vcard = if (obj.isNull("vcard")) "" else obj.optString("vcard"),
+            updated = if (obj.isNull("updated")) 0L else Mail.timestamp(obj.optString("updated"))
         )
 
         private fun strings(arr: JSONArray?): List<String> {

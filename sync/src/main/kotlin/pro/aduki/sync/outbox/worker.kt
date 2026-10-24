@@ -37,8 +37,8 @@ class Worker(
         var successCount = 0
 
         for (queued in manager.pending()) {
-            // Re-read it: an earlier action in this drain may have rewritten
-            // it (a mailbox placeholder adopted its server hex) or removed it.
+            // Re-read it: an earlier action in this drain may have rewritten it
+            // (a mailbox or contact placeholder adopted its server hex) or removed it.
             val action = manager.entry(queued.id) ?: continue
             if (action.nextRetry > now) {
                 // Break to preserve sequential outbox ordering
