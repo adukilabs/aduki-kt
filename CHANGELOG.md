@@ -4,6 +4,17 @@ The SDK is 0.x: breaking changes can land in a minor release. The version is set
 
 ## Unreleased
 
+Server follow-ups (mail release 0.1.0-7af81dac; #34, #35, #37, #38, #39, #40, #41):
+
+- Contacts: uploads keep their `VERSION:4.0` line (the `Contacts.bare` workaround is gone). `net.Contacts.groups()` (`GET /user/contacts/groups`, `GroupRow(name, count)`), `createGroup(name)`, `merge(hex, others, vcard?)` and `import(vcf)` (`ImportReport`); `rename` and `dissolve` return how many contacts changed. Breaking: `Contacts.bare` is removed; `rename` and `dissolve` return `Int`.
+- Groups: `Groups.create(group, members = emptyList())` makes a group with no members, kept as the new sealed `Group` entity (schema change: a new entity, no migration needed) and queued as `contact.group` (`POST /user/contacts/groups`). `Groups.list()` and `observe()` include the server's empty groups, read on every contact sync. Rename and delete use the group routes directly, with no per-member fallback.
+- `Contacts.merge` queues one `contact.merge`, sent as the atomic `POST /user/contacts/{hex}/merge` (it was an update plus a delete per other contact); a 404 falls back to the separate calls.
+- `Contacts.import` without a local store sends the file to `POST /user/contacts/import`; with a store it still runs on the device (offline, matching by UID and then e-mail).
+- The contact sync token is a digest of `hex:etag` only (the etag now covers groups), and the list is walked with the `after` cursor.
+- Scheduling: `respond(hex, response, address?, comment)` sends the comment with `POST /user/events/{hex}/reply`; an event the server will not answer for (422) is stored with `PATCH` instead. `create`, `update`, `reschedule`, `cancel` and `remove` take `notify` (`"notify": true`, `DELETE ...?notify=true`) to send attendees iTIP messages. `stats` reads `GET /user/pages/{hex}/stats` only (no device-side count). Breaking: `net.Scheduling.reply` and `stats` no longer return null.
+- Settings: `isDefault` and `prefer` work on the server; a JMAP-composed draft without `from` uses the default sender. Push `StateChange.mailboxes` is sent, so a push syncs only the named mailboxes. `Subscription(fcm = token)` sends `fcmToken` alone (no `url`, no `keys`); `Settings.receive(data: Map<String, String>)` and `receive(payload)` read an FCM data message's `push` entry. `docs/services/settings.md` shows the `FirebaseMessagingService` wiring.
+- Live tests: an empty group, a contact merge, `isDefault`, and an FCM registration.
+
 Scheduling (#40, #41, #42, #48):
 
 The 0.4 scheduling client called `/user/appointments`, `/user/services`, `/user/availability` and `/book/{slug}`, which do not exist on the server (404). It now uses events, booking pages, schedules and bookings.
