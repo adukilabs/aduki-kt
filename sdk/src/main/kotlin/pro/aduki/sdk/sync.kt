@@ -21,7 +21,13 @@ data class SyncState(
     /** Epoch millis of the last sync that finished without error, 0 if none. */
     val synced: Long = 0,
     /** Why the last sync failed; null after a sync that succeeded. */
-    val error: Throwable? = null
+    val error: Throwable? = null,
+    /**
+     * Mailboxes the last [Sync.all] was asked for but found neither locally
+     * nor on the server (a hex or role); [Sync.all] returned false for them.
+     * A fetch failure is thrown instead, so the two never mix.
+     */
+    val missing: List<String> = emptyList()
 )
 
 /**
@@ -56,18 +62,20 @@ class Sync internal constructor(
      * With no [mailboxes], the mailbox list is loaded first and every mailbox
      * syncs. A listed mailbox is a hex or a role (`inbox`, `sent`, ...); an
      * unknown one loads the mailbox list once. Returns false when a listed
-     * mailbox does not exist. Snoozed messages that are due come back to the
+     * mailbox does not exist ([SyncState.missing] names it). Snoozed messages that are due come back to the
      * inbox ([Mail.wake]). Failures are rethrown and kept in [state].
      */
     suspend fun all(mailboxes: List<String>? = null): Boolean = lock.withLock {
         current.update { it.copy(running = true) }
         try {
-            var success = true
+            val missing = mutableListOf<String>()
             val engine = mailboxEngine
             if (engine != null) {
-                val targets = if (mailboxes == null) engine.refresh() else resolve(engine, mailboxes)
-                for (box in targets) {
-                    if (box == null || !engine.sync(box)) success = false
+                val names = mailboxes ?: engine.refresh()
+                val targets = if (mailboxes == null) names else resolve(engine, mailboxes)
+                for ((name, box) in names.zip(targets)) {
+                    // Resolved but gone by now (deleted meanwhile): also missing.
+                    if (box == null || !engine.sync(box)) missing += name
                 }
             }
             client.mail.wake()
@@ -77,8 +85,8 @@ class Sync internal constructor(
                     contactEngine.sync(tenant)
                 }
             }
-            current.value = SyncState(synced = System.currentTimeMillis())
-            success
+            current.value = SyncState(synced = System.currentTimeMillis(), missing = missing)
+            missing.isEmpty()
         } catch (e: Exception) {
             if (e !is CancellationException) current.update { it.copy(error = e) }
             throw e

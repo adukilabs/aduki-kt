@@ -211,7 +211,22 @@ class Mail internal constructor(
     }
 
     /**
-     * Returns a hot StateFlow observing all mailboxes.
+     * The mailboxes in the local store now. Use it right after a write or a
+     * sync: [mailboxes] is fed by a store observer, so its `value` can trail a
+     * write by a moment.
+     */
+    fun listMailboxes(): List<Mailbox> = repo?.listMailboxes() ?: emptyList()
+
+    /**
+     * The hex of the mailbox with [role] (`inbox`, `sent`, `drafts`, `trash`,
+     * `junk`, `archive`) in the local store now, or null.
+     */
+    fun resolve(role: String): String? = listMailboxes().firstOrNull { it.role == role.lowercase() }?.hex
+
+    /**
+     * Returns a hot StateFlow observing all mailboxes. Eventually consistent:
+     * its `value` can trail a write by a moment; [listMailboxes] reads the
+     * store now.
      */
     fun mailboxes(): StateFlow<List<Mailbox>>? {
         return repo?.mailboxes()

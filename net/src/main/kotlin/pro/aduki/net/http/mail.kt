@@ -215,7 +215,7 @@ class Mail(
             val raw = resp.body?.string() ?: ""
             if (resp.code == 401 || resp.code == 403) {
                 val why = Envelope.failure(raw) ?: "HTTP ${resp.code}"
-                throw AdukiException.Auth("Unauthorized access ($why)")
+                throw AdukiException.Auth(Scheme.refusal(resp.request, why))
             }
             if (!resp.isSuccessful) {
                 val why = Envelope.failure(raw) ?: resp.message

@@ -29,6 +29,7 @@ import pro.aduki.state.repository.Session
 import pro.aduki.sync.engine.Contact as ContactEngine
 import pro.aduki.sync.engine.Mailbox as MailboxEngine
 import pro.aduki.sync.engine.Schedule as ScheduleEngine
+import pro.aduki.sync.outbox.Book
 import pro.aduki.sync.outbox.Manager
 import pro.aduki.sync.outbox.Worker
 import pro.aduki.state.repository.Contact as ContactRepo
@@ -38,6 +39,7 @@ import pro.aduki.net.http.Scheduling as NetScheduling
 import pro.aduki.net.http.Mail as NetMail
 import pro.aduki.net.http.Contacts as NetContacts
 import pro.aduki.sync.engine.ContactStorage
+import pro.aduki.sync.http.ContactDispatcher
 import pro.aduki.sync.http.HttpContactTransport
 import pro.aduki.sync.http.HttpDispatcher
 import pro.aduki.sync.http.HttpMailboxTransport
@@ -223,12 +225,16 @@ class Aduki internal constructor(
     // initializers run in order).
     private val outbox: Manager? = manager ?: store?.let(::Manager)
 
+    // Contact writes: applied to the store, journaled in the outbox.
+    private val book: Book? = store?.let { s -> outbox?.let { Book(s, it) } }
+
     private val scheduleSync: ScheduleEngine? = scheduleEngine
         ?: store?.let { s -> outbox?.let { ScheduleEngine(s, schedulingApi, it) } }
 
     // Outbox dispatchers after mail's, in order: each sends its own actions
     // and hands anything else to the next.
     private val dispatchers: List<(Dispatcher?) -> Dispatcher?> = listOf(
+        { next -> ContactDispatcher(contactsApi, { old, row -> book?.created(old, row) }, next) },
         { next -> scheduleSync?.let { ScheduleDispatcher(schedulingApi, it, next) } ?: next }
     )
 
@@ -254,7 +260,7 @@ class Aduki internal constructor(
     private val bodies: ContentEngine? = store?.let { ContentEngine(it, JmapContentTransport(jmap)) }
 
     val mail = Mail(this, outbox, mailRepo ?: store?.let { MailRepo(it, outbox, scope) }, outboxWorker, bodies)
-    val contacts = Contacts(this, contactRepo ?: store?.let { ContactRepo(it, scope) }, contactSync)
+    val contacts = Contacts(this, contactRepo ?: store?.let { ContactRepo(it, scope) }, contactSync, book, outboxWorker)
     val sync = Sync(this, mailboxSync, contactSync, outboxWorker, outbox)
     val scheduling = Scheduling(
         this,
@@ -263,6 +269,8 @@ class Aduki internal constructor(
         schedulingApi,
         outboxWorker
     )
+    /** Filter rules, vacation reply, senders and new-mail push, kept on the server. */
+    val settings = Settings(this)
 
     init {
         lifecycle.listen { active ->
