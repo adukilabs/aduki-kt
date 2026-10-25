@@ -180,6 +180,195 @@ object Events {
     }
 
     /**
+     * Data class for RECURRENCE-ID overrides extracted from an iCalendar object.
+     */
+    data class Override(
+        val recurrenceId: Long,
+        val event: Event,
+        val cancelled: Boolean = false
+    )
+
+    /** The overrides with `RECURRENCE-ID` in [ical]. */
+    fun overrides(ical: String): List<Override> {
+        val cal = calendar(ical) ?: return emptyList()
+        return overrides(cal)
+    }
+
+    /** The overrides with `RECURRENCE-ID` in [calendar]. */
+    fun overrides(calendar: Component): List<Override> =
+        calendar.components("VEVENT")
+            .filter { it.first("RECURRENCE-ID") != null }
+            .mapNotNull { vevent ->
+                val recProp = vevent.first("RECURRENCE-ID") ?: return@mapNotNull null
+                val recTime = time(recProp) ?: return@mapNotNull null
+                val event = read(vevent)
+                val status = vevent.first("STATUS")?.value.orEmpty()
+                val cancelled = status.equals("CANCELLED", ignoreCase = true)
+                Override(recTime, event, cancelled)
+            }
+
+    /**
+     * Applies [changes] to the specific occurrence at [occurrenceStart] of [ical]
+     * by creating or updating a `RECURRENCE-ID` override component.
+     */
+    fun updateOccurrence(ical: String, occurrenceStart: Instant, changes: EventChanges): String {
+        changes.validate()
+        val cal = calendar(ical) ?: throw IllegalArgumentException("not an iCalendar object")
+        val master = master(cal) ?: throw IllegalArgumentException("no VEVENT in the object")
+        val masterEvent = read(master)
+        val targetMillis = occurrenceStart.toEpochMilli()
+
+        val dtstart = master.first("DTSTART")
+        val allday = dtstart?.let(::dated) ?: false
+        val timezone = dtstart?.param("TZID")?.takeIf { zoned(it) } ?: "UTC"
+        val recIdProp = formatTimeProperty("RECURRENCE-ID", occurrenceStart, allday, timezone)
+
+        val existingIndex = cal.children.indexOfFirst {
+            it.name == "VEVENT" && it.first("RECURRENCE-ID")?.let { p -> time(p) == targetMillis } == true
+        }
+
+        val override = if (existingIndex >= 0) {
+            cal.children[existingIndex]
+        } else {
+            val cloned = Component("VEVENT", master.properties.map { Property(it.name, it.value, it.params.toList()) }.toMutableList())
+            cloned.remove("RRULE")
+            cloned.remove("EXDATE")
+            cloned.remove("RECURRENCE-ID")
+            cloned.add(recIdProp)
+            val masterDuration = masterEvent.end - masterEvent.start
+            times(cloned, occurrenceStart, Instant.ofEpochMilli(targetMillis + masterDuration), allday, timezone)
+            cal.children.add(cloned)
+            cloned
+        }
+
+        changes.title?.let { override.set("SUMMARY", it) }
+        changes.location?.let { override.set("LOCATION", it) }
+        changes.notes?.let { override.set("DESCRIPTION", it) }
+        if (changes.start != null || changes.end != null || changes.allday != null || changes.timezone != null) {
+            val currentStart = override.first("DTSTART")?.let(::time)?.let { Instant.ofEpochMilli(it) } ?: occurrenceStart
+            val currentEnd = override.first("DTEND")?.let(::time)?.let { Instant.ofEpochMilli(it) }
+                ?: Instant.ofEpochMilli(currentStart.toEpochMilli() + (masterEvent.end - masterEvent.start))
+            val newStart = changes.start ?: currentStart
+            val newEnd = changes.end ?: Instant.ofEpochMilli(newStart.toEpochMilli() + (currentEnd.toEpochMilli() - currentStart.toEpochMilli()))
+            times(override, newStart, newEnd, changes.allday ?: allday, changes.timezone ?: timezone)
+        }
+        changes.attendees?.let { attendees(override, it) }
+        changes.reminders?.let { alarms(override, it) }
+        bump(override)
+        bump(master)
+        return Ics.render(cal)
+    }
+
+    /**
+     * Cancels the single occurrence at [occurrenceStart] of [ical] by appending an `EXDATE`
+     * to the master `VEVENT` and cancelling any existing override component.
+     */
+    fun cancelOccurrence(ical: String, occurrenceStart: Instant): String {
+        val cal = calendar(ical) ?: throw IllegalArgumentException("not an iCalendar object")
+        val master = master(cal) ?: throw IllegalArgumentException("no VEVENT in the object")
+        val targetMillis = occurrenceStart.toEpochMilli()
+
+        val dtstart = master.first("DTSTART")
+        val allday = dtstart?.let(::dated) ?: false
+        val timezone = dtstart?.param("TZID")?.takeIf { zoned(it) } ?: "UTC"
+        val exdateProp = formatTimeProperty("EXDATE", occurrenceStart, allday, timezone)
+
+        val existingExdates = master.all("EXDATE").flatMap { p -> p.value.split(',').mapNotNull { time(p.copy(value = it)) } }
+        if (targetMillis !in existingExdates) {
+            master.add(exdateProp)
+        }
+
+        val existingIndex = cal.children.indexOfFirst {
+            it.name == "VEVENT" && it.first("RECURRENCE-ID")?.let { p -> time(p) == targetMillis } == true
+        }
+        if (existingIndex >= 0) {
+            cal.children[existingIndex].set(Property("STATUS", "CANCELLED"))
+            bump(cal.children[existingIndex])
+        }
+
+        bump(master)
+        return Ics.render(cal)
+    }
+
+    /**
+     * Splits a recurring series at [occurrenceStart]: caps the master event's RRULE with `UNTIL`
+     * right before [occurrenceStart], and generates a new recurring event starting at [occurrenceStart]
+     * with [changes] applied. Returns `(originalIcal, newIcal)`.
+     */
+    fun updateFollowing(ical: String, occurrenceStart: Instant, changes: EventChanges): Pair<String, String> {
+        changes.validate()
+        val cal = calendar(ical) ?: throw IllegalArgumentException("not an iCalendar object")
+        val master = master(cal) ?: throw IllegalArgumentException("no VEVENT in the object")
+        val masterEvent = read(master)
+        val targetMillis = occurrenceStart.toEpochMilli()
+
+        val dtstart = master.first("DTSTART")
+        val allday = dtstart?.let(::dated) ?: false
+        val timezone = dtstart?.param("TZID")?.takeIf { zoned(it) } ?: "UTC"
+        val rruleProp = master.first("RRULE") ?: throw IllegalArgumentException("event has no RRULE")
+
+        val untilStr = if (allday) {
+            val zone = ZoneId.of(timezone)
+            val date = occurrenceStart.atZone(zone).toLocalDate().minusDays(1)
+            DATE.format(date)
+        } else {
+            STAMP.format(occurrenceStart.minusSeconds(1))
+        }
+
+        val rruleParts = rruleProp.value.split(';').filter { !it.startsWith("UNTIL=") && !it.startsWith("COUNT=") }.toMutableList()
+        rruleParts.add("UNTIL=$untilStr")
+        master.set(Property("RRULE", rruleParts.joinToString(";")))
+
+        cal.children.removeAll {
+            it.name == "VEVENT" && it.first("RECURRENCE-ID")?.let { p -> (time(p) ?: 0L) >= targetMillis } == true
+        }
+        bump(master)
+        val originalIcal = Ics.render(cal)
+
+        val masterDuration = masterEvent.end - masterEvent.start
+        val newDuration = if (changes.start != null && changes.end != null) {
+            changes.end!!.toEpochMilli() - changes.start!!.toEpochMilli()
+        } else {
+            masterDuration
+        }
+        val newStart = changes.start ?: occurrenceStart
+        val newEnd = changes.end ?: Instant.ofEpochMilli(newStart.toEpochMilli() + newDuration)
+
+        val newRruleParts = rruleProp.value.split(';').filter { !it.startsWith("UNTIL=") && !it.startsWith("COUNT=") }
+        val newRrule = newRruleParts.joinToString(";")
+
+        val newRequest = EventRequest(
+            title = changes.title ?: masterEvent.title,
+            location = changes.location ?: masterEvent.location,
+            notes = changes.notes ?: masterEvent.notes,
+            start = newStart,
+            end = newEnd,
+            allday = changes.allday ?: allday,
+            timezone = changes.timezone ?: timezone,
+            rrule = newRrule,
+            attendees = changes.attendees ?: masterEvent.attendees.map { it.email },
+            reminders = changes.reminders ?: masterEvent.reminders
+        )
+        val newIcal = build(newRequest)
+
+        return Pair(originalIcal, newIcal)
+    }
+
+    /** Formats a DATE or DATE-TIME property with appropriate TZID or UTC syntax. */
+    fun formatTimeProperty(name: String, time: Instant, allday: Boolean, timezone: String): Property {
+        return if (allday) {
+            val zone = ZoneId.of(timezone)
+            val date = time.atZone(zone).toLocalDate()
+            Property(name, DATE.format(date), listOf("VALUE" to "DATE"))
+        } else if (timezone == "UTC" || timezone == "Z" || timezone == "Etc/UTC") {
+            Property(name, STAMP.format(time))
+        } else {
+            val zone = ZoneId.of(timezone)
+            Property(name, LOCAL.format(time.atZone(zone)), listOf("TZID" to timezone))
+        }
+    }
+
+    /**
      * Splits an iCalendar file into one object per event UID (the master and
      * its overrides), each with the time zones it uses, ready to create one
      * by one. Components other than VEVENT are dropped.

@@ -68,6 +68,9 @@ class Schedule(
     fun get(hex: String): Appointment? =
         box.query(Appointment_.hex.equal(hex)).build().use { it.findFirst() }
 
+    /** Every stored event ordered chronologically. */
+    fun appointments(): List<Appointment> = box.all.sortedBy { it.start }
+
     /** Creates an event locally (hex `local-...`) and queues it; [notify] invites the attendees. */
     fun create(request: EventRequest, notify: Boolean = false): Appointment {
         request.validate()
@@ -87,6 +90,34 @@ class Schedule(
     fun reschedule(hex: String, start: Instant, end: Instant, notify: Boolean = false): Appointment {
         require(end.isAfter(start)) { "end must follow start" }
         return update(hex, EventChanges(start = start, end = end), notify)
+    }
+
+    /** Edits a single occurrence of a recurring event at [occurrenceStart] using a RECURRENCE-ID override. */
+    fun updateOccurrence(hex: String, occurrenceStart: Instant, changes: EventChanges, notify: Boolean = false): Appointment {
+        changes.validate()
+        val row = find(hex)
+        val ical = Events.updateOccurrence(source(row), occurrenceStart, changes)
+        return write(row, ical, UPDATE, Extra(notify = notify)) { }
+    }
+
+    /** Cancels a single occurrence of a recurring event at [occurrenceStart] by appending an EXDATE. */
+    fun cancelOccurrence(hex: String, occurrenceStart: Instant, notify: Boolean = false): Appointment {
+        val row = find(hex)
+        val ical = Events.cancelOccurrence(source(row), occurrenceStart)
+        val exdates = row.excluded().toMutableSet()
+        exdates.add(occurrenceStart.toEpochMilli())
+        return write(row, ical, UPDATE, Extra(notify = notify)) {
+            it.exdate = exdates.joinToString(",")
+        }
+    }
+
+    /** Splits a recurring series at [occurrenceStart]: caps original with UNTIL and creates a new series. */
+    fun updateFollowing(hex: String, occurrenceStart: Instant, changes: EventChanges, notify: Boolean = false): Appointment {
+        changes.validate()
+        val row = find(hex)
+        val (originalIcal, newIcal) = Events.updateFollowing(source(row), occurrenceStart, changes)
+        write(row, originalIcal, UPDATE, Extra(notify = notify)) { }
+        return insert(newIcal, row.calendar, notify)
     }
 
     /**
