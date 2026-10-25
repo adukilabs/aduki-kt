@@ -16,6 +16,7 @@ import pro.aduki.core.models.BookRequest
 import pro.aduki.core.models.BookingRecord
 import pro.aduki.core.models.CalendarRecord
 import pro.aduki.core.models.OfferRecord
+import pro.aduki.core.models.OfferRequest
 import pro.aduki.core.models.Place
 import pro.aduki.core.models.ServiceRequest
 import pro.aduki.core.models.ServiceRecord
@@ -388,6 +389,59 @@ class Scheduling(
             .build()
         val request = Request.Builder().url(path).get().build()
         return execute(request) { body -> objects(JSONArray(body)).map(::parseOffer) }
+    }
+
+    /**
+     * Creates a priced sub-service (offer) for [page] (`POST /user/schedule/services`).
+     */
+    fun createOffer(page: String, request: OfferRequest): OfferRecord {
+        val payload = JSONObject().put("page", page.trim())
+        request.name?.let { payload.put("name", it.trim()) }
+        request.slug?.let { payload.put("slug", it.trim()) }
+        request.description?.let { payload.put("about", it.trim()) }
+        request.length?.let { payload.put("length", it) }
+        request.before?.let { payload.put("before", it) }
+        request.after?.let { payload.put("after", it) }
+        request.capacity?.let { payload.put("capacity", it) }
+        request.price?.let { payload.put("price", it) }
+        request.currency?.let { payload.put("currency", it.trim().uppercase()) }
+        request.paused?.let { payload.put("paused", it) }
+        val req = Request.Builder().url(url("user/schedule/services")).post(json(payload)).build()
+        return execute(req) { parseOffer(JSONObject(it)) }
+    }
+
+    /**
+     * Edits an offer (`PATCH /user/schedule/services/{hex}`).
+     */
+    fun updateOffer(hex: String, request: OfferRequest): OfferRecord {
+        val payload = JSONObject()
+        request.name?.let { payload.put("name", it.trim()) }
+        request.slug?.let { payload.put("slug", it.trim()) }
+        request.description?.let { payload.put("about", it.trim()) }
+        request.length?.let { payload.put("length", it) }
+        request.before?.let { payload.put("before", it) }
+        request.after?.let { payload.put("after", it) }
+        request.capacity?.let { payload.put("capacity", it) }
+        request.price?.let { payload.put("price", it) }
+        request.currency?.let { payload.put("currency", it.trim().uppercase()) }
+        request.paused?.let { payload.put("paused", it) }
+        val req = Request.Builder()
+            .url(url("user/schedule/services").newBuilder().addPathSegment(hex).build())
+            .patch(json(payload))
+            .build()
+        return execute(req) { parseOffer(JSONObject(it)) }
+    }
+
+    /**
+     * Deletes an offer (`DELETE /user/schedule/services/{hex}`).
+     * 409 Conflict once it has bookings.
+     */
+    fun removeOffer(hex: String) {
+        val req = Request.Builder()
+            .url(url("user/schedule/services").newBuilder().addPathSegment(hex).build())
+            .delete()
+            .build()
+        execute(req) { }
     }
 
     /** The bookings of the account's pages (`GET /user/bookings`, all pages). */

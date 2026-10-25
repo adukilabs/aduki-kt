@@ -15,6 +15,7 @@ import org.junit.Before
 import org.junit.Test
 import pro.aduki.core.errors.AdukiException
 import pro.aduki.core.models.BookRequest
+import pro.aduki.core.models.OfferRequest
 import pro.aduki.core.models.Place
 import pro.aduki.core.models.ServiceRequest
 import pro.aduki.core.models.Window
@@ -453,5 +454,98 @@ class SchedulingTest {
         api.removeCalendar("c2")
         val deleteReq = server.takeRequest()
         assertEquals("DELETE /v1/user/calendars/c2", "${deleteReq.method} ${deleteReq.path}")
+    }
+
+    @Test
+    fun offersCrudOperations() {
+        // Create offer
+        reply(
+            """{"hex":"o2","slug":"deep-dive","name":"Deep Dive","about":"In depth","length":60,"before":5,"after":10,"capacity":1,
+               "price":5000,"currency":"USD","tax":0,"inclusive":true,"deposit":null,"hold":15,"refund_hours":24,
+               "refund_percent":100,"questions":[],"paused":null,"created":"c","updated":"u","page":"p1","quote":null}""",
+            201
+        )
+        val offer = api.createOffer(
+            "p1",
+            OfferRequest(
+                name = "Deep Dive",
+                slug = "deep-dive",
+                description = "In depth",
+                length = 60,
+                before = 5,
+                after = 10,
+                capacity = 1,
+                price = 5000L,
+                currency = "USD"
+            )
+        )
+        assertEquals("o2", offer.hex)
+        assertEquals("p1", offer.page)
+        assertEquals("Deep Dive", offer.name)
+        assertEquals(60, offer.length)
+        assertEquals(5000L, offer.price)
+        assertEquals("USD", offer.currency)
+
+        val createReq = server.takeRequest()
+        assertEquals("POST /v1/user/schedule/services", "${createReq.method} ${createReq.path}")
+        val createBody = JSONObject(createReq.body.readUtf8())
+        assertEquals("p1", createBody.getString("page"))
+        assertEquals("Deep Dive", createBody.getString("name"))
+        assertEquals(5000, createBody.getInt("price"))
+        assertEquals("USD", createBody.getString("currency"))
+
+        // Update offer
+        reply(
+            """{"hex":"o2","slug":"deep-dive","name":"Deep Dive 2","about":"Updated","length":90,"before":5,"after":10,"capacity":1,
+               "price":7500,"currency":"USD","tax":0,"inclusive":true,"deposit":null,"hold":15,"refund_hours":24,
+               "refund_percent":100,"questions":[],"paused":null,"created":"c","updated":"u","page":"p1","quote":null}"""
+        )
+        val updated = api.updateOffer("o2", OfferRequest(name = "Deep Dive 2", length = 90, price = 7500L, currency = "USD"))
+        assertEquals("Deep Dive 2", updated.name)
+        assertEquals(90, updated.length)
+        assertEquals(7500L, updated.price)
+
+        val updateReq = server.takeRequest()
+        assertEquals("PATCH /v1/user/schedule/services/o2", "${updateReq.method} ${updateReq.path}")
+        val updateBody = JSONObject(updateReq.body.readUtf8())
+        assertEquals("Deep Dive 2", updateBody.getString("name"))
+        assertEquals(90, updateBody.getInt("length"))
+
+        // Delete offer
+        server.enqueue(MockResponse().setResponseCode(204))
+        api.removeOffer("o2")
+        val deleteReq = server.takeRequest()
+        assertEquals("DELETE /v1/user/schedule/services/o2", "${deleteReq.method} ${deleteReq.path}")
+    }
+
+    @Test
+    fun offerRequestValidation() {
+        // Valid
+        OfferRequest(name = "Consult", price = 1000L, currency = "USD").validate()
+        OfferRequest(name = "Free", price = 0L).validate()
+
+        // Negative price
+        try {
+            OfferRequest(price = -5L).validate()
+            fail("expected error on negative price")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("price"))
+        }
+
+        // Missing currency on paid
+        try {
+            OfferRequest(price = 1000L).validate()
+            fail("expected error on missing currency")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("currency"))
+        }
+
+        // Invalid currency
+        try {
+            OfferRequest(price = 1000L, currency = "US").validate()
+            fail("expected error on invalid currency")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("currency"))
+        }
     }
 }

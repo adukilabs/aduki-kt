@@ -56,6 +56,9 @@ class Scheduling internal constructor(...) {
     suspend fun removeService(hex: String)
     suspend fun availability(service: String): Availability
     suspend fun offers(service: String = ""): List<OfferRecord>
+    suspend fun createOffer(service: String, request: OfferRequest): OfferRecord
+    suspend fun updateOffer(hex: String, request: OfferRequest): OfferRecord
+    suspend fun removeOffer(hex: String)
     fun bookingUrl(service: ServiceRecord, base: String = client.options.endpoint): String
 
     // Slots and bookings, online
@@ -195,6 +198,31 @@ deleted: pause it.
 
 `client.scheduling.availability(consult.hex)` (or with slug `"consult"`) reads
 the weekly hours and IANA zone of the service as an `Availability(zone, windows)`.
+
+### Offers (priced sub-services)
+
+```kotlin
+val offer = client.scheduling.createOffer(
+    consult.hex,
+    OfferRequest(
+        name = "Deep Dive",
+        slug = "deep-dive",
+        length = 60,
+        price = 5000L, // 50.00 USD in minor units
+        currency = "USD"
+    )
+)
+val offers = client.scheduling.offers(consult.hex)
+client.scheduling.updateOffer(offer.hex, OfferRequest(price = 6000L, currency = "USD"))
+client.scheduling.removeOffer(offer.hex)
+```
+
+Offers allow booking pages to provide distinct sub-services with specific
+durations and pricing. `BookRequest.offer` selects an offer when booking.
+
+For paid offers (`price > 0`), the tenant must have payment provider credentials
+configured on the server (e.g. Stripe) so bookings can generate checkout sessions
+and charges. Free offers (`price = 0` or null) do not require a payment provider.
 
 ### Slots and bookings
 
