@@ -389,4 +389,24 @@ class SchedulingTest {
         assertEquals(5, offer.after)
         assertEquals(250000L, offer.price)
     }
+
+    @Test
+    fun scheduleReadsAvailabilityWindowsAndZone() {
+        reply(
+            """{"hex":"s1","name":"consult","zone":"Africa/Nairobi","main":false,
+               "rules":[{"days":["mon","wed"],"begins":"09:00","finishes":"17:00"}],
+               "template":null}"""
+        )
+
+        val availability = api.schedule("s1")
+
+        assertEquals("Africa/Nairobi", availability.zone)
+        assertEquals(1, availability.windows.size)
+        val w = availability.windows[0]
+        assertEquals(listOf("mon", "wed"), w.days)
+        assertEquals("09:00", w.begins)
+        assertEquals("17:00", w.finishes)
+        val req = server.takeRequest()
+        assertEquals("GET /v1/user/schedules/s1", "${req.method} ${req.path}")
+    }
 }

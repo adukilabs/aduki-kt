@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 import pro.aduki.core.models.BookRequest
 import pro.aduki.core.models.BookingRecord
+import pro.aduki.core.models.Availability
 import pro.aduki.core.models.EventChanges
 import pro.aduki.core.models.EventRequest
 import pro.aduki.core.models.OfferRecord
@@ -180,6 +181,23 @@ class Scheduling internal constructor(
 
     /** Deletes a service; one that has bookings cannot be deleted (pause it). */
     suspend fun removeService(hex: String) = withContext(Dispatchers.IO) { api().removeService(hex) }
+
+    /**
+     * Reads the weekly hours and IANA zone of [service] (service hex, slug, or schedule hex).
+     */
+    suspend fun availability(service: String): Availability = withContext(Dispatchers.IO) {
+        val target = service.trim()
+        require(target.isNotEmpty()) { "service is required" }
+        val api = api()
+        val sched = runCatching { api.service(target).schedule }
+            .getOrNull()
+            ?.ifBlank { null }
+            ?: runCatching {
+                api.services().firstOrNull { it.slug.equals(target, ignoreCase = true) }?.schedule
+            }.getOrNull()?.ifBlank { null }
+            ?: target
+        api.schedule(sched)
+    }
 
     /**
      * The public address of a service, `{endpoint}/book/pages/{hex}`: what
