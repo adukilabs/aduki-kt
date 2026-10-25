@@ -33,3 +33,4 @@ The signature form is tested on the JVM against an independent verifier.
 The `android` module keeps the linked accounts as separate `AccountManager` entries under the type `pro.aduki.account` (`Accounts.reconcile`, `AdukiAuthenticator`; see [Android module](../start/android.md)). When Aduki ID removes a link (tenant `links = deny`, forced unlink), `Accounts.refresh` drops the entry and its tokens. The center token is stored in a separate sealed file and sent to Aduki ID only.
 
 `Accounts.registerDevice` and `Accounts.unlockWithDevice` use `AndroidKey.open(AndroidKey.DEVICE)` (P-256, `ES256`) as the signer of this flow and store each unlocked session.
+`Accounts.revokeDevice` revokes the credential at Aduki ID (`DELETE /credentials/{id}`) and clears it locally. When a credential has lapsed after 60 days or is revoked, `Accounts.unlockWithDevice` catches HTTP 404, clears the local credential automatically, and raises `AdukiException.Network(code = 404)`.

@@ -80,6 +80,10 @@ cannot be read by the next: use it for tests. The vault is process-wide and must
 be installed before the database is read; with none installed, sealed values
 cannot be read.
 
+### Cross-app isolation and Android Keystore
+
+Keys generated via `Provider()` or `AndroidKey` belong strictly to the creating application's Linux UID. When multiple applications from the same publisher share an account via `AccountManager`, tokens or database columns sealed with one app's Keystore cannot be decrypted by peer apps. Companion apps share unsealed account metadata via `Accounts.list()` and establish their own DPoP sessions using their own Keystore keys or unlock via `Accounts.unlockWithDevice`.
+
 ## Verified and not verified
 
 Tested on the JVM with the software Provider and with a test double that, like the Keystore, refuses a caller-supplied IV: round trip, the database file

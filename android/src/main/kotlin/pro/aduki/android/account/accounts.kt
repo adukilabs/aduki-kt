@@ -244,8 +244,6 @@ class Accounts(
     }
 
     /**
-     * Not yet tested on a device or against a live Aduki ID.
-     *
      * Registers this device's Keystore key as a device credential at Aduki ID (`ES256`, 65-byte
      * uncompressed point, see `Center.register`) and keeps the credential id. [bearer] is an access token
      * for audience `id` and [code] a fresh TOTP code; [center] true registers it for the account's center.
@@ -267,8 +265,6 @@ class Accounts(
     }
 
     /**
-     * Not yet tested on a device (see [registerDevice]).
-     *
      * Reopens the sessions of every account the registered credential opens, with the device key and no
      * password: challenge, sign the raw nonce, unlock (`Center.unlock`), then [save] each session. Returns
      * the account hexes whose tokens were stored; sessions of accounts that have no entry here are not
@@ -293,6 +289,24 @@ class Accounts(
         }
         return opened.filter { save(it.account, it.tokens) }.map { it.account }
     }
+
+    /**
+     * Revokes this device's registered credential at Aduki ID (`DELETE /credentials/{id}`) and clears it locally.
+     * Returns false when no credential was registered or the credential was already gone (404).
+     */
+    fun revokeDevice(
+        client: OkHttpClient,
+        identity: String,
+        bearer: String
+    ): Boolean {
+        val cred = center.credential() ?: return false
+        val ok = Center.revoke(client, identity, bearer, cred)
+        center.clearCredential()
+        return ok
+    }
+
+    /** The device credential id last registered, or null. */
+    fun credential(): String? = center.credential()
 
     /** The center token for calls to Aduki ID only, or null when it is missing or expired. */
     fun centerToken(now: Long = System.currentTimeMillis() / 1000): String? = center.token(now)

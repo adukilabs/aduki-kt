@@ -125,6 +125,22 @@ class KeystoreInstrumentedTest {
         assertNotEquals(first.thumbprint(), AndroidKey.open(a).thumbprint())
     }
 
+    @Test fun deviceKeyIsP256NonExtractableAndDevicePublicIs65Bytes() {
+        val a = alias("device")
+        val key = AndroidKey.open(a)
+        assertEquals("ES256", key.alg)
+        assertFalse(key.extractable())
+        val pub = key.devicePublic()
+        assertEquals(65, pub.size)
+        assertEquals(0x04.toByte(), pub[0])
+        val input = "challenge-nonce".toByteArray()
+        val sig = key.sign(input)
+        assertEquals(64, sig.size)
+        assertTrue(verifies(key, input, sig))
+        AndroidKey.delete(a)
+        assertFalse(AndroidKey.exists(a))
+    }
+
     // ---- B14: Envelope on the real provider ---------------------------------
 
     @Test fun masterKeysLiveInTheRealKeystoreAndAreNotExtractable() {

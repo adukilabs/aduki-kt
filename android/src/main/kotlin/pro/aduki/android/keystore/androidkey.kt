@@ -87,8 +87,8 @@ class AndroidKey private constructor(
         const val DEFAULT = "aduki_dpop"
 
         /**
-         * The alias of the device credential key (ES256 center unlock, `Accounts.registerDevice`), not yet
-         * tested on a device. Kept apart from [DEFAULT] so revoking the credential does not change the DPoP thumbprint.
+         * The alias of the device credential key (ES256 center unlock, `Accounts.registerDevice`).
+         * Kept apart from [DEFAULT] so revoking the credential does not change the DPoP thumbprint.
          */
         const val DEVICE = "aduki_device"
 

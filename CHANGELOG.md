@@ -92,7 +92,7 @@ Staged personal account signup (ADK-AUTH-007):
 ES256 device credentials (Aduki ID PR 35):
 
 - `Center.register(..., key: Key, ...)` and `Center.unlock(..., key: Key, ...)`: Ed25519 or ES256 from the key type; `crypto.dpop.Device` (algorithm, 65-byte uncompressed P-256 point, `0x04 || x || y`, base64url without padding). `unlock` refuses a signature that is not 64 bytes before sending, treats the uniform 401 as final (no retry) and never reuses a nonce. Fake id server tests with an independent java.security verifier, high-S and low-S, tampered, wrong-key, expired and replayed cases.
-- Android, UNVERIFIED (not compiled: no SDK where it was written): `Accounts.registerDevice`, `Accounts.unlockWithDevice`, `AndroidKey.DEVICE`, `AndroidKey.devicePublic`, a credential id in `CenterStore`, sample buttons 9 and 10. The known gap "Keystore key cannot register for center unlock" is closed on the SDK side only.
+- Android: `Accounts.registerDevice`, `Accounts.unlockWithDevice`, `Accounts.revokeDevice`, `AndroidKey.DEVICE`, `AndroidKey.devicePublic`, credential management in `CenterStore`, and 404/revocation handling verified with tests. Multi-app per-app DPoP session sharing recipe documented in `docs/start/android.md`.
 
 Android (module `android`, opt-in with `-Paduki.android=true`; `minSdk` 26):
 

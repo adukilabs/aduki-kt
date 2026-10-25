@@ -52,6 +52,31 @@ accounts.share(listOf("pro.aduki.suite.mail", "pro.aduki.suite.calendar"))
 1. **Per-app sessions (recommended):** Companion apps read the account `handle`, `hex` and `center` ID, and run their own authentication flow to establish an independent DPoP session with their own Keystore key.
 2. **Unsealed tokens (`vault = null`):** Using `Accounts(context, vault = null)` stores tokens unsealed in `AccountManager`, allowing companion apps with visibility to read and share tokens directly.
 
+#### Recipe: Multi-App Session Sharing (Same Publisher)
+
+When several apps from a publisher (e.g. Mail, Calendar, Contacts) share an account on a device, each app requires its own DPoP-bound session because Android Keystore keys are bound to each app's Linux UID:
+
+1. **Initial Sign-In:** The primary app (e.g. Mail) completes sign-in via Custom Tabs (`SignIn`) and saves the account:
+   ```kotlin
+   val accounts = Accounts(context)
+   accounts.reconcile(switcher) // or accounts.add(linked, tokens)
+   accounts.share(listOf("pro.aduki.suite.calendar", "pro.aduki.suite.contacts"))
+   ```
+2. **Account Discovery:** Companion apps (Calendar, Contacts) query `AccountManager` via `Accounts(context).list()`. They can immediately read the unsealed account metadata (`handle`, `hex`, `center`, `tenant`).
+3. **Session Establishment Without Passwords:**
+   - **Device Unlock:** Once an app registers a device credential (`accounts.registerDevice(...)`), it can unlock sessions silently or via biometric prompt:
+     ```kotlin
+     val unlockedHexes = accounts.unlockWithDevice(http, identity)
+     ```
+     This opens independent DPoP-bound tokens for every center account that permits center unlock.
+   - **Custom Tab SSO:** Alternatively, the companion app launches `SignIn`. Because the user is already authenticated in the browser/Custom Tab session, Aduki ID redirects immediately without prompting for credentials.
+4. **Credential Lifecycle & 404 Handling:**
+   - Device credentials are valid for **60 days**.
+   - If a credential lapses after 60 days or is revoked via `accounts.revokeDevice(...)` or remotely at Aduki ID, `accounts.unlockWithDevice(...)` encounters an HTTP `404 (entity.missing)`, automatically clears the local credential from storage, and throws `AdukiException.Network(code = 404)`. The app then directs the user to complete full sign-in.
+5. **Authenticator Ownership:**
+   - One designated app in the suite declares `AdukiAuthenticatorService` in its manifest to own `pro.aduki.account`.
+   - Companion apps interact with `AccountManager` to discover accounts and manage their own local DPoP sessions.
+
 Register how the authenticator refreshes a stale access token, and which activity adds an account:
 
 ```kotlin
