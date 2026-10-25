@@ -23,6 +23,7 @@ import pro.aduki.store.entities.Message
 import pro.aduki.store.entities.Outbox
 import pro.aduki.sync.outbox.Dispatcher
 import pro.aduki.sync.outbox.Manager
+import pro.aduki.sync.outbox.Rejected
 import pro.aduki.sync.outbox.Storage
 import pro.aduki.sync.outbox.Worker
 import pro.aduki.state.repository.Contact as ContactRepo
@@ -44,7 +45,9 @@ class ClientTest {
             return id
         }
         override fun removeOutbox(id: Long) { outbox.remove(id) }
-        override fun pending(): List<Outbox> = outbox.values.sortedBy { it.created }
+        override fun pending(): List<Outbox> = outbox.values.filter { it.pending() }.sortedBy { it.created }
+        override fun failed(): List<Outbox> = outbox.values.filter { it.failed() }.sortedBy { it.created }
+        override fun size(): Int = pending().size
         override fun <T> tx(block: () -> T): T = block()
     }
 
@@ -228,5 +231,69 @@ class ClientTest {
         client.session.clear()
         assertNull(client.session.token())
         assertNull(client.session.identity.value)
+    }
+
+    @Test
+    fun testRefusedSendStaysInFailedAndCanBeRetriedOrDiscarded() = runBlocking {
+        val storage = TestStorage()
+        val manager = Manager(storage)
+        var reject = true
+        val worker = Worker(
+            manager = manager,
+            dispatcher = Dispatcher { _ ->
+                if (reject) {
+                    throw Rejected("552 Mailbox storage exceeded", code = 552)
+                }
+            }
+        )
+
+        val mailSource = TestMailSource()
+        val mailRepo = MailRepo(source = mailSource, manager = manager, scope = CoroutineScope(Dispatchers.Unconfined))
+
+        val client = Aduki.builder()
+            .key("hm_test_key")
+            .manager(manager)
+            .worker(worker)
+            .mail(mailRepo)
+            .build()
+
+        val msg = client.mail.send(
+            to = listOf("recipient@example.com"),
+            subject = "Refused send test",
+            body = "Testing 552 rejection"
+        )
+
+        assertNotNull(msg)
+        // client.mail.send immediately drained via worker, which encountered Rejected
+        assertEquals(0, client.sync.outbox.value)
+        assertEquals(1, client.sync.failed.value.size)
+        val failedAction = client.sync.failed.value[0]
+        assertEquals("failed", failedAction.status)
+        assertEquals("552", failedAction.code)
+        assertEquals("552 Mailbox storage exceeded", failedAction.reason)
+
+        // Retry without flush: restores to pending queue
+        val retryOk = client.sync.retry(failedAction.id, flush = false)
+        assertTrue(retryOk)
+        assertEquals(1, client.sync.outbox.value)
+        assertEquals(0, client.sync.failed.value.size)
+
+        // Flush again -> rejected again
+        val flushed = client.sync.flush()
+        assertEquals(1, flushed)
+        assertEquals(0, client.sync.outbox.value)
+        assertEquals(1, client.sync.failed.value.size)
+
+        // Discard: removes from outbox and moves message to drafts
+        val discardOk = client.sync.discard(failedAction.id)
+        assertTrue(discardOk)
+        assertEquals(0, client.sync.outbox.value)
+        assertEquals(0, client.sync.failed.value.size)
+
+        val storedMsg = storage.getMessage(msg.hex)
+        assertNotNull(storedMsg)
+        assertEquals("drafts", storedMsg!!.mailbox)
+        assertTrue((storedMsg.flags and Message.DRAFT) != 0)
+        assertFalse(storedMsg.dirty)
     }
 }

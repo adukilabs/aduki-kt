@@ -435,7 +435,7 @@
     },
     {
       "id": "5:941751520504274046",
-      "lastPropertyId": "7:685824924435979634",
+      "lastPropertyId": "10:7813730523554151204",
       "name": "Outbox",
       "properties": [
         {
@@ -479,6 +479,23 @@
           "id": "7:685824924435979634",
           "name": "nextRetry",
           "type": 6
+        },
+        {
+          "id": "8:2884527685203855539",
+          "name": "status",
+          "indexId": "30:2981850047121275434",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "9:4223573353903462745",
+          "name": "code",
+          "type": 9
+        },
+        {
+          "id": "10:7813730523554151204",
+          "name": "reason",
+          "type": 9
         }
       ],
       "relations": []
@@ -668,7 +685,7 @@
     }
   ],
   "lastEntityId": "9:1819537701555628049",
-  "lastIndexId": "29:3830583521862468273",
+  "lastIndexId": "30:2981850047121275434",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

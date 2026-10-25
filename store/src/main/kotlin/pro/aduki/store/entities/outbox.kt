@@ -15,8 +15,14 @@ data class Outbox(
     var payload: ByteArray = byteArrayOf(),
     @Index var created: Long = System.currentTimeMillis(),
     var attempts: Int = 0,
-    var nextRetry: Long = 0
+    var nextRetry: Long = 0,
+    @Index var status: String = "pending", // "pending" or "failed"
+    var code: String = "",
+    var reason: String = ""
 ) {
+    fun failed(): Boolean = status == "failed"
+    fun pending(): Boolean = status != "failed"
+
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (javaClass != other?.javaClass) return false

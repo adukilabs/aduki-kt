@@ -26,7 +26,9 @@ class WorkerTest {
             return id
         }
         override fun removeOutbox(id: Long) { outbox.remove(id) }
-        override fun pending(): List<Outbox> = outbox.values.sortedBy { it.created }
+        override fun pending(): List<Outbox> = outbox.values.filter { it.pending() }.sortedBy { it.created }
+        override fun failed(): List<Outbox> = outbox.values.filter { it.failed() }.sortedBy { it.created }
+        override fun size(): Int = pending().size
         override fun <T> tx(block: () -> T): T = block()
     }
 
@@ -87,6 +89,64 @@ class WorkerTest {
         // Second attempt succeeds and drains both
         val count2 = worker.drain()
         assertEquals(2, count2)
+        assertTrue(manager.pending().isEmpty())
+    }
+
+    @Test
+    fun testRejectedActionPreservedAsFailedAndQueueProceeds() = runBlocking {
+        val rejectedCalls = mutableListOf<String>()
+        val dispatched = mutableListOf<String>()
+        val worker = Worker(
+            manager = manager,
+            dispatcher = Dispatcher { action ->
+                if (action.action == "refused") {
+                    throw Rejected("550 User unknown", code = 550)
+                }
+                dispatched.add(action.action)
+            },
+            onRejected = { entry, err ->
+                rejectedCalls.add("${entry.action}:${err.code}")
+            }
+        )
+
+        manager.enqueue("refused", "msg_rejected".toByteArray(Charsets.UTF_8))
+        manager.enqueue("move", "msg_second:archive".toByteArray(Charsets.UTF_8))
+
+        assertEquals(2, manager.count.value)
+        assertEquals(0, manager.failed.value.size)
+
+        // Drain processes refused action (rejects it, keeps in failed) and proceeds to move action
+        val count = worker.drain()
+        assertEquals(2, count)
+
+        // Pending queue should now be 0, failed queue should be 1
+        assertEquals(0, manager.count.value)
+        assertTrue(manager.pending().isEmpty())
+        assertEquals(1, manager.failed.value.size)
+
+        val failedAction = manager.failed.value[0]
+        assertEquals("refused", failedAction.action)
+        assertEquals("failed", failedAction.status)
+        assertEquals("550", failedAction.code)
+        assertEquals("550 User unknown", failedAction.reason)
+        assertEquals(listOf("refused:550"), rejectedCalls)
+        assertEquals(listOf("move"), dispatched)
+
+        // Retry restores to pending
+        assertTrue(manager.retry(failedAction.id))
+        assertEquals(1, manager.count.value)
+        assertEquals(0, manager.failed.value.size)
+        val retried = manager.pending()[0]
+        assertEquals("pending", retried.status)
+        assertEquals(0, retried.attempts)
+        assertEquals(0L, retried.nextRetry)
+        assertEquals("", retried.code)
+        assertEquals("", retried.reason)
+
+        // Discard removes from outbox completely
+        assertTrue(manager.discard(retried.id))
+        assertEquals(0, manager.count.value)
+        assertEquals(0, manager.failed.value.size)
         assertTrue(manager.pending().isEmpty())
     }
 }

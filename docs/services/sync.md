@@ -12,6 +12,7 @@ package pro.aduki.sdk
 class Sync internal constructor(...) {
     val state: StateFlow<SyncState>
     val outbox: StateFlow<Int>
+    val failed: StateFlow<List<Outbox>>
 
     suspend fun mailboxes(): List<String>
 
@@ -20,6 +21,10 @@ class Sync internal constructor(...) {
     suspend fun flush(): Int
 
     fun pending(): Int
+
+    suspend fun retry(id: Long, flush: Boolean = true): Boolean
+
+    fun discard(id: Long): Boolean
 }
 
 data class SyncState(
@@ -102,6 +107,36 @@ fun pending(): Int
 
 ### `outbox`
 The same count as a `StateFlow<Int>`, for a "waiting to send" badge. It changes whenever an action is queued, completed or dropped.
+
+### `failed`
+`StateFlow<List<Outbox>>` observing permanently refused actions (e.g. SMTP 5xx or unrecoverable client errors). These do not count toward `outbox` and do not block subsequent pending outbox actions.
+
+---
+
+### `retry`
+Restores a failed action to pending status so it can be re-dispatched.
+
+```kotlin
+suspend fun retry(id: Long, flush: Boolean = true): Boolean
+```
+
+- **Parameters**:
+  - `id`: The outbox entry ID.
+  - `flush`: When `true` (default), immediately calls `flush()` to attempt dispatch.
+- **Return Value**: `Boolean` — `true` if the entry was found and restored to pending.
+
+---
+
+### `discard`
+Discards a permanently failed action and clears it from outbox. If the action was an outbound email send, the message is filed in Drafts with `Message.DRAFT` set.
+
+```kotlin
+fun discard(id: Long): Boolean
+```
+
+- **Parameters**:
+  - `id`: The outbox entry ID.
+- **Return Value**: `Boolean` — `true` if the entry was found and discarded.
 
 ---
 
