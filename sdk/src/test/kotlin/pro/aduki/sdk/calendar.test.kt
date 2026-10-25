@@ -318,6 +318,68 @@ class CalendarTest {
         assertEquals("GET /v1/user/pages/p1/stats?from=2026-11-01T00%3A00%3A00Z&to=2026-12-01T00%3A00%3A00Z", calls.last())
     }
 
+    @Test
+    fun editOrCancelOneOccurrenceOfRepeatingEvent() = runBlocking<Unit> {
+        val aduki = build()
+        aduki.scheduling.create(
+            EventRequest(
+                title = "Weekly Standup",
+                start = nine, // Mon Nov 2 2026 06:00 UTC (09:00 Nairobi)
+                end = nine.plusSeconds(3600),
+                timezone = "Africa/Nairobi",
+                rrule = "FREQ=WEEKLY;COUNT=4"
+            )
+        )
+        val hex = aduki.scheduling.get("srv1")!!.hex
+
+        val from = nine.minusSeconds(3600)
+        val to = nine.plusSeconds(28 * 86_400)
+        var occurrences = aduki.scheduling.expand(from, to)
+        assertEquals(4, occurrences.size)
+        assertEquals("Weekly Standup", occurrences[0].appointment.title)
+        assertEquals("Weekly Standup", occurrences[1].appointment.title)
+
+        // 1. Edit the 2nd occurrence (Mon Nov 9)
+        val week2 = nine.plusSeconds(7 * 86_400)
+        calls.clear()
+        aduki.scheduling.updateOccurrence(hex, week2, EventChanges(title = "Standup with Guest", location = "Room 101"), notify = true)
+        assertTrue(calls.contains("PATCH /v1/user/events/srv1"))
+        assertTrue(held["srv1"]!!.contains("RECURRENCE-ID;TZID=Africa/Nairobi:20261109T090000"))
+
+        occurrences = aduki.scheduling.expand(from, to)
+        assertEquals(4, occurrences.size)
+        assertEquals("Weekly Standup", occurrences[0].appointment.title)
+        assertEquals("Standup with Guest", occurrences[1].appointment.title)
+        assertEquals("Room 101", occurrences[1].appointment.location)
+        assertEquals("Weekly Standup", occurrences[2].appointment.title)
+
+        // 2. Cancel the 3rd occurrence (Mon Nov 16)
+        val week3 = nine.plusSeconds(14 * 86_400)
+        calls.clear()
+        aduki.scheduling.cancelOccurrence(hex, week3, notify = true)
+        assertTrue(calls.contains("PATCH /v1/user/events/srv1"))
+        assertTrue(held["srv1"]!!.contains("EXDATE;TZID=Africa/Nairobi:20261116T090000"))
+
+        occurrences = aduki.scheduling.expand(from, to)
+        assertEquals(3, occurrences.size)
+        assertEquals(nine.toEpochMilli(), occurrences[0].start)
+        assertEquals(week2.toEpochMilli(), occurrences[1].start)
+        assertEquals("Standup with Guest", occurrences[1].appointment.title)
+        assertEquals(nine.plusSeconds(21 * 86_400).toEpochMilli(), occurrences[2].start)
+
+        // 3. Update following (this and future) starting from the 4th occurrence (Mon Nov 23)
+        val week4 = nine.plusSeconds(21 * 86_400)
+        calls.clear()
+        val nextSeries = aduki.scheduling.updateFollowing(hex, week4, EventChanges(title = "Standup 2.0"), notify = true)
+        assertTrue(calls.contains("PATCH /v1/user/events/srv1"))
+        assertTrue(calls.contains("POST /v1/user/events"))
+
+        occurrences = aduki.scheduling.expand(from, to)
+        val week4Occurrences = occurrences.filter { it.start == week4.toEpochMilli() }
+        assertEquals(1, week4Occurrences.size)
+        assertEquals("Standup 2.0", week4Occurrences[0].appointment.title)
+    }
+
     private companion object {
         const val PAGE = """{"hex":"p1","slug":"consult","name":"Consult","about":null,"lengths":[30],"before":0,"after":0,
             "notice":60,"horizon":60,"step":30,"daily":null,"weekly":null,"mode":"solo","seats":1,"visibility":"public",

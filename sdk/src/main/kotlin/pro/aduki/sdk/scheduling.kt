@@ -143,7 +143,8 @@ class Scheduling internal constructor(
 
     /** The occurrences in `[start, end)` now, repeating events expanded. */
     fun expand(start: Instant, end: Instant): List<Occurrence> =
-        repo?.all?.value?.let { pro.aduki.state.repository.expand(it, start.toEpochMilli(), end.toEpochMilli()) }
+        repo?.list()?.let { pro.aduki.state.repository.expand(it, start.toEpochMilli(), end.toEpochMilli()) }
+            ?: engine?.appointments()?.let { pro.aduki.state.repository.expand(it, start.toEpochMilli(), end.toEpochMilli()) }
             ?: emptyList()
 
     /** Loads every event from the server into the store; returns how many changed. */
@@ -177,6 +178,47 @@ class Scheduling internal constructor(
     /** Moves an event to [start] .. [end]; [notify] as for [update]. */
     suspend fun reschedule(hex: String, start: Instant, end: Instant, notify: Boolean = false): Appointment =
         withContext(Dispatchers.IO) { local().reschedule(hex, start, end, notify) }.also { flush() }
+
+    /**
+     * Edits a single occurrence of a recurring event at [occurrenceStart]
+     * using a `RECURRENCE-ID` override. With [notify], the server sends the
+     * change to the attendees.
+     */
+    suspend fun updateOccurrence(
+        hex: String,
+        occurrenceStart: Instant,
+        changes: EventChanges,
+        notify: Boolean = false
+    ): Appointment = withContext(Dispatchers.IO) {
+        local().updateOccurrence(hex, occurrenceStart, changes, notify)
+    }.also { flush() }
+
+    /**
+     * Cancels a single occurrence of a recurring event at [occurrenceStart]
+     * by appending an `EXDATE`. With [notify], the server sends the change
+     * to the attendees.
+     */
+    suspend fun cancelOccurrence(
+        hex: String,
+        occurrenceStart: Instant,
+        notify: Boolean = false
+    ): Appointment = withContext(Dispatchers.IO) {
+        local().cancelOccurrence(hex, occurrenceStart, notify)
+    }.also { flush() }
+
+    /**
+     * Splits a recurring series at [occurrenceStart] (this and following):
+     * caps the original series with `UNTIL` and starts a new series with [changes].
+     * With [notify], the server sends changes to the attendees.
+     */
+    suspend fun updateFollowing(
+        hex: String,
+        occurrenceStart: Instant,
+        changes: EventChanges,
+        notify: Boolean = false
+    ): Appointment = withContext(Dispatchers.IO) {
+        local().updateFollowing(hex, occurrenceStart, changes, notify)
+    }.also { flush() }
 
     /**
      * Answers an invitation (`PARTSTAT` of [address], by default the

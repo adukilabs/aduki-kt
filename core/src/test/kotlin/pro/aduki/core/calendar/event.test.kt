@@ -125,6 +125,51 @@ class EventsTest {
     }
 
     @Test
+    fun updateOccurrenceWritesRecurrenceIdOverride() {
+        val wednesday = nine.plusSeconds(2 * 86_400) // 2026-11-04T06:00:00Z -> 09:00 Nairobi
+        val out = Events.updateOccurrence(stored, wednesday, EventChanges(title = "Standup - Special", location = "Room 42"))
+        assertTrue(out.contains("RECURRENCE-ID;TZID=Africa/Nairobi:20261104T090000\r\n"))
+        assertTrue(out.contains("SUMMARY:Standup - Special\r\n"))
+        assertTrue(out.contains("LOCATION:Room 42\r\n"))
+        // Master event still intact
+        val master = Events.read(out)!!
+        assertEquals("Standup, daily", master.title)
+        assertEquals("HQ", master.location)
+
+        val overrides = Events.overrides(out)
+        assertEquals(1, overrides.size)
+        assertEquals(wednesday.toEpochMilli(), overrides[0].recurrenceId)
+        assertEquals("Standup - Special", overrides[0].event.title)
+        assertEquals("Room 42", overrides[0].event.location)
+    }
+
+    @Test
+    fun cancelOccurrenceAddsExdate() {
+        val wednesday = nine.plusSeconds(2 * 86_400)
+        val out = Events.cancelOccurrence(stored, wednesday)
+        assertTrue(out.contains("EXDATE;TZID=Africa/Nairobi:20261104T090000\r\n"))
+        val master = Events.read(out)!!
+        assertTrue(master.exdate.contains(wednesday.toEpochMilli()))
+    }
+
+    @Test
+    fun updateFollowingSplitsWithUntil() {
+        val nextWeek = nine.plusSeconds(7 * 86_400) // 2026-11-09T06:00:00Z
+        val (originalIcal, newIcal) = Events.updateFollowing(stored, nextWeek, EventChanges(title = "Standup 2.0"))
+        // Original has UNTIL
+        assertTrue(originalIcal.contains("UNTIL="))
+        val original = Events.read(originalIcal)!!
+        assertEquals("Standup, daily", original.title)
+        assertTrue(original.rrule.contains("UNTIL="))
+
+        // New series starts at nextWeek with new title
+        val newEvent = Events.read(newIcal)!!
+        assertEquals("Standup 2.0", newEvent.title)
+        assertEquals(nextWeek.toEpochMilli(), newEvent.start)
+        assertFalse(newEvent.rrule.contains("UNTIL="))
+    }
+
+    @Test
     fun requestsValidate() {
         assertThrows(IllegalArgumentException::class.java) { EventRequest("t", nine, nine).validate() }
         assertThrows(IllegalArgumentException::class.java) { EventRequest("t", nine, nine.plusSeconds(1), rrule = "BYDAY=MO").validate() }
