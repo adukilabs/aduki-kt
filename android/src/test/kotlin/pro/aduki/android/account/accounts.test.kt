@@ -165,6 +165,59 @@ class AccountsTest {
         assertNull(accounts.tokens("e5f6"))
     }
 
+    @Test fun shareSetsAccountVisibilityOnAndroid8Plus() {
+        accounts.reconcile(center(ada, work))
+        val shared = accounts.share(listOf("pro.aduki.suite.mail", "pro.aduki.suite.calendar"))
+        assertEquals(2, shared)
+
+        assertEquals(AccountManager.VISIBILITY_VISIBLE, accounts.visibility("a1b2", "pro.aduki.suite.mail"))
+        assertEquals(AccountManager.VISIBILITY_VISIBLE, accounts.visibility("a1b2", "pro.aduki.suite.calendar"))
+        assertEquals(AccountManager.VISIBILITY_VISIBLE, accounts.visibility("c3d4", "pro.aduki.suite.mail"))
+
+        // Share single account by hex
+        assertTrue(accounts.share("a1b2", listOf("pro.aduki.suite.drive")))
+        assertEquals(AccountManager.VISIBILITY_VISIBLE, accounts.visibility("a1b2", "pro.aduki.suite.drive"))
+        assertNotEquals(AccountManager.VISIBILITY_VISIBLE, accounts.visibility("c3d4", "pro.aduki.suite.drive"))
+    }
+
+    @Test fun secondAccountsInstanceReadsSharedEntriesAndUnsealedTokens() {
+        val accounts1 = Accounts(context, vault = null, manager = manager)
+        accounts1.reconcile(center(ada))
+        accounts1.save("a1b2", Tokens("access_tok", "refresh_tok", "600", "sess_1"))
+        accounts1.share(listOf("pro.aduki.suite.mail"))
+
+        // Second accounts instance (e.g. companion app of the same publisher)
+        val accounts2 = Accounts(context, vault = null, manager = manager)
+        val list = accounts2.list()
+        assertEquals(1, list.size)
+        assertEquals("ada@aduki.me", list[0].handle)
+        assertEquals("a1b2", list[0].hex)
+        assertEquals("c1", list[0].center)
+
+        val tokens = accounts2.tokens("a1b2")
+        assertEquals(Tokens("access_tok", "refresh_tok", "600", "sess_1"), tokens)
+    }
+
+    @Test fun secondAccountsInstanceReadsMetadataWhenTokensAreVaultSealed() {
+        val vault1 = softVault()
+        val accounts1 = Accounts(context, vault = vault1, manager = manager)
+        accounts1.reconcile(center(ada))
+        accounts1.save("a1b2", Tokens("access_tok", "refresh_tok", "600", "sess_1"))
+
+        // Companion app has its own Keystore/Vault key
+        val vault2 = softVault()
+        val accounts2 = Accounts(context, vault = vault2, manager = manager)
+        val list = accounts2.list()
+        assertEquals(1, list.size)
+        assertEquals("ada@aduki.me", list[0].handle)
+        assertEquals("a1b2", list[0].hex)
+        assertEquals("c1", list[0].center)
+
+        // Tokens sealed with vault1 cannot be decrypted by vault2; companion app
+        // reads handle/hex/center to run its own DPoP authentication flow.
+        assertNull(accounts2.tokens("a1b2"))
+    }
+
     private fun centerBody(vararg list: Linked): String {
         val acc = list.joinToString(",", "[", "]") {
             """{"hex":"${it.hex}","handle":"${it.handle}","knd":"${if (it.personal) "p" else "m"}",${it.tenant?.let { t -> """"ten":"$t",""" } ?: ""}"unlock":"${it.unlock}"}"""

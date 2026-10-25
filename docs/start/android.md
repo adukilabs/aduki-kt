@@ -36,6 +36,22 @@ key.extractable()                           // false
 
 `Accounts.reconcile(switcher)` makes the entries of a center match what Aduki ID lists: new accounts are added, accounts the center no longer lists (a tenant `links = deny`, a forced unlink, the person's own unlink) are removed together with their tokens. `Accounts.refresh(client, identity, bearer, current)` does `Center.fetch` and reconciles. Access and refresh tokens are sealed with the [Vault](../security/vault.md) before they reach `AccountManager`; the center token is kept in its own sealed file and is never put in an account entry. `SwitcherState.of(accounts, active)` gives the rows a switcher shows (lock for `unlock = self`, "sign in again", instant switch).
 
+### Sharing accounts across companion apps
+
+On Android 8+ (API 26+), accounts added by one app are isolated and invisible to other apps by default. Call `Accounts.share(packages)` to grant visibility:
+
+```kotlin
+accounts.share(listOf("pro.aduki.suite.mail", "pro.aduki.suite.calendar"))
+```
+
+#### Safe vs. app-bound fields
+- **Safe across apps:** `hex`, `handle`, `center`, `tenant`, `personal`, `unlock`. Stored unsealed in `AccountManager` user data, any companion app granted visibility can read them via `accounts.list()`.
+- **App-bound (with Vault):** Tokens sealed with `Vault.platform()` use an Android Keystore key tied to the creating app's UID. Peer apps cannot decrypt tokens sealed by another app's Keystore.
+
+#### Cross-app token options
+1. **Per-app sessions (recommended):** Companion apps read the account `handle`, `hex` and `center` ID, and run their own authentication flow to establish an independent DPoP session with their own Keystore key.
+2. **Unsealed tokens (`vault = null`):** Using `Accounts(context, vault = null)` stores tokens unsealed in `AccountManager`, allowing companion apps with visibility to read and share tokens directly.
+
 Register how the authenticator refreshes a stale access token, and which activity adds an account:
 
 ```kotlin
