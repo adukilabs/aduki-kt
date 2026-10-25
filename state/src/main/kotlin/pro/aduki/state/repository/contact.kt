@@ -131,10 +131,15 @@ class Contact(
                     if (q.isEmpty()) {
                         list.sortedBy { it.name }
                     } else {
-                        list.filter {
-                            it.name.lowercase().contains(q) ||
-                                    it.email.lowercase().contains(q) ||
-                                    it.phone.lowercase().contains(q)
+                        list.filter { c ->
+                            c.name.lowercase().contains(q) ||
+                                c.company.lowercase().contains(q) ||
+                                c.email.lowercase().contains(q) ||
+                                c.phone.lowercase().contains(q) ||
+                                c.notes.lowercase().contains(q) ||
+                                c.emails.any { it.lowercase().contains(q) } ||
+                                c.phones.any { it.lowercase().contains(q) } ||
+                                c.groups.any { it.lowercase().contains(q) }
                         }.sortedBy { it.name }
                     }
                 }
