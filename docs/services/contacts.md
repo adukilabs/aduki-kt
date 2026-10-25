@@ -222,10 +222,12 @@ one call, `POST /user/contacts/import` (`text/vcard`, at most 5000 cards),
 which matches by UID only and answers `{created, updated, skipped, errors:
 [{index, error}]}`; `errors` become `"card N: reason"` as below.
 
-On the device, `import` reads vCard 3.0 and 4.0 (2.1 cards are reported as
-errors), one or more cards per file. Lines are unfolded, property groups (`item1.EMAIL`),
-quoted parameters and escapes are honoured, and a 3.0 inline photo
-(`PHOTO;ENCODING=b;TYPE=JPEG:...`) becomes a `data:` URI. For each card:
+On the device, `import` reads vCard 2.1, 3.0 and 4.0, one or more cards per file.
+Lines are unfolded (including Quoted-Printable soft line breaks and indented photo blocks),
+Quoted-Printable values are decoded honouring `CHARSET`, bare 2.1 parameters are accepted as types,
+property groups (`item1.EMAIL`), quoted parameters and escapes are honoured, and inline photos
+(`PHOTO;ENCODING=b;TYPE=JPEG:...` or `PHOTO;ENCODING=BASE64;JPEG:...`) become `data:` URIs.
+Imported cards are written to the store as 3.0 or 4.0. For each card:
 
 - a card whose `UID` matches a stored contact updates it (the file's values
   win; groups are added);
