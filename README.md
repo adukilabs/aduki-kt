@@ -6,13 +6,48 @@ sync, and a reactive state layer. Maven group `pro.aduki`; Apache 2.0.
 
 - **Use it:** the manual is in [`docs/`](docs/) (mdBook, published at `docs.aduki.pro/kt`).
 - **Work on it:** see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- **Publish & release:** see [`PUBLISH.md`](PUBLISH.md).
 
 ## Quick start
 
+### Repositories
+
+Artifacts are published to **Maven Central**, **GitHub Packages**, and **JitPack**:
+
+```kotlin
+// settings.gradle.kts
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+
+        // Or GitHub Packages:
+        // maven {
+        //     url = uri("https://maven.pkg.github.com/adukilabs/aduki-kt")
+        //     credentials {
+        //         username = providers.gradleProperty("gpr.user").orNull ?: System.getenv("GITHUB_ACTOR")
+        //         password = providers.gradleProperty("gpr.key").orNull ?: System.getenv("GITHUB_TOKEN")
+        //     }
+        // }
+
+        // Or JitPack:
+        // maven { url = uri("https://jitpack.io") }
+    }
+}
+```
+
+### Dependencies
+
 ```kotlin
 // build.gradle.kts
+// Maven Central / GitHub Packages:
 implementation("pro.aduki:sdk:0.5.0")
+implementation("pro.aduki:android:0.5.0") // Android-specific features
 implementation("io.objectbox:objectbox-android:4.0.3")
+
+// Or JitPack:
+// implementation("com.github.adukilabs.aduki-kt:sdk:0.5.0")
+// implementation("com.github.adukilabs.aduki-kt:android:0.5.0")
 
 // Sign in at Aduki ID; the 10-minute token is renewed automatically
 val client = Aduki.login(handle = "ada@aduki.me", password = password, code = code)

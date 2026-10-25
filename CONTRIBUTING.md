@@ -121,12 +121,15 @@ Record user-visible changes in `CHANGELOG.md` under `Unreleased`.
 
 ## Releasing
 
+See [`PUBLISH.md`](PUBLISH.md) for full release, secret configuration, and distribution details.
+
 1. Set the version (`val release = "x.y.z"` in the root `build.gradle.kts`),
    and update the version strings in `README.md` and `docs/start/install.md`.
-2. Dry run without uploading: `./gradlew test bundle`. It writes
-   `build/bundle.zip`, unsigned unless `SIGNING_KEY` is set.
+2. Dry run without uploading: `./gradlew --no-daemon -Paduki.android=true test bundle`.
+   It writes `build/bundle.zip`, unsigned unless `SIGNING_KEY` is set.
 3. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`. The `publish`
-   workflow tests, signs, publishes to GitHub Packages and uploads to Maven
-   Central. It needs the repository secrets `SIGNING_KEY`, `SIGNING_PASSWORD`,
-   `SONATYPE_USERNAME` and `SONATYPE_PASSWORD`.
-4. Check that `pro.aduki:sdk:X.Y.Z` resolves from a clean project.
+   workflow tests, publishes to GitHub Packages, signs and uploads to Maven
+   Central, and triggers JitPack. It needs the repository secrets `SIGNING_KEY`,
+   `SIGNING_PASSWORD`, `SONATYPE_USERNAME`, `SONATYPE_PASSWORD`, and `JITPACK_ACCESS_TOKEN`.
+4. Check that `pro.aduki:sdk:X.Y.Z` resolves from Maven Central, GitHub Packages,
+   and JitPack (`com.github.adukilabs.aduki-kt:sdk:X.Y.Z`).
