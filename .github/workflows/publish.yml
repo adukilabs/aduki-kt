@@ -87,3 +87,22 @@ jobs:
             done
           fi
 
+      - name: jitpack
+        env:
+          JITPACK_ACCESS_TOKEN: ${{ secrets.JITPACK_ACCESS_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME:-v0.5.0}"
+          echo "Triggering JitPack build for $TAG..."
+          AUTH=()
+          if [ -n "$JITPACK_ACCESS_TOKEN" ]; then
+            AUTH=(-u "$JITPACK_ACCESS_TOKEN:")
+          fi
+          RESPONSE=$(curl -s "${AUTH[@]}" "https://jitpack.io/api/builds/com.github.adukilabs/aduki-kt/$TAG")
+          echo "JitPack tag response: $RESPONSE"
+          if [[ "$TAG" =~ ^v[0-9] ]]; then
+            VER="${TAG#v}"
+            echo "Triggering JitPack build for version: $VER..."
+            curl -s "${AUTH[@]}" "https://jitpack.io/api/builds/com.github.adukilabs/aduki-kt/$VER" || true
+          fi
+
+
