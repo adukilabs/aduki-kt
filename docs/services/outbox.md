@@ -23,9 +23,10 @@ sequenceDiagram
     alt Transient failure (network, 5xx, 408, 409, 429)
         Worker->>Store: attempts++, nextRetry = now + jitter
         Worker->>Worker: Stop: later entries wait (order is preserved)
-    else Rejected for good (other 4xx)
-        Worker->>Store: Drop entry, clear dirty (next sync restores server state)
+    else Rejected for good (5xx mailbox full, invalid recipient, unrecoverable 4xx)
+        Worker->>Store: Mark entry failed (status = failed, code, reason), clear dirty
         Worker->>App: onRejected(entry, error)
+        Worker->>Worker: Queue proceeds with next pending entry
     else Success
         Worker->>Store: Delete entry, clear dirty (send: adopt the server id)
     end
@@ -50,7 +51,11 @@ class Manager(storage: Storage) {
     fun remove(hex: String): Outbox
     fun enqueue(action: String, payload: ByteArray, hex: String = ""): Outbox
     fun pending(): List<Outbox>
+    fun failed(): List<Outbox>
     fun complete(id: Long, hex: String? = null)
+    fun reject(id: Long, code: Int?, reason: String, hexes: List<String> = emptyList())
+    fun retry(id: Long): Boolean
+    fun discard(id: Long): Boolean
     fun rename(old: String, new: String)              // placeholder id -> server id
     fun fail(id: Long, delay: Long)
 }

@@ -23,6 +23,7 @@ interface Storage {
     fun putOutbox(entry: Outbox): Long
     fun removeOutbox(id: Long)
     fun pending(): List<Outbox>
+    fun failed(): List<Outbox> = emptyList()
     fun <T> tx(block: () -> T): T
 
     /** How many actions are queued. */
@@ -30,6 +31,7 @@ interface Storage {
 
     fun getMailbox(hex: String): Mailbox? = null
     fun putMailbox(mailbox: Mailbox) {}
+    fun mailboxByRole(role: String): Mailbox? = null
 
     /** Drops a mailbox row and the messages in it. */
     fun removeMailbox(hex: String) {}
@@ -60,15 +62,27 @@ class Manager(private val storage: Storage) {
         override fun getOutbox(id: Long): Outbox? = outbox.get(id)?.let(Sealing::opened)
         override fun putOutbox(entry: Outbox): Long = Sealing.put(outbox, entry)
         override fun removeOutbox(id: Long) { outbox.remove(id) }
-        override fun pending(): List<Outbox> = outbox.all.map(Sealing::opened).sortedBy { it.created }
+        override fun pending(): List<Outbox> =
+            outbox.query(pro.aduki.store.entities.Outbox_.status.notEqual("failed"))
+                .order(pro.aduki.store.entities.Outbox_.created)
+                .build()
+                .use { it.find().map(Sealing::opened) }
+        override fun failed(): List<Outbox> =
+            outbox.query(pro.aduki.store.entities.Outbox_.status.equal("failed"))
+                .order(pro.aduki.store.entities.Outbox_.created)
+                .build()
+                .use { it.find().map(Sealing::opened) }
         override fun <T> tx(block: () -> T): T = store.callInTx(block)
-        override fun size(): Int = outbox.count().toInt()
+        override fun size(): Int =
+            outbox.query(pro.aduki.store.entities.Outbox_.status.notEqual("failed")).build().use { it.count().toInt() }
 
         private val mailboxes = store.boxFor(Mailbox::class.java)
 
         override fun getMailbox(hex: String): Mailbox? =
             mailboxes.query(Mailbox_.hex.equal(hex)).build().use { it.findFirst() }
         override fun putMailbox(mailbox: Mailbox) { mailboxes.put(mailbox) }
+        override fun mailboxByRole(role: String): Mailbox? =
+            mailboxes.query(Mailbox_.role.equal(role)).build().use { it.findFirst() }
         override fun removeMailbox(hex: String) {
             mailboxes.query(Mailbox_.hex.equal(hex)).build().use { it.remove() }
             messages.query(Message_.mailbox.equal(hex)).build().use { it.remove() }
@@ -85,12 +99,18 @@ class Manager(private val storage: Storage) {
 
     private val counter = MutableStateFlow(storage.size())
 
-    /** The number of queued actions, updated on every change made through this manager. */
+    /** The number of queued pending actions, updated on every change made through this manager. */
     val count: StateFlow<Int> = counter.asStateFlow()
 
-    /** Re-reads [count] from storage (after a write that bypassed the manager). */
+    private val failedState = MutableStateFlow(storage.failed())
+
+    /** The permanently failed actions, updated on every change made through this manager. */
+    val failed: StateFlow<List<Outbox>> = failedState.asStateFlow()
+
+    /** Re-reads [count] and [failed] from storage (after a write that bypassed the manager). */
     fun recount() {
         counter.value = storage.size()
+        failedState.value = storage.failed()
     }
 
     /** The queued action with [id] as stored now, or null when it is gone. */
@@ -327,7 +347,7 @@ class Manager(private val storage: Storage) {
         storage.tx {
             storage.renameMailbox(old, new)
             val quoted = JSONObject.quote(old)
-            for (entry in storage.pending()) {
+            for (entry in storage.pending() + storage.failed()) {
                 val text = String(entry.payload, Charsets.UTF_8)
                 if (quoted !in text && entry.hex != old) continue
                 entry.payload = text.replace(quoted, JSONObject.quote(new)).toByteArray(Charsets.UTF_8)
@@ -370,7 +390,7 @@ class Manager(private val storage: Storage) {
     fun repoint(old: String, new: String) {
         if (old == new || new.isBlank()) return
         storage.tx {
-            for (entry in storage.pending().filter { it.hex == old }) {
+            for (entry in (storage.pending() + storage.failed()).filter { it.hex == old }) {
                 entry.hex = new
                 storage.putOutbox(entry)
             }
@@ -380,7 +400,7 @@ class Manager(private val storage: Storage) {
     /** Drops every queued action on [hex]; returns how many there were. */
     fun drop(hex: String): Int {
         val gone = storage.tx {
-            val entries = storage.pending().filter { it.hex == hex }
+            val entries = (storage.pending() + storage.failed()).filter { it.hex == hex }
             entries.forEach { storage.removeOutbox(it.id) }
             entries.size
         }
@@ -397,10 +417,112 @@ class Manager(private val storage: Storage) {
     }
 
     /**
+     * Retrieves all permanently failed outbox actions ordered by creation time.
+     */
+    fun failed(): List<Outbox> {
+        return storage.failed()
+    }
+
+    /**
      * Marks an outbox action completed: removes from outbox and clears message dirty state.
      */
     fun complete(id: Long, hex: String? = null) {
         complete(id, listOfNotNull(hex))
+    }
+
+    /**
+     * Marks an outbox action as permanently failed with an error code and reason.
+     */
+    fun reject(id: Long, code: Int?, reason: String, hexes: List<String> = emptyList()) {
+        reject(id, code?.toString() ?: "", reason, hexes)
+    }
+
+    /**
+     * Marks an outbox action as permanently failed with an error code and reason.
+     */
+    fun reject(id: Long, code: String = "", reason: String = "", hexes: List<String> = emptyList()) {
+        storage.tx {
+            val entry = storage.getOutbox(id) ?: return@tx
+            entry.status = "failed"
+            entry.code = code
+            entry.reason = reason
+            storage.putOutbox(entry)
+            for (hex in hexes) {
+                val msg = storage.getMessage(hex) ?: continue
+                msg.dirty = false
+                storage.putMessage(msg)
+            }
+        }
+        recount()
+    }
+
+    /**
+     * Retries a permanently failed outbox action by restoring its status to pending.
+     */
+    fun retry(id: Long): Boolean {
+        val ok = storage.tx {
+            val entry = storage.getOutbox(id) ?: return@tx false
+            entry.status = "pending"
+            entry.attempts = 0
+            entry.nextRetry = 0L
+            entry.code = ""
+            entry.reason = ""
+            storage.putOutbox(entry)
+            if (entry.hex.isNotBlank()) {
+                val msg = storage.getMessage(entry.hex)
+                if (msg != null) {
+                    msg.dirty = true
+                    storage.putMessage(msg)
+                }
+            }
+            true
+        }
+        if (ok) recount()
+        return ok
+    }
+
+    /**
+     * Discards an outbox action: removes it from storage. If it was a send action,
+     * moves the message to drafts so it is preserved locally.
+     */
+    fun discard(id: Long): Boolean {
+        val ok = storage.tx {
+            val entry = storage.getOutbox(id) ?: return@tx false
+            if (entry.action == "send" || entry.action == "compose") {
+                val hex = entry.hex.ifBlank { extractHex(entry) }
+                if (!hex.isNullOrBlank()) {
+                    val msg = storage.getMessage(hex)
+                    if (msg != null) {
+                        val drafts = storage.mailboxByRole("drafts")?.hex ?: "drafts"
+                        msg.mailbox = drafts
+                        msg.flags = (msg.flags or Message.DRAFT) and Message.DELETED.inv()
+                        msg.dirty = false
+                        storage.putMessage(msg)
+                    }
+                }
+            } else if (entry.hex.isNotBlank()) {
+                val msg = storage.getMessage(entry.hex)
+                if (msg != null) {
+                    msg.dirty = false
+                    storage.putMessage(msg)
+                }
+            }
+            storage.removeOutbox(id)
+            true
+        }
+        if (ok) recount()
+        return ok
+    }
+
+    private fun extractHex(entry: Outbox): String? {
+        return try {
+            val str = String(entry.payload, Charsets.UTF_8)
+            if (str.trimStart().startsWith("{")) {
+                org.json.JSONObject(str).optString("hex").ifBlank { null }
+            } else null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     /**

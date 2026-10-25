@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import pro.aduki.store.entities.Outbox
 import pro.aduki.sync.engine.Contact as ContactEngine
 import pro.aduki.sync.engine.Mailbox as MailboxEngine
 import pro.aduki.sync.outbox.Manager
@@ -46,8 +47,14 @@ class Sync internal constructor(
     /** Running, last success and last error of [all]. */
     val state: StateFlow<SyncState> = current.asStateFlow()
 
-    /** The number of queued outbox actions; always 0 without a local store. */
+    /** The number of queued pending outbox actions; always 0 without a local store. */
     val outbox: StateFlow<Int> = manager?.count ?: MutableStateFlow(0).asStateFlow()
+
+    /**
+     * Actions that failed permanently (e.g. refused by the server).
+     * These do not count toward [outbox] and can be retried or discarded.
+     */
+    val failed: StateFlow<List<Outbox>> = manager?.failed ?: MutableStateFlow(emptyList<Outbox>()).asStateFlow()
 
     /**
      * Loads the mailbox list into the local store (`GET /user/mailbox`) and
@@ -114,5 +121,25 @@ class Sync internal constructor(
      */
     fun pending(): Int {
         return manager?.pending()?.size ?: 0
+    }
+
+    /**
+     * Retries a permanently failed action by restoring its status to pending.
+     * Optionally flushes immediately if [flush] is true.
+     */
+    suspend fun retry(id: Long, flush: Boolean = true): Boolean {
+        val ok = manager?.retry(id) ?: false
+        if (ok && flush) {
+            this.flush()
+        }
+        return ok
+    }
+
+    /**
+     * Discards a permanently failed action, removing it from outbox.
+     * If the action was an outbound send, the message is preserved in drafts.
+     */
+    fun discard(id: Long): Boolean {
+        return manager?.discard(id) ?: false
     }
 }

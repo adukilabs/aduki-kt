@@ -152,7 +152,9 @@ class HttpTest {
             return id
         }
         override fun removeOutbox(id: Long) { outbox.remove(id) }
-        override fun pending() = outbox.values.sortedBy { it.created }
+        override fun pending() = outbox.values.filter { it.pending() }.sortedBy { it.created }
+        override fun failed() = outbox.values.filter { it.failed() }.sortedBy { it.created }
+        override fun size() = pending().size
         override fun <T> tx(block: () -> T): T = block()
         override fun renameMessage(old: String, new: String) {
             val m = messages.remove(old) ?: return
@@ -252,7 +254,7 @@ class HttpTest {
             }
         }
 
-        // The worker drops a rejected action and carries on with the next.
+        // The worker marks a rejected action failed and carries on with the next.
         val journal = Journal()
         val manager = Manager(journal)
         manager.enqueue("send", """{"to":["bad"],"subject":"","text":""}""".toByteArray(), "p1")
@@ -263,7 +265,9 @@ class HttpTest {
         reply("null")
         assertEquals(2, worker.drain())
         assertEquals(listOf("p1"), rejected)
-        assertTrue(journal.outbox.isEmpty())
+        assertTrue(manager.pending().isEmpty())
+        assertEquals(1, manager.failed().size)
+        assertEquals("failed", manager.failed()[0].status)
     }
 
     @Test

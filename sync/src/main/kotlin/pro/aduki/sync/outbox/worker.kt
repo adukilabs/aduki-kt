@@ -64,9 +64,9 @@ class Worker(
             manager.complete(action.id, hexes(action))
             true
         } catch (e: Rejected) {
-            // Permanent: drop it (and clear the message's dirty mark so the
-            // next sync restores the server's state) and move on.
-            manager.complete(action.id, hexes(action))
+            // Permanent: mark as failed, preserve in store for user inspection/retry/discard,
+            // clear the message dirty mark, and move on.
+            manager.reject(action.id, e.code, e.message.orEmpty(), hexes(action))
             onRejected(action, e)
             true
         } catch (_: Exception) {
