@@ -15,6 +15,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -71,7 +72,7 @@ class MailTest {
                            "updated":[],"vanished":[]}"""
                     )
                     path.startsWith("/v1/user/mail/changes") -> ok("""{"uidvalidity":1,"modseq":1,"created":[],"updated":[],"vanished":[]}""")
-                    path.startsWith("/v1/user/mail/search/") -> ok("""{"items":[${row("m9", 9, "t9", "Old invoice", "billing@example.com", 10)}],"total":1}""")
+                    path.startsWith("/v1/user/mail/search/") -> ok("""{"items":[${row("m9", 9, "t9", "Old invoice", "billing@example.com", 10, "b-archive")}],"total":1}""")
                     request.method == "PATCH" && path.endsWith("/mailbox") -> ok("""{"hex":"x","mailbox":"y","uid":5,"modseq":50}""")
                     request.method == "PATCH" -> MockResponse().setResponseCode(204)
                     request.method == "DELETE" -> MockResponse().setResponseCode(204)
@@ -156,9 +157,9 @@ class MailTest {
     private fun box(hex: String, name: String, role: String?) =
         """{"hex":"$hex","name":"$name","delimiter":"/","flags":[],"uidvalidity":7,"uidnext":1,"role":${role?.let { "\"$it\"" } ?: "null"},"messages":0,"unread":0}"""
 
-    private fun row(hex: String, uid: Int, thread: String, subject: String, from: String, at: Long) =
+    private fun row(hex: String, uid: Int, thread: String, subject: String, from: String, at: Long, mailbox: String = "b-inbox") =
         """{"hex":"$hex","uid":$uid,"thread":"$thread","subject":"$subject","sender":"$from","from":{"name":null,"email":"$from"},
-            "to":[{"name":null,"email":"me@aduki.pro"}],"flags":[],"internaldate":"${Instant.ofEpochMilli(at)}","preview":"about $subject"}"""
+            "to":[{"name":null,"email":"me@aduki.pro"}],"flags":[],"internaldate":"${Instant.ofEpochMilli(at)}","preview":"about $subject","mailbox":"$mailbox"}"""
 
     private suspend fun synced() {
         client.sync.all()
@@ -336,5 +337,36 @@ class MailTest {
         assertFalse(back.seen())
         assertEquals(0L, back.snoozed())
         assertNotNull(message("m1"))
+    }
+
+    @Test
+    fun findAndFetchUnsyncedMessageCanBeFlagged() = runBlocking<Unit> {
+        synced()
+        // m9 is in b-archive which was not synced locally.
+        // 1. Without store=true, m9 is returned in memory but not stored.
+        val unsaved = client.mail.find("invoice", store = false)
+        assertEquals(1, unsaved.size)
+        assertEquals("m9", unsaved[0].hex)
+        try {
+            client.mail.setFlag("m9", Message.FLAGGED, true)
+            fail("expected IllegalArgumentException because m9 is not stored")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("m9"))
+        }
+
+        // 2. With store=true, m9 is loaded into the store and its mailbox created
+        val saved = client.mail.find("invoice", store = true)
+        assertEquals(1, saved.size)
+        assertEquals("m9", saved[0].hex)
+
+        // Setting a flag on m9 now succeeds
+        client.mail.setFlag("m9", Message.FLAGGED, true)
+        client.sync.flush()
+
+        // 3. fetch(hex) reads back the stored message
+        val fetched = client.mail.fetch("m9")
+        assertEquals("m9", fetched.hex)
+        assertEquals("b-archive", fetched.mailbox)
+        assertTrue(fetched.flagged())
     }
 }

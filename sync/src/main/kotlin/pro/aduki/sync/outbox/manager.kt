@@ -105,6 +105,15 @@ class Manager(private val storage: Storage) {
     /** The local message with [hex], or null. */
     fun message(hex: String): Message? = storage.getMessage(hex)
 
+    /** The local mailbox with [hex], or null. */
+    fun mailbox(hex: String): Mailbox? = storage.getMailbox(hex)
+
+    /** Saves [message] directly into storage. */
+    fun put(message: Message) { storage.putMessage(message) }
+
+    /** Saves [mailbox] directly into storage. */
+    fun put(mailbox: Mailbox) { storage.putMailbox(mailbox) }
+
     /**
      * Optimistically toggles a flag bitmask on a message and journals an outbox action.
      */
