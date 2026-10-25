@@ -165,11 +165,11 @@ class BookTest {
         val file = listOf(
             "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:u-ann\r\nFN:Ann Lee\r\nEMAIL;TYPE=WORK:ann@x.example\r\nEMAIL:ann2@x.example\r\nTEL;TYPE=CELL:+1 555 0100\r\nPHOTO;ENCODING=b;TYPE=PNG:iVBORw0KGgo=\r\nCATEGORIES:friends\r\nEND:VCARD\r\n",
             "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Bob\r\nEMAIL:bob@x.example\r\nEND:VCARD\r\n",
-            "BEGIN:VCARD\r\nVERSION:2.1\r\nFN:Old\r\nEND:VCARD\r\n"
+            "BEGIN:VCARD\r\nVERSION:1.0\r\nFN:Old\r\nEND:VCARD\r\n"
         ).joinToString("")
 
         val first = aduki.contacts.import(file.byteInputStream())
-        assertEquals(Imported(created = 2, errors = listOf("card 3: unsupported vCard version '2.1' (3.0 and 4.0 are read)")), first)
+        assertEquals(Imported(created = 2, errors = listOf("card 3: unsupported vCard version '1.0' (2.1, 3.0 and 4.0 are read)")), first)
 
         // The same file again changes nothing; a card with more values updates.
         assertEquals(2, aduki.contacts.import(file.byteInputStream()).skipped)
@@ -189,6 +189,19 @@ class BookTest {
         val all = aduki.contacts.export()
         assertEquals(2, Vcard.split(all).size)
         assertTrue(Vcard.parse(Vcard.split(all).first()).same(aduki.contacts.card(ann.hex)!!))
+    }
+
+    @Test
+    fun importSupportsVcard21() = runBlocking<Unit> {
+        val aduki = build()
+        val file = listOf(
+            "BEGIN:VCARD\r\nVERSION:2.1\r\nN:Lee;Ann;;;\r\nFN:Ann Lee\r\nTEL;CELL;PREF:+254712345678\r\nEMAIL;HOME:ann@example.com\r\nEND:VCARD\r\n"
+        ).joinToString("")
+        val res = aduki.contacts.import(file.byteInputStream())
+        assertEquals(Imported(created = 1, errors = emptyList()), res)
+        val ann = withTimeout(5_000) { aduki.contacts.observe()!!.first { it.isNotEmpty() } }.first { it.name == "Ann Lee" }
+        assertEquals(listOf("ann@example.com"), ann.emails)
+        assertEquals(listOf("+254712345678"), ann.phones)
     }
 
     @Test

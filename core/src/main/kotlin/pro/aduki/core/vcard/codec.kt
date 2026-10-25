@@ -3,16 +3,18 @@ package pro.aduki.core.vcard
 import pro.aduki.core.models.Card
 
 /**
- * Vcard reads and writes vCard 3.0 (RFC 2426) and 4.0 (RFC 6350).
+ * Vcard reads vCard 2.1, 3.0 and 4.0, and writes vCard 3.0 (RFC 2426) and 4.0 (RFC 6350).
  *
- * Reading unfolds lines, honours property groups (`item1.EMAIL`), quoted
- * parameters and text escapes, and turns a 3.0 inline photo
- * (`PHOTO;ENCODING=b;TYPE=JPEG:...`) into a `data:` URI. Writing keeps every
- * property it does not model from the card's source vCard, and keeps the
- * source line (with its `TYPE` and other parameters) of each e-mail address
- * and phone number that is still present. Lines are folded at 75 octets.
+ * Reading unfolds lines (honouring Quoted-Printable soft breaks and indented continuation),
+ * decodes Quoted-Printable values honouring CHARSET, accepts bare parameters as types (2.1),
+ * honours property groups (`item1.EMAIL`), quoted parameters and text escapes, and turns inline photos
+ * (`PHOTO;ENCODING=b;TYPE=JPEG:...` or `PHOTO;ENCODING=BASE64;JPEG:...`) into `data:` URIs.
+ * Writing produces 3.0 or 4.0 vCards only, keeping every property it does not model from the card's
+ * source vCard, and keeping the source line (with its `TYPE` and other parameters) of each e-mail
+ * address and phone number that is still present. Lines are folded at 75 octets.
  */
 object Vcard {
+    const val V2 = "2.1"
     const val V3 = "3.0"
     const val V4 = "4.0"
 
@@ -49,7 +51,7 @@ object Vcard {
         require(props.any { it.name == "BEGIN" && it.value.equals("VCARD", true) }) { "BEGIN:VCARD missing" }
         require(props.any { it.name == "END" && it.value.equals("VCARD", true) }) { "END:VCARD missing" }
         val version = props.firstOrNull { it.name == "VERSION" }?.value?.trim().orEmpty()
-        require(version == V3 || version == V4) { "unsupported vCard version '$version' (3.0 and 4.0 are read)" }
+        require(version == V2 || version == V3 || version == V4) { "unsupported vCard version '$version' (2.1, 3.0 and 4.0 are read)" }
 
         var name = ""
         var structured = ""
@@ -103,22 +105,34 @@ object Vcard {
         if (card.uid.isNotBlank()) out += "UID:${card.uid.trim()}"
         out += "FN:${escape(card.name)}"
         val n = source.firstOrNull { it.name == "N" }
-        out += if (n != null && old?.name == card.name) n.raw else "N:${structured(card.name)}"
+        out += if (from != V2 && n != null && old?.name == card.name) {
+            n.raw
+        } else if (from == V2 && n != null && old?.name == card.name) {
+            "N:${components(n.value, ';').joinToString(";") { escape(it) }}"
+        } else {
+            "N:${structured(card.name)}"
+        }
         if (card.company.isNotBlank()) {
             val org = source.firstOrNull { it.name == "ORG" }
-            out += if (org != null && old?.company == card.company) org.raw else "ORG:${escape(card.company)}"
+            out += if (from != V2 && org != null && old?.company == card.company) org.raw else "ORG:${escape(card.company)}"
         }
-        out += kept(card.emails, source.filter { it.name == "EMAIL" }, ::email) { "EMAIL:${escape(it)}" }
-        out += kept(card.phones, source.filter { it.name == "TEL" }, ::phone) { "TEL:$it" }
+        out += kept(card.emails, source.filter { it.name == "EMAIL" }, ::email, from) { "EMAIL:${escape(it)}" }
+        out += kept(card.phones, source.filter { it.name == "TEL" }, ::phone, from) { "TEL:$it" }
         if (card.notes.isNotBlank()) {
-            out += if (old?.notes == card.notes) source.filter { it.name == "NOTE" }.map { it.raw } else listOf("NOTE:${escape(card.notes)}")
+            out += if (from != V2 && old?.notes == card.notes) source.filter { it.name == "NOTE" }.map { it.raw } else listOf("NOTE:${escape(card.notes)}")
         }
         if (card.photo.isNotBlank()) {
             val line = source.firstOrNull { it.name == "PHOTO" }
             out += if (line != null && old?.photo == card.photo && from == version) line.raw else photo(card.photo, version)
         }
         if (card.groups.isNotEmpty()) out += "CATEGORIES:${card.groups.joinToString(",") { escape(it) }}"
-        out += source.filter { it.name !in OWN }.map { it.raw }
+        out += source.filter { it.name !in OWN }.map { p ->
+            if (from == V2 && p.params["ENCODING"]?.any { it.equals("QUOTED-PRINTABLE", true) } == true) {
+                "${p.name}:${escape(p.value)}"
+            } else {
+                p.raw
+            }
+        }
         out += "END:VCARD"
         return out.joinToString("") { fold(it) + "\r\n" }
     }
@@ -127,11 +141,23 @@ object Vcard {
     private fun lines(text: String): List<String> =
         text.replace("\r\n", "\n").replace('\r', '\n').split('\n')
 
-    /** Logical lines: continuation lines (leading space or tab) joined to the one before. */
+    /** Logical lines: continuation lines (leading space or tab, or Quoted-Printable '=' soft breaks) joined to the one before. */
     private fun unfold(text: String): List<String> {
         val out = mutableListOf<StringBuilder>()
         for (line in lines(text)) {
-            if ((line.startsWith(" ") || line.startsWith("\t")) && out.isNotEmpty()) {
+            val prev = out.lastOrNull()
+            val isQpContinuation = prev != null &&
+                prev.contains("QUOTED-PRINTABLE", ignoreCase = true) &&
+                prev.trimEnd().endsWith("=")
+            val isIndented = line.startsWith(" ") || line.startsWith("\t")
+
+            if (isQpContinuation) {
+                val trimmed = prev.trimEnd()
+                val eqIndex = trimmed.lastIndexOf('=')
+                prev.setLength(eqIndex)
+                val continuation = if (isIndented) line.trimStart() else line
+                prev.append(continuation)
+            } else if (isIndented && out.isNotEmpty()) {
                 out.last().append(line, 1, line.length)
             } else if (line.isNotBlank()) {
                 out += StringBuilder(line)
@@ -157,13 +183,65 @@ object Vcard {
         val name = full.substringAfterLast('.').uppercase()
         val params = HashMap<String, MutableList<String>>()
         for (segment in head.drop(1)) {
-            val key = if ('=' in segment) segment.substringBefore('=').trim().uppercase() else "TYPE"
-            val values = if ('=' in segment) segment.substringAfter('=') else segment
+            val upper = segment.trim().uppercase()
+            val (key, values) = if ('=' in segment) {
+                segment.substringBefore('=').trim().uppercase() to segment.substringAfter('=')
+            } else when (upper) {
+                "BASE64", "QUOTED-PRINTABLE", "7BIT", "8BIT" -> "ENCODING" to segment
+                "INLINE" -> "VALUE" to segment
+                else -> "TYPE" to segment
+            }
             split(values, ',').map { it.trim().trim('"') }.filter { it.isNotEmpty() }
                 .forEach { params.getOrPut(key) { mutableListOf() } += it }
         }
-        return Property(name, params, line.substring(colon + 1), line)
+        val rawValue = line.substring(colon + 1)
+        val value = if (params["ENCODING"]?.any { it.equals("QUOTED-PRINTABLE", true) } == true) {
+            decodeQuotedPrintable(rawValue, params["CHARSET"]?.firstOrNull())
+        } else {
+            rawValue
+        }
+        return Property(name, params, value, line)
     }
+
+    private fun decodeQuotedPrintable(text: String, charsetName: String? = null): String {
+        val charset = try {
+            if (!charsetName.isNullOrBlank()) java.nio.charset.Charset.forName(charsetName.trim()) else Charsets.UTF_8
+        } catch (_: Exception) {
+            Charsets.UTF_8
+        }
+        val bytes = java.io.ByteArrayOutputStream()
+        var i = 0
+        val len = text.length
+        while (i < len) {
+            val c = text[i]
+            if (c == '=') {
+                if (i + 2 < len && isHex(text[i + 1]) && isHex(text[i + 2])) {
+                    val b = text.substring(i + 1, i + 3).toInt(16)
+                    bytes.write(b)
+                    i += 3
+                } else if (i + 1 < len && (text[i + 1] == '\r' || text[i + 1] == '\n')) {
+                    i++
+                    if (i < len && text[i] == '\r') i++
+                    if (i < len && text[i] == '\n') i++
+                } else if (i + 1 == len) {
+                    i++
+                } else {
+                    bytes.write('='.code)
+                    i++
+                }
+            } else if (c.code <= 127) {
+                bytes.write(c.code)
+                i++
+            } else {
+                bytes.write(c.toString().toByteArray(charset))
+                i++
+            }
+        }
+        return bytes.toByteArray().toString(charset)
+    }
+
+    private fun isHex(c: Char): Boolean =
+        (c in '0'..'9') || (c in 'a'..'f') || (c in 'A'..'F')
 
     /** [text] split on [sep] outside double quotes. */
     private fun split(text: String, sep: Char): List<String> {
@@ -220,7 +298,7 @@ object Vcard {
                 out.append(c)
             }
         }
-        return out.toString()
+        return out.toString().replace("\r\n", "\n").replace('\r', '\n')
     }
 
     private fun escape(value: String): String = value
@@ -276,13 +354,28 @@ object Vcard {
     }
 
     /** One line per value: the source line that holds it when there is one, else [fresh]. */
-    private fun kept(values: List<String>, lines: List<Property>, read: (Property) -> String, fresh: (String) -> String): List<String> {
+    private fun kept(
+        values: List<String>,
+        lines: List<Property>,
+        read: (Property) -> String,
+        from: String? = null,
+        fresh: (String) -> String
+    ): List<String> {
         val pool = lines.toMutableList()
         return values.map { value ->
             val line = pool.firstOrNull { read(it).equals(value, true) }
             if (line != null) {
                 pool.remove(line)
-                line.raw
+                if (from == V2) {
+                    val types = line.params["TYPE"]?.filter { it.isNotBlank() }
+                    if (!types.isNullOrEmpty()) {
+                        "${line.name};TYPE=${types.joinToString(",")}:$value"
+                    } else {
+                        "${line.name}:$value"
+                    }
+                } else {
+                    line.raw
+                }
             } else {
                 fresh(value)
             }

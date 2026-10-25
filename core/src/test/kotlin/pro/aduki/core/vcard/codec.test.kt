@@ -62,7 +62,8 @@ class VcardTest {
 
     @Test
     fun refusesOtherVersionsAndNamelessCards() {
-        assertThrows(IllegalArgumentException::class.java) { Vcard.parse("BEGIN:VCARD\nVERSION:2.1\nFN:A\nEND:VCARD\n") }
+        assertThrows(IllegalArgumentException::class.java) { Vcard.parse("BEGIN:VCARD\nVERSION:1.0\nFN:A\nEND:VCARD\n") }
+        assertThrows(IllegalArgumentException::class.java) { Vcard.parse("BEGIN:VCARD\nVERSION:5.0\nFN:A\nEND:VCARD\n") }
         assertThrows(IllegalArgumentException::class.java) { Vcard.parse("BEGIN:VCARD\nVERSION:4.0\nEND:VCARD\n") }
         assertThrows(IllegalArgumentException::class.java) { Vcard.parse("BEGIN:VCARD\nVERSION:4.0\nFN:A\n") }
     }
@@ -129,5 +130,76 @@ class VcardTest {
         for (line in out.split("\r\n")) assertTrue(line.toByteArray(Charsets.UTF_8).size <= 75)
         assertEquals(card.name, Vcard.parse(out).name)
         assertEquals(card.notes, Vcard.parse(out).notes)
+    }
+
+    @Test
+    fun readsTwoOneCardWithBareParametersAndQuotedPrintableAndPhoto() {
+        val v21 = listOf(
+            "BEGIN:VCARD",
+            "VERSION:2.1",
+            "N;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:=C3=89=C3=A9=C3=A8;=C3=A0;;;",
+            "FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:=C3=A0 =C3=89=C3=A9=C3=A8",
+            "ORG;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:Aduki =C2=AE Labs",
+            "TEL;CELL;PREF:+254712345678",
+            "TEL;HOME:+254722000000",
+            "EMAIL;INTERNET;HOME:ao@example.com",
+            "NOTE;ENCODING=QUOTED-PRINTABLE;CHARSET=UTF-8:First line of note ==",
+            "=0D=0ASecond line continues",
+            "PHOTO;ENCODING=BASE64;JPEG:",
+            "    /9j/4AAQSkZJRg==",
+            "END:VCARD"
+        ).joinToString("\r\n")
+
+        val card = Vcard.parse(v21)
+        assertEquals("à Ééè", card.name)
+        assertEquals(listOf("+254712345678", "+254722000000"), card.phones)
+        assertEquals(listOf("ao@example.com"), card.emails)
+        assertEquals("Aduki ® Labs", card.company)
+        assertTrue(card.notes.contains("First line of note ="))
+        assertTrue(card.notes.contains("Second line continues"))
+        assertEquals("data:image/jpeg;base64,/9j/4AAQSkZJRg==", card.photo)
+
+        // Writing produces valid 4.0 or 3.0 vCard
+        val v4out = Vcard.write(card, Vcard.V4)
+        val v4card = Vcard.parse(v4out)
+        assertTrue(v4card.same(card))
+        assertTrue("VERSION:4.0" in v4out)
+        assertTrue("TEL;TYPE=CELL,PREF:+254712345678" in v4out)
+        assertFalse("QUOTED-PRINTABLE" in v4out)
+    }
+
+    @Test
+    fun readsTwoOneCardWithEmptyFamilyName() {
+        val v21 = listOf(
+            "BEGIN:VCARD",
+            "VERSION:2.1",
+            "N:;Fred;;;",
+            "TEL;CELL:+254700000001",
+            "END:VCARD"
+        ).joinToString("\r\n")
+
+        val card = Vcard.parse(v21)
+        assertEquals("Fred", card.name)
+        assertEquals(listOf("+254700000001"), card.phones)
+
+        val v4out = Vcard.write(card, Vcard.V4)
+        val v4card = Vcard.parse(v4out)
+        assertEquals("Fred", v4card.name)
+    }
+
+    @Test
+    fun splitsAndParsesMixedTwoOneAndThreeZeroFile() {
+        val v21 = "BEGIN:VCARD\r\nVERSION:2.1\r\nFN:Card One\r\nTEL;CELL:+100\r\nEND:VCARD\r\n"
+        val v30 = "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Card Two\r\nTEL;TYPE=WORK:+200\r\nEND:VCARD\r\n"
+        val file = "$v21\r\n$v30"
+
+        val cards = Vcard.split(file)
+        assertEquals(2, cards.size)
+        val c1 = Vcard.parse(cards[0])
+        val c2 = Vcard.parse(cards[1])
+        assertEquals("Card One", c1.name)
+        assertEquals(listOf("+100"), c1.phones)
+        assertEquals("Card Two", c2.name)
+        assertEquals(listOf("+200"), c2.phones)
     }
 }
