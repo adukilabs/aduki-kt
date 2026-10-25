@@ -2,6 +2,21 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
+## 0.5.1 (2026-10-26)
+
+Release notes:
+
+- Multi-channel publishing: Automated release pipeline to Maven Central, GitHub Packages, and JitPack (with JDK 17 and Android library packaging via `jitpack.yml`).
+- Scheduling recurrence overrides & splitting (#60, PR #79): `updateOccurrence(hex, start, changes, notify)` writing `RECURRENCE-ID` overrides, `cancelOccurrence(hex, start, notify)` appending `EXDATE`, `updateFollowing(...)` splitting series with `UNTIL`, and overlaying overrides in `expand` and `observe`.
+- Mail header fields (#68, PR #78): Expose `cc`, `bcc`, `replyTo`, and `messageId` on `MessageRow`, `parseRow`, `Message` entity (sealed text), `ccList()`, `bccList()`, `replyToList()`, and sync transport mapping.
+- Android multi-app account sharing (#66, PR #76): `Accounts.share(account, targetPackage)` and cross-application visibility.
+- Android Account Center unlock (#65, PR #77): Verification of device unlock flow with ES256 challenge.
+- Contacts (#67, PR #75, #64, PR #69): vCard 2.1 export compatibility with `N` fallback; exhaustive multi-field contact search over sealed columns.
+- Outbox (#58, PR #74): Keep permanently refused actions as failed entries.
+- Search pull (#59, PR #73): Pull search hits into the local ObjectBox store.
+- Scheduling offers & services (#61, PR #71, #62, PR #70, #63, PR #72): Weekly hours, calendar listing, offers CRUD, and booking service operations.
+- Publishing documentation: Added `PUBLISH.md` guide and consumer setup instructions.
+
 ## 0.5.0 (2026-10-25)
 
 Release notes:
