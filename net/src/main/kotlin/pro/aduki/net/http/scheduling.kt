@@ -11,6 +11,7 @@ import org.json.JSONObject
 import pro.aduki.core.errors.AdukiException
 import pro.aduki.core.models.Address
 import pro.aduki.core.models.AppointmentRecord
+import pro.aduki.core.models.Availability
 import pro.aduki.core.models.BookRequest
 import pro.aduki.core.models.BookingRecord
 import pro.aduki.core.models.OfferRecord
@@ -183,6 +184,27 @@ class Scheduling(
             .put(rules(windows).toString().toRequestBody(mediaJson))
             .build()
         execute(request) { }
+    }
+
+    /** Reads the schedule and its weekly rules (`GET /user/schedules/{hex}`). */
+    fun schedule(hex: String): Availability {
+        val request = Request.Builder()
+            .url(url("user/schedules").newBuilder().addPathSegment(hex).build())
+            .get()
+            .build()
+        return execute(request) { body ->
+            val obj = JSONObject(body)
+            val zone = obj.optString("zone", "UTC")
+            val rules = obj.optJSONArray("rules") ?: JSONArray()
+            val windows = (0 until rules.length()).mapNotNull { i ->
+                val r = rules.optJSONObject(i) ?: return@mapNotNull null
+                val days = strings(r.optJSONArray("days"))
+                val begins = r.optString("begins")
+                val finishes = r.optString("finishes")
+                Window(days, begins, finishes)
+            }
+            Availability(zone, windows)
+        }
     }
 
     // ── Slots and bookings ───────────────────────────────────────────

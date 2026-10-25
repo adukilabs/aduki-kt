@@ -276,6 +276,19 @@ data class Window(
 }
 
 /**
+ * Availability describes the weekly open hours of a schedule or service in [zone].
+ */
+data class Availability(
+    val zone: String = "UTC",
+    val windows: List<Window> = emptyList()
+) {
+    fun validate() {
+        zone(zone)
+        windows.forEach(Window::validate)
+    }
+}
+
+/**
  * ServiceRequest creates or edits a service (a booking page). On edit a
  * null field keeps its value. [windows] replace the weekly availability,
  * read in [zone].

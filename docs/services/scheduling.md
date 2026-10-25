@@ -43,6 +43,7 @@ class Scheduling internal constructor(...) {
     suspend fun createService(request: ServiceRequest): ServiceRecord
     suspend fun updateService(hex: String, request: ServiceRequest): ServiceRecord
     suspend fun removeService(hex: String)
+    suspend fun availability(service: String): Availability
     suspend fun offers(service: String = ""): List<OfferRecord>
     fun bookingUrl(service: ServiceRecord, base: String = client.options.endpoint): String
 
@@ -167,6 +168,9 @@ val url = client.scheduling.bookingUrl(consult)
 With `windows` a service gets its own schedule, named after its slug; without,
 it uses the account's main schedule. A service that has bookings cannot be
 deleted: pause it.
+
+`client.scheduling.availability(consult.hex)` (or with slug `"consult"`) reads
+the weekly hours and IANA zone of the service as an `Availability(zone, windows)`.
 
 ### Slots and bookings
 
