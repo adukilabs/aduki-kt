@@ -2,11 +2,15 @@ package pro.aduki.sdk
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import pro.aduki.core.models.BookRequest
 import pro.aduki.core.models.BookingRecord
 import pro.aduki.core.models.Availability
+import pro.aduki.core.models.CalendarRecord
+import pro.aduki.core.models.AppointmentRecord
 import pro.aduki.core.models.EventChanges
 import pro.aduki.core.models.EventRequest
 import pro.aduki.core.models.OfferRecord
@@ -49,6 +53,78 @@ class Scheduling internal constructor(
         runCatching { worker?.drain() }
     }
 
+    private val _calendars = MutableStateFlow<List<CalendarRecord>>(emptyList())
+
+    /** The account's calendars, kept up to date by [calendars] and [sync]. */
+    val calendars: StateFlow<List<CalendarRecord>> = _calendars.asStateFlow()
+
+    /** Observes the account's calendars. */
+    fun observeCalendars(): StateFlow<List<CalendarRecord>> = calendars
+
+    /** Fetches the account's calendars from the server and updates [calendars]. */
+    suspend fun calendars(): List<CalendarRecord> = withContext(Dispatchers.IO) {
+        val list = api().calendars()
+        _calendars.value = list
+        list
+    }
+
+    /** Resolves a calendar by its [hex], or the default calendar when blank/null. */
+    fun calendar(hex: String? = null): CalendarRecord? {
+        val target = hex?.trim().orEmpty()
+        return if (target.isEmpty()) {
+            _calendars.value.find { it.default } ?: _calendars.value.firstOrNull()
+        } else {
+            _calendars.value.find { it.hex == target }
+        }
+    }
+
+    /** Resolves the calendar of [appointment]. */
+    fun calendar(appointment: Appointment): CalendarRecord? = calendar(appointment.calendar)
+
+    /** Resolves the calendar of [appointment]. */
+    fun calendar(appointment: AppointmentRecord): CalendarRecord? = calendar(appointment.calendar)
+
+    /** Creates a new calendar collection on the server. */
+    suspend fun createCalendar(
+        name: String,
+        color: String? = null,
+        timezone: String? = null,
+        description: String? = null
+    ): CalendarRecord = withContext(Dispatchers.IO) {
+        require(name.isNotBlank()) { "calendar name is required" }
+        val created = api().createCalendar(name, color, timezone, description)
+        _calendars.value = _calendars.value + created
+        created
+    }
+
+    /** Renames a calendar. */
+    suspend fun renameCalendar(hex: String, name: String): CalendarRecord = withContext(Dispatchers.IO) {
+        require(name.isNotBlank()) { "calendar name is required" }
+        val updated = api().renameCalendar(hex, name)
+        _calendars.value = _calendars.value.map { if (it.hex == hex) updated else it }
+        updated
+    }
+
+    /** Updates calendar properties. */
+    suspend fun updateCalendar(
+        hex: String,
+        name: String? = null,
+        color: String? = null,
+        timezone: String? = null,
+        description: String? = null,
+        busy: Boolean? = null
+    ): CalendarRecord = withContext(Dispatchers.IO) {
+        val updated = api().updateCalendar(hex, name, color, timezone, description, busy)
+        _calendars.value = _calendars.value.map { if (it.hex == hex) updated else it }
+        updated
+    }
+
+    /** Deletes a calendar and its events from the server. */
+    suspend fun removeCalendar(hex: String) = withContext(Dispatchers.IO) {
+        api().removeCalendar(hex)
+        _calendars.value = _calendars.value.filterNot { it.hex == hex }
+    }
+
     /** Every locally stored event, by start. */
     val appointments: StateFlow<List<Appointment>>?
         get() = repo?.all
@@ -72,6 +148,9 @@ class Scheduling internal constructor(
     /** Loads every event from the server into the store; returns how many changed. */
     suspend fun sync(): Int = withContext(Dispatchers.IO) {
         flush()
+        runCatching {
+            net?.calendars()?.let { _calendars.value = it }
+        }
         engine?.sync() ?: (net?.events()?.size ?: 0)
     }
 

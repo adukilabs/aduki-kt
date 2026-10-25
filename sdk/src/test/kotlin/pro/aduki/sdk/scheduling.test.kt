@@ -72,5 +72,22 @@ class SchedulingTest {
         assertEquals(1, upcoming!!.size)
         assertEquals("apt_1", upcoming[0].hex)
     }
+
+    @Test
+    fun testCalendarResolution() {
+        val client = Aduki.builder()
+            .key("hm_test_key")
+            .build()
+
+        assertNotNull(client.scheduling.calendars)
+        assertEquals(emptyList<pro.aduki.core.models.CalendarRecord>(), client.scheduling.calendars.value)
+        assertNull(client.scheduling.calendar("unknown"))
+
+        val apt = AppointmentEntity(
+            hex = "apt_1",
+            calendar = "cal_personal"
+        )
+        assertNull(client.scheduling.calendar(apt))
+    }
 }
 

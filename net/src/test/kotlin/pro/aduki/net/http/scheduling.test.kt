@@ -409,4 +409,49 @@ class SchedulingTest {
         val req = server.takeRequest()
         assertEquals("GET /v1/user/schedules/s1", "${req.method} ${req.path}")
     }
+
+    @Test
+    fun calendarsCrudOperations() {
+        // 1. List calendars (paged)
+        reply("""{"items":[{"hex":"c1","kind":"default","href":"/cal/c1","name":"Personal","description":"Main","color":"#3b82f6","timezone":"UTC","components":["VEVENT"],"transp":"opaque","created":"2026-10-24T00:00:00Z","updated":"2026-10-24T00:00:00Z"}],"total":1,"page":1,"pages":1}""")
+        val list = api.calendars()
+        assertEquals(1, list.size)
+        val cal = list[0]
+        assertEquals("c1", cal.hex)
+        assertEquals("Personal", cal.name)
+        assertEquals("Main", cal.description)
+        assertEquals("#3b82f6", cal.color)
+        assertEquals("#3b82f6", cal.colour)
+        assertTrue(cal.default)
+        assertTrue(cal.writable)
+        assertEquals("/v1/user/calendars?page=1&limit=200", server.takeRequest().path)
+
+        // 2. Create calendar
+        reply("""{"hex":"c2","kind":"shared","href":"/cal/c2","name":"Work","description":"Work stuff","color":"#10b981","timezone":"America/New_York","components":["VEVENT"],"transp":"opaque","created":"2026-10-24T00:00:00Z","updated":"2026-10-24T00:00:00Z"}""", 201)
+        val created = api.createCalendar("Work", color = "#10b981", timezone = "America/New_York", description = "Work stuff")
+        assertEquals("c2", created.hex)
+        assertEquals("Work", created.name)
+        assertFalse(created.default)
+        val createReq = server.takeRequest()
+        assertEquals("POST /v1/user/calendars", "${createReq.method} ${createReq.path}")
+        val createBody = JSONObject(createReq.body.readUtf8())
+        assertEquals("Work", createBody.getString("name"))
+        assertEquals("#10b981", createBody.getString("color"))
+        assertEquals("America/New_York", createBody.getString("timezone"))
+        assertEquals("Work stuff", createBody.getString("description"))
+
+        // 3. Rename calendar
+        reply("""{"hex":"c2","kind":"shared","href":"/cal/c2","name":"Office","description":"Work stuff","color":"#10b981","timezone":"America/New_York","components":["VEVENT"],"transp":"opaque","created":"2026-10-24T00:00:00Z","updated":"2026-10-24T00:00:00Z"}""")
+        val renamed = api.renameCalendar("c2", "Office")
+        assertEquals("Office", renamed.name)
+        val patchReq = server.takeRequest()
+        assertEquals("PATCH /v1/user/calendars/c2", "${patchReq.method} ${patchReq.path}")
+        assertEquals("""{"name":"Office"}""", patchReq.body.readUtf8())
+
+        // 4. Remove calendar
+        server.enqueue(MockResponse().setResponseCode(204))
+        api.removeCalendar("c2")
+        val deleteReq = server.takeRequest()
+        assertEquals("DELETE /v1/user/calendars/c2", "${deleteReq.method} ${deleteReq.path}")
+    }
 }
