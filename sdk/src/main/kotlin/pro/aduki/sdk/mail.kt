@@ -267,12 +267,114 @@ class Mail internal constructor(
 
     /**
      * Searches on the server (`GET /user/mail/search/{q}`), including
-     * mailboxes and messages not synced locally. The results are not stored.
+     * mailboxes and messages not synced locally. With [store] = true,
+     * matching messages (and their mailboxes if unknown) are loaded into
+     * the local store so they can be flagged, moved, or opened in thread view.
      */
-    suspend fun find(query: String, mailbox: String? = null, page: Int = 1, limit: Int = 50): List<Message> =
-        withContext(Dispatchers.IO) {
-            client.mailApi.search(query, mailbox, page, limit).items.map { HttpMailboxTransport.message(it) }
+    suspend fun find(
+        query: String,
+        mailbox: String? = null,
+        page: Int = 1,
+        limit: Int = 50,
+        store: Boolean = false
+    ): List<Message> = withContext(Dispatchers.IO) {
+        val items = client.mailApi.search(query, mailbox, page, limit).items.map { HttpMailboxTransport.message(it) }
+        if (store) {
+            items.forEach { persist(it) }
         }
+        items
+    }
+
+    /**
+     * Loads message [hex] (and its mailbox row if unknown) into the store.
+     * If already stored, returns the local message. The fetched message syncs
+     * like any other afterwards.
+     */
+    suspend fun fetch(hex: String): Message = withContext(Dispatchers.IO) {
+        val target = hex.trim()
+        require(target.isNotEmpty()) { "message hex is required" }
+        val existing = repo?.get(target) ?: manager?.message(target)
+        if (existing != null) return@withContext existing
+
+        // Try JMAP Email/get first
+        val fromJmap = runCatching {
+            val args = JSONObject()
+                .put("ids", JSONArray().put(target))
+                .put("properties", JSONArray(listOf("id", "threadId", "mailboxIds", "keywords", "size", "receivedAt", "from", "to", "subject", "preview", "hasAttachment")))
+            val reply = client.jmap.call("Email/get", args)
+            val obj = reply.optJSONArray("list")?.optJSONObject(0) ?: return@runCatching null
+            val mboxes = obj.optJSONObject("mailboxIds")
+            val mailboxHex = mboxes?.keys()?.asSequence()?.firstOrNull() ?: ""
+            val fromObj = obj.optJSONArray("from")?.optJSONObject(0)
+            val toArr = obj.optJSONArray("to") ?: JSONArray()
+            val toStr = (0 until toArr.length()).mapNotNull { toArr.optJSONObject(it)?.optString("email") }.joinToString(", ")
+            val kwObj = obj.optJSONObject("keywords") ?: JSONObject()
+            val kwList = mutableListOf<String>()
+            var flags = 0
+            kwObj.keys().forEach { k ->
+                when (k.lowercase()) {
+                    "\$seen" -> flags = flags or Message.SEEN
+                    "\$flagged" -> flags = flags or Message.FLAGGED
+                    "\$answered" -> flags = flags or Message.ANSWERED
+                    "\$draft" -> flags = flags or Message.DRAFT
+                    "\$deleted" -> flags = flags or Message.DELETED
+                    else -> kwList.add(k)
+                }
+            }
+            val received = runCatching {
+                obj.optString("receivedAt").takeIf { it.isNotBlank() }?.let { Instant.parse(it).toEpochMilli() }
+            }.getOrNull() ?: System.currentTimeMillis()
+            Message(
+                hex = target,
+                mailbox = mailboxHex,
+                threadId = obj.optString("threadId", target),
+                subject = obj.optString("subject", ""),
+                fromName = fromObj?.optString("name", "") ?: "",
+                fromEmail = fromObj?.optString("email", "") ?: "",
+                to = toStr,
+                preview = obj.optString("preview", ""),
+                size = obj.optLong("size", 0L),
+                flags = flags,
+                keywords = kwList.joinToString(" "),
+                hasAttachment = obj.optBoolean("hasAttachment", false),
+                receivedAt = received,
+                created = System.currentTimeMillis()
+            )
+        }.getOrNull()
+
+        val msg = fromJmap ?: runCatching {
+            client.mailApi.search(target, limit = 1).items.firstOrNull { it.hex == target }?.let {
+                HttpMailboxTransport.message(it)
+            }
+        }.getOrNull() ?: throw pro.aduki.core.errors.AdukiException.Api(404, "entity.missing", "Message $target not found")
+
+        persist(msg)
+        msg
+    }
+
+    private fun persist(message: Message) {
+        val mgr = manager ?: return
+        if (message.mailbox.isNotBlank() && mgr.mailbox(message.mailbox) == null) {
+            val known = repo?.getMailbox(message.mailbox)
+            if (known != null) {
+                mgr.put(known)
+            } else {
+                val box = runCatching {
+                    client.mailApi.mailboxes().items.firstOrNull { it.hex == message.mailbox }
+                }.getOrNull()
+                if (box != null) {
+                    mgr.put(HttpMailboxTransport.mailbox(box))
+                } else {
+                    mgr.put(Mailbox(hex = message.mailbox, name = message.mailbox))
+                }
+            }
+        }
+        val existing = mgr.message(message.hex) ?: repo?.get(message.hex)
+        if (existing != null) {
+            message.id = existing.id
+        }
+        mgr.put(message)
+    }
 
     /**
      * The messages of a conversation across mailboxes, oldest first.

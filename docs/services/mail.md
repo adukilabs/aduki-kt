@@ -37,7 +37,8 @@ class Mail internal constructor(...) {
 
     // Search and conversations (#25, #29)
     fun search(query: String, mailbox: String? = null): StateFlow<List<Message>>?
-    suspend fun find(query: String, mailbox: String? = null, page: Int = 1, limit: Int = 50): List<Message>
+    suspend fun find(query: String, mailbox: String? = null, page: Int = 1, limit: Int = 50, store: Boolean = false): List<Message>
+    suspend fun fetch(hex: String): Message
     fun thread(threadId: String): StateFlow<List<Message>>?
     fun conversations(mailboxHex: String): StateFlow<List<Conversation>>?
 
@@ -295,7 +296,8 @@ client.mail.send(draft)
 ## 7. Search and conversations
 
 - `search(query, mailbox?)` matches synced messages offline. Every word must appear in the subject, sender, recipients or preview. The columns are sealed, so matching runs in memory.
-- `find(query, mailbox?)` asks the server (`GET /v1/user/mail/search/{q}`), which also covers messages not synced. Its results are not stored.
+- `find(query, mailbox?, store = false)` asks the server (`GET /v1/user/mail/search/{q}`), which also covers messages not synced. Passing `store = true` persists hits (and their mailboxes if unknown) into the store.
+- `fetch(hex)` loads a message (and its mailbox row if unknown) into the local store so it can be flagged, moved, snoozed, or opened in thread view.
 - `thread(threadId)` gives one conversation across mailboxes, oldest first.
 - `conversations(mailbox)` gives one `Conversation(latest, count, unread)` per thread, newest first.
 

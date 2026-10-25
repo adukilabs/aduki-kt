@@ -222,6 +222,12 @@ class Mail(
     /** The mailboxes now (not a flow), e.g. to find one by role or name. */
     fun listMailboxes(): List<Mailbox> = source.getMailboxes()
 
+    /** The local mailbox with [hex], or null. */
+    fun getMailbox(hex: String): Mailbox? = source.getMailbox(hex)
+
+    /** The local message with [hex], or null. */
+    fun get(hex: String): Message? = source.getMessage(hex)
+
     /** The messages of a mailbox now (not a flow). */
     fun listMessages(mailboxHex: String): List<Message> = source.getMessages(mailboxHex)
 
