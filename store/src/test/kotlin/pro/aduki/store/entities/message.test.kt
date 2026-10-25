@@ -63,4 +63,20 @@ class MessageTest {
         assertEquals("bob@x.test", msg.sender())
         assertEquals("Bob", msg.copy(fromName = "Bob").sender())
     }
+
+    @Test
+    fun ccBccReplyToAndMessageIdRoundTrip() {
+        val msg = Message(
+            to = "alice@example.com",
+            cc = "bob@example.com, charlie@example.com",
+            bcc = "secret@example.com",
+            replyTo = "replies@example.com",
+            messageId = "<id123@example.com>"
+        )
+        assertEquals(listOf("alice@example.com"), msg.recipients())
+        assertEquals(listOf("bob@example.com", "charlie@example.com"), msg.ccList())
+        assertEquals(listOf("secret@example.com"), msg.bccList())
+        assertEquals(listOf("replies@example.com"), msg.replyToList())
+        assertEquals("<id123@example.com>", msg.messageId)
+    }
 }

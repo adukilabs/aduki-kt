@@ -8,6 +8,7 @@ Release notes:
 
 - `pro.aduki:android` is published to Maven Central and GitHub Packages for the first time, with sources and javadoc. The publish workflow now builds with the Android SDK.
 - Single-row ObjectBox lookups close their queries (no more cursors closed from the finalizer thread).
+- Mail: expose `cc`, `bcc`, `replyTo`, and `messageId` on `MessageRow`, `parseRow`, `Message` entity (sealed text), `ccList()`, `bccList()`, `replyToList()`, and sync transport mapping (#68).
 - Server requirements: mail `0.1.0-7af81dac` or later for DPoP-bound sessions, default sender, empty contact groups, contact merge and import, invitation replies, page stats and native FCM push. Against an older server, those calls answer 404 or 405.
 
 Server follow-ups (mail release 0.1.0-7af81dac; #34, #35, #37, #38, #39, #40, #41):

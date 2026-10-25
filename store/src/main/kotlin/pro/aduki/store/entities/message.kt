@@ -22,6 +22,10 @@ data class Message(
     @Convert(converter = SealedText::class, dbType = String::class) var fromName: String = "",
     @Convert(converter = SealedText::class, dbType = String::class) var fromEmail: String = "",
     @Convert(converter = SealedText::class, dbType = String::class) var to: String = "", // Comma-delimited recipients for FlatBuffers efficiency
+    @Convert(converter = SealedText::class, dbType = String::class) var cc: String = "",
+    @Convert(converter = SealedText::class, dbType = String::class) var bcc: String = "",
+    @Convert(converter = SealedText::class, dbType = String::class) var replyTo: String = "",
+    @Convert(converter = SealedText::class, dbType = String::class) var messageId: String = "",
     @Convert(converter = SealedText::class, dbType = String::class) var preview: String = "",
     @Convert(converter = SealedText::class, dbType = String::class) var blob: String = "",
     var size: Long = 0,
@@ -93,6 +97,21 @@ data class Message(
     fun recipients(): List<String> {
         if (to.isBlank()) return emptyList()
         return to.split(",").map { it.trim() }
+    }
+
+    fun ccList(): List<String> {
+        if (cc.isBlank()) return emptyList()
+        return cc.split(",").map { it.trim() }
+    }
+
+    fun bccList(): List<String> {
+        if (bcc.isBlank()) return emptyList()
+        return bcc.split(",").map { it.trim() }
+    }
+
+    fun replyToList(): List<String> {
+        if (replyTo.isBlank()) return emptyList()
+        return replyTo.split(",").map { it.trim() }
     }
 
     /** The sender for display: the name when known, else the address. */

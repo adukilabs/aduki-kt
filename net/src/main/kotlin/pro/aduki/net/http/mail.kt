@@ -248,9 +248,11 @@ class Mail(
                 received = timestamp(text(obj, "internaldate")),
                 preview = text(obj, "preview"),
                 from = obj.optJSONObject("from")?.let(::address),
-                to = obj.optJSONArray("to")?.let { arr ->
-                    (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.let(::address) }
-                } ?: emptyList(),
+                to = addresses(obj.optJSONArray("to")),
+                cc = addresses(obj.optJSONArray("cc")),
+                bcc = addresses(obj.optJSONArray("bcc")),
+                replyTo = addresses(obj.optJSONArray("reply_to") ?: obj.optJSONArray("replyTo")),
+                messageId = text(obj, "message_id").ifEmpty { text(obj, "messageId") },
                 hasAttachment = obj.optBoolean("has_attachment"),
                 mailbox = mailbox?.optString("hex") ?: text(obj, "mailbox"),
                 mailboxName = mailbox?.let { text(it, "name") } ?: "",
@@ -331,6 +333,11 @@ class Mail(
 
         private fun address(obj: JSONObject): Address =
             Address(name = text(obj, "name").ifEmpty { null }, email = obj.optString("email"))
+
+        private fun addresses(arr: JSONArray?): List<Address> {
+            if (arr == null) return emptyList()
+            return (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.let(::address) }
+        }
 
         /** A string field, with JSON null and absence both as "". */
         private fun text(obj: JSONObject, key: String): String =
