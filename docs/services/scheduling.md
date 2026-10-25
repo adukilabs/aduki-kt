@@ -37,6 +37,17 @@ class Scheduling internal constructor(...) {
     suspend fun importIcs(text: String, calendar: String = ""): List<Appointment>
     fun exportIcs(hexes: List<String>? = null): String
 
+    // Calendars
+    val calendars: StateFlow<List<CalendarRecord>>
+    fun observeCalendars(): StateFlow<List<CalendarRecord>>
+    suspend fun calendars(): List<CalendarRecord>
+    fun calendar(hex: String? = null): CalendarRecord?
+    fun calendar(appointment: Appointment): CalendarRecord?
+    suspend fun createCalendar(name: String, color: String? = null, timezone: String? = null, description: String? = null): CalendarRecord
+    suspend fun renameCalendar(hex: String, name: String): CalendarRecord
+    suspend fun updateCalendar(hex: String, name: String? = null, color: String? = null, timezone: String? = null, description: String? = null, busy: Boolean? = null): CalendarRecord
+    suspend fun removeCalendar(hex: String)
+
     // Services (booking pages), online
     suspend fun services(): List<ServiceRecord>
     suspend fun service(hex: String): ServiceRecord
@@ -143,6 +154,19 @@ event's zone); cancelled events are left out. `Occurrence` holds the
 val added = client.scheduling.importIcs(text)   // one event per UID; known UIDs are replaced
 val file = client.scheduling.exportIcs()        // every stored event
 ```
+
+### Calendars
+
+```kotlin
+val calendars = client.scheduling.calendars()
+val personal = client.scheduling.createCalendar("Work", color = "#3b82f6")
+client.scheduling.renameCalendar(personal.hex, "Office")
+client.scheduling.removeCalendar(personal.hex)
+```
+
+The account's calendar collections (`GET /user/calendars`). `EventRequest.calendar`
+accepts a calendar hex to place events in a specific calendar. `client.scheduling.calendar(hex)`
+(or `client.scheduling.calendar(appointment)`) resolves the calendar record with its name and colour.
 
 ---
 

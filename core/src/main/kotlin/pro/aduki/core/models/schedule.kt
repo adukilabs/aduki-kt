@@ -39,8 +39,28 @@ data class AppointmentRecord(
     val etag: String = "",
     val ical: String = "",
     val created: String = "",
-    val updated: String = ""
+    val updated: String = "",
+    val calendar: String = ""
 )
+
+/**
+ * CalendarRecord is one calendar collection (`/user/calendars`).
+ */
+data class CalendarRecord(
+    val hex: String = "",
+    val name: String = "",
+    val description: String? = null,
+    val color: String? = null,
+    val timezone: String = "UTC",
+    val default: Boolean = false,
+    val writable: Boolean = true,
+    val href: String = "",
+    val created: String = "",
+    val updated: String = ""
+) {
+    /** Alias for [color] matching UK spelling. */
+    val colour: String? get() = color
+}
 
 /**
  * Place is where a booking happens: `{kind, value}` on the wire, e.g.

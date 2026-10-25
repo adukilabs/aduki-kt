@@ -14,6 +14,7 @@ import pro.aduki.core.models.AppointmentRecord
 import pro.aduki.core.models.Availability
 import pro.aduki.core.models.BookRequest
 import pro.aduki.core.models.BookingRecord
+import pro.aduki.core.models.CalendarRecord
 import pro.aduki.core.models.OfferRecord
 import pro.aduki.core.models.Place
 import pro.aduki.core.models.ServiceRequest
@@ -120,6 +121,64 @@ class Scheduling(
         if (notify) path.addQueryParameter("notify", "true")
         val request = Request.Builder()
             .url(path.build())
+            .delete()
+            .build()
+        execute(request) { }
+    }
+
+    // ── Calendars ────────────────────────────────────────────────────
+
+    /** The account's calendar collections (`GET /user/calendars`). */
+    fun calendars(): List<CalendarRecord> = paged(url("user/calendars"), ::parseCalendar)
+
+    /**
+     * Creates a new calendar collection (`POST /user/calendars`).
+     */
+    fun createCalendar(
+        name: String,
+        color: String? = null,
+        timezone: String? = null,
+        description: String? = null
+    ): CalendarRecord {
+        val payload = JSONObject().put("name", name.trim())
+        color?.let { payload.put("color", it.trim()) }
+        timezone?.let { payload.put("timezone", it.trim()) }
+        description?.let { payload.put("description", it.trim()) }
+        val request = Request.Builder().url(url("user/calendars")).post(json(payload)).build()
+        return execute(request) { parseCalendar(JSONObject(it)) }
+    }
+
+    /**
+     * Edits a calendar (`PATCH /user/calendars/{hex}`).
+     */
+    fun updateCalendar(
+        hex: String,
+        name: String? = null,
+        color: String? = null,
+        timezone: String? = null,
+        description: String? = null,
+        busy: Boolean? = null
+    ): CalendarRecord {
+        val payload = JSONObject()
+        name?.let { payload.put("name", it.trim()) }
+        color?.let { payload.put("color", it.trim()) }
+        timezone?.let { payload.put("timezone", it.trim()) }
+        description?.let { payload.put("description", it.trim()) }
+        busy?.let { payload.put("busy", it) }
+        val request = Request.Builder()
+            .url(url("user/calendars").newBuilder().addPathSegment(hex).build())
+            .patch(json(payload))
+            .build()
+        return execute(request) { parseCalendar(JSONObject(it)) }
+    }
+
+    /** Renames a calendar (`PATCH /user/calendars/{hex}`). */
+    fun renameCalendar(hex: String, name: String): CalendarRecord = updateCalendar(hex, name = name)
+
+    /** Deletes a calendar and its events (`DELETE /user/calendars/{hex}`). */
+    fun removeCalendar(hex: String) {
+        val request = Request.Builder()
+            .url(url("user/calendars").newBuilder().addPathSegment(hex).build())
             .delete()
             .build()
         execute(request) { }
@@ -424,9 +483,32 @@ class Scheduling(
             etag = text(obj, "etag"),
             ical = ical,
             created = text(obj, "created"),
+            updated = text(obj, "updated"),
+            calendar = text(obj, "calendar")
+        )
+    }
+
+    private fun parseCalendar(obj: JSONObject): CalendarRecord {
+        val hex = text(obj, "hex")
+        if (hex.isBlank()) throw AdukiException.Network("Calendar without a hex in the reply")
+        val kind = text(obj, "kind")
+        val default = kind.equals("default", ignoreCase = true)
+        return CalendarRecord(
+            hex = hex,
+            name = text(obj, "name"),
+            description = optional(obj, "description"),
+            color = optional(obj, "color"),
+            timezone = text(obj, "timezone").ifBlank { "UTC" },
+            default = default,
+            writable = true,
+            href = text(obj, "href"),
+            created = text(obj, "created"),
             updated = text(obj, "updated")
         )
     }
+
+    private fun optional(obj: JSONObject, key: String): String? =
+        if (obj.isNull(key) || !obj.has(key)) null else obj.optString(key).ifBlank { null }
 
     private fun parseService(obj: JSONObject): ServiceRecord {
         val hex = text(obj, "hex")
