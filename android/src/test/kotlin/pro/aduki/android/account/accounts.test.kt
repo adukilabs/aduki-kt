@@ -6,21 +6,25 @@ import androidx.test.core.app.ApplicationProvider
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import pro.aduki.android.softVault
+import pro.aduki.core.errors.AdukiException
 import pro.aduki.core.models.Linked
 import pro.aduki.core.models.Switcher
 import pro.aduki.core.models.Tokens
+import pro.aduki.crypto.dpop.Software
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -216,6 +220,155 @@ class AccountsTest {
         // Tokens sealed with vault1 cannot be decrypted by vault2; companion app
         // reads handle/hex/center to run its own DPoP authentication flow.
         assertNull(accounts2.tokens("a1b2"))
+    }
+
+    @Test fun registerDeviceStoresCredential() {
+        val key = Software.p256()
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(201).setBody("""{"success":true,"data":{"credential":"cred_dev_1","trust_days":60,"alg":"ES256"}}"""))
+            val cred = accounts.registerDevice(OkHttpClient(), server.url("/v1").toString(), "bearer_tok", "Pixel 8", "123456", center = true, key = key)
+            assertEquals("cred_dev_1", cred)
+            assertEquals("cred_dev_1", accounts.credential())
+
+            val req = server.takeRequest()
+            assertEquals("/v1/credentials", req.path)
+            assertEquals("Bearer bearer_tok", req.getHeader("Authorization"))
+            val body = JSONObject(req.body.readUtf8())
+            assertEquals("Pixel 8", body.getString("device"))
+            assertEquals("ES256", body.getString("alg"))
+            assertEquals("123456", body.getString("code"))
+            assertTrue(body.getBoolean("center"))
+            val pub = java.util.Base64.getUrlDecoder().decode(body.getString("public"))
+            assertEquals(65, pub.size)
+            assertEquals(0x04.toByte(), pub[0])
+        }
+    }
+
+    @Test fun unlockWithDeviceSignsChallengeAndSavesTokens() {
+        val key = Software.p256()
+        accounts.reconcile(center(ada, work))
+
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(201).setBody("""{"success":true,"data":{"credential":"cred_dev_1","trust_days":60,"alg":"ES256"}}"""))
+            accounts.registerDevice(OkHttpClient(), server.url("/v1").toString(), "bearer_tok", "Pixel 8", "123456", center = true, key = key)
+
+            val nonce = ByteArray(32) { (it + 7).toByte() }
+            val b64Nonce = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(nonce)
+            server.enqueue(MockResponse().setResponseCode(201).setBody("""{"success":true,"data":{"nonce":"$b64Nonce","expires":"2026-10-11T12:02:00Z"}}"""))
+            server.enqueue(MockResponse().setBody("""{"success":true,"data":[
+                {"account":"a1b2","session":"s1","access":"adka_a1","refresh":"adkr_a1","expires":600},
+                {"account":"c3d4","session":"s2","access":"adka_c3","refresh":"adkr_c3","expires":600}
+            ]}"""))
+
+            val unlocked = accounts.unlockWithDevice(OkHttpClient(), server.url("/v1").toString(), audience = "space", key = key)
+            assertEquals(listOf("a1b2", "c3d4"), unlocked)
+            assertEquals("adka_a1", accounts.tokens("a1b2")?.token)
+            assertEquals("adka_c3", accounts.tokens("c3d4")?.token)
+
+            // take registration request
+            server.takeRequest()
+
+            val challengeReq = server.takeRequest()
+            assertEquals("/v1/credentials/cred_dev_1/challenges", challengeReq.path)
+            assertNull(challengeReq.getHeader("Authorization"))
+
+            val unlockReq = server.takeRequest()
+            assertEquals("/v1/credentials/cred_dev_1/unlock", unlockReq.path)
+            val unlockBody = JSONObject(unlockReq.body.readUtf8())
+            assertEquals("space", unlockBody.getString("audience"))
+            assertEquals(b64Nonce, unlockBody.getString("nonce"))
+            val sig = java.util.Base64.getUrlDecoder().decode(unlockBody.getString("signature"))
+            assertEquals(64, sig.size)
+        }
+    }
+
+    @Test fun unlockWithDeviceWithoutCredentialThrowsIllegalStateException() {
+        val key = Software.p256()
+        try {
+            accounts.unlockWithDevice(OkHttpClient(), "http://localhost", key = key)
+            fail("Expected IllegalStateException")
+        } catch (e: IllegalStateException) {
+            assertEquals("No device credential registered", e.message)
+        }
+    }
+
+    @Test fun unlockWithDevice404ClearsCredentialAndThrowsNetworkException() {
+        val key = Software.p256()
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(201).setBody("""{"success":true,"data":{"credential":"cred_dev_1","trust_days":60,"alg":"ES256"}}"""))
+            accounts.registerDevice(OkHttpClient(), server.url("/v1").toString(), "bearer_tok", "Pixel 8", "123456", center = true, key = key)
+            assertEquals("cred_dev_1", accounts.credential())
+
+            server.enqueue(MockResponse().setResponseCode(404).setBody("""{"success":false,"error":{"status":404,"kind":"entity.missing","message":"credential revoked or lapsed"}}"""))
+            try {
+                accounts.unlockWithDevice(OkHttpClient(), server.url("/v1").toString(), key = key)
+                fail("Expected 404 AdukiException.Network")
+            } catch (e: AdukiException.Network) {
+                assertEquals(404, e.code)
+            }
+            assertNull(accounts.credential())
+        }
+    }
+
+    @Test fun unlockWithDevice401DoesNotClearCredential() {
+        val key = Software.p256()
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(201).setBody("""{"success":true,"data":{"credential":"cred_dev_1","trust_days":60,"alg":"ES256"}}"""))
+            accounts.registerDevice(OkHttpClient(), server.url("/v1").toString(), "bearer_tok", "Pixel 8", "123456", center = true, key = key)
+            assertEquals("cred_dev_1", accounts.credential())
+
+            val nonce = ByteArray(32) { (it + 1).toByte() }
+            val b64Nonce = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(nonce)
+            server.enqueue(MockResponse().setResponseCode(201).setBody("""{"success":true,"data":{"nonce":"$b64Nonce"}}"""))
+            server.enqueue(MockResponse().setResponseCode(401).setBody("""{"success":false,"error":{"status":401,"kind":"auth.invalid","message":"bad signature"}}"""))
+
+            try {
+                accounts.unlockWithDevice(OkHttpClient(), server.url("/v1").toString(), key = key)
+                fail("Expected 401 AdukiException.Unauthorized")
+            } catch (_: AdukiException.Unauthorized) {
+            }
+            assertEquals("cred_dev_1", accounts.credential())
+        }
+    }
+
+    @Test fun revokeDeviceDeletesCredentialAndClearsLocal() {
+        val key = Software.p256()
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(201).setBody("""{"success":true,"data":{"credential":"cred_dev_1","trust_days":60,"alg":"ES256"}}"""))
+            accounts.registerDevice(OkHttpClient(), server.url("/v1").toString(), "bearer_tok", "Pixel 8", "123456", center = true, key = key)
+            assertEquals("cred_dev_1", accounts.credential())
+
+            server.enqueue(MockResponse().setResponseCode(204))
+            val ok = accounts.revokeDevice(OkHttpClient(), server.url("/v1").toString(), "bearer_tok")
+            assertTrue(ok)
+            assertNull(accounts.credential())
+
+            // registration request
+            server.takeRequest()
+            val revokeReq = server.takeRequest()
+            assertEquals("DELETE", revokeReq.method)
+            assertEquals("/v1/credentials/cred_dev_1", revokeReq.path)
+            assertEquals("Bearer bearer_tok", revokeReq.getHeader("Authorization"))
+        }
+    }
+
+    @Test fun revokeDeviceWhenAlready404ReturnsFalseAndClearsLocal() {
+        val key = Software.p256()
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(201).setBody("""{"success":true,"data":{"credential":"cred_dev_1","trust_days":60,"alg":"ES256"}}"""))
+            accounts.registerDevice(OkHttpClient(), server.url("/v1").toString(), "bearer_tok", "Pixel 8", "123456", center = true, key = key)
+
+            server.enqueue(MockResponse().setResponseCode(404).setBody("""{"success":false,"error":{"status":404,"kind":"entity.missing","message":"none"}}"""))
+            val ok = accounts.revokeDevice(OkHttpClient(), server.url("/v1").toString(), "bearer_tok")
+            assertFalse(ok)
+            assertNull(accounts.credential())
+        }
+    }
+
+    @Test fun revokeDeviceWhenNoCredentialReturnsFalse() {
+        assertNull(accounts.credential())
+        val ok = accounts.revokeDevice(OkHttpClient(), "http://localhost", "bearer_tok")
+        assertFalse(ok)
     }
 
     private fun centerBody(vararg list: Linked): String {
