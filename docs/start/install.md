@@ -44,7 +44,7 @@ dependencyResolutionManagement {
         // maven {
         //     url = uri("https://jitpack.io")
         //     credentials {
-        //         username = providers.gradleProperty("jitpack.token").orNull ?: System.getenv("JITPACK_ACCESS_TOKEN")
+        //         username = providers.gradleProperty("authToken").orNull ?: providers.gradleProperty("jitpack.token").orNull ?: System.getenv("JITPACK_ACCESS_TOKEN")
         //     }
         // }
     }

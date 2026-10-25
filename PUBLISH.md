@@ -223,8 +223,10 @@ dependencyResolutionManagement {
         maven {
             url = uri("https://jitpack.io")
             credentials {
-                // If repository is private, provide JitPack token as username
-                username = providers.gradleProperty("jitpack.token").orNull ?: System.getenv("JITPACK_ACCESS_TOKEN")
+                // JitPack expects authToken as username (e.g. from ~/.gradle/gradle.properties)
+                username = providers.gradleProperty("authToken").orNull
+                    ?: providers.gradleProperty("jitpack.token").orNull
+                    ?: System.getenv("JITPACK_ACCESS_TOKEN")
             }
         }
     }
@@ -247,7 +249,7 @@ dependencyResolutionManagement {
         mavenCentral()
         maven {
             url 'https://jitpack.io'
-            credentials { username = System.getenv("JITPACK_ACCESS_TOKEN") }
+            credentials { username = project.findProperty("authToken") ?: System.getenv("JITPACK_ACCESS_TOKEN") }
         }
     }
 }
