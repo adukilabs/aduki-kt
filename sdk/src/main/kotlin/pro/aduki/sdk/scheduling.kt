@@ -14,6 +14,7 @@ import pro.aduki.core.models.AppointmentRecord
 import pro.aduki.core.models.EventChanges
 import pro.aduki.core.models.EventRequest
 import pro.aduki.core.models.OfferRecord
+import pro.aduki.core.models.OfferRequest
 import pro.aduki.core.models.Response
 import pro.aduki.core.models.ServiceRecord
 import pro.aduki.core.models.ServiceRequest
@@ -313,6 +314,31 @@ class Scheduling internal constructor(
 
     /** The offers (priced or free sub-services) of the account's services, of one when [service] is set. */
     suspend fun offers(service: String = ""): List<OfferRecord> = withContext(Dispatchers.IO) { api().offers(service) }
+
+    /** Creates a priced sub-service (offer) for [service] (service hex or slug). */
+    suspend fun createOffer(service: String, request: OfferRequest): OfferRecord = withContext(Dispatchers.IO) {
+        request.validate()
+        require(!request.name.isNullOrBlank()) { "offer name is required" }
+        val target = service.trim()
+        require(target.isNotEmpty()) { "service is required" }
+        val page = runCatching { api().service(target).hex }.getOrDefault(target)
+        api().createOffer(page, request)
+    }
+
+    /** Edits an offer; a null field keeps its value. */
+    suspend fun updateOffer(hex: String, request: OfferRequest): OfferRecord = withContext(Dispatchers.IO) {
+        request.validate()
+        val target = hex.trim()
+        require(target.isNotEmpty()) { "offer hex is required" }
+        api().updateOffer(target, request)
+    }
+
+    /** Deletes an offer; 409 Conflict once it has bookings. */
+    suspend fun removeOffer(hex: String) = withContext(Dispatchers.IO) {
+        val target = hex.trim()
+        require(target.isNotEmpty()) { "offer hex is required" }
+        api().removeOffer(target)
+    }
 
     /** The bookings of the account's services. */
     suspend fun bookings(upcoming: Boolean = false): List<BookingRecord> =

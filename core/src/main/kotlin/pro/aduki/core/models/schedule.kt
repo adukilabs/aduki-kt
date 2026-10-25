@@ -137,6 +137,53 @@ data class OfferRecord(
 )
 
 /**
+ * OfferRequest creates or edits a priced sub-service (an offer).
+ * On edit a null field keeps its value. [price] is in minor units of
+ * [currency] (e.g. 250000 for 2,500.00 KES, or 500 for $5.00).
+ */
+data class OfferRequest(
+    val name: String? = null,
+    val slug: String? = null,
+    val description: String? = null,
+    val length: Int? = null,
+    val before: Int? = null,
+    val after: Int? = null,
+    val capacity: Int? = null,
+    val price: Long? = null,
+    val currency: String? = null,
+    val paused: Boolean? = null
+) {
+    fun validate() {
+        slug?.let { s ->
+            require(Regex("^[a-z0-9-]{1,64}$").matches(s)) { "slug: lowercase letters, digits and dashes, up to 64: $s" }
+        }
+        length?.let { l ->
+            require(l > 0) { "length must be positive: $l" }
+        }
+        before?.let { b ->
+            require(b >= 0) { "before buffer cannot be negative: $b" }
+        }
+        after?.let { a ->
+            require(a >= 0) { "after buffer cannot be negative: $a" }
+        }
+        capacity?.let { c ->
+            require(c > 0) { "capacity must be positive: $c" }
+        }
+        currency?.let { c ->
+            require(Regex("^[A-Za-z]{3}$").matches(c)) { "currency: 3-letter ISO 4217 currency code: $c" }
+        }
+        price?.let { p ->
+            require(p >= 0) { "price cannot be negative: $p" }
+            if (p > 0) {
+                require(!currency.isNullOrBlank() && Regex("^[A-Za-z]{3}$").matches(currency)) {
+                    "currency: 3-letter ISO 4217 currency code required for priced offers: $currency"
+                }
+            }
+        }
+    }
+}
+
+/**
  * BookingRecord is one booking made on a page (`/user/bookings`).
  */
 data class BookingRecord(
