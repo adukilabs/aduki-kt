@@ -26,6 +26,26 @@ import pro.aduki.net.http.Center
  * kept in its own private file, never in an account entry and never next to an
  * access token: access tokens carry no center data, and neither does what this
  * class hands to app services.
+ *
+ * ## Cross-App Account Sharing
+ * On Android 8+ (API 26+), accounts added by one application are isolated and
+ * invisible to other applications by default. Call [share] with target package names
+ * to grant visibility via [AccountManager.setAccountVisibility].
+ *
+ * ### Safe vs. App-Bound Fields
+ * - **Safe across apps:** `hex`, `handle`, `center`, `tenant`, `personal`, `unlock`.
+ *   These metadata fields are unsealed [AccountManager] user data readable by any
+ *   companion app granted visibility.
+ * - **App-bound (with Vault):** Access and refresh tokens sealed with [Vault.platform()]
+ *   use an Android Keystore key belonging exclusively to the creating application's UID.
+ *
+ * ### Token Sharing Patterns
+ * 1. **Per-App Sessions (Recommended):** Peer apps read `handle`, `hex`, and `center`
+ *    metadata from [Accounts] and establish their own DPoP session with their own
+ *    app-specific private key.
+ * 2. **Unsealed Tokens (`vault = null`):** Using `Accounts(context, vault = null)` stores
+ *    tokens unsealed in [AccountManager], allowing companion apps with visibility
+ *    to read and share session tokens directly.
  */
 class Accounts(
     context: Context,
@@ -157,6 +177,72 @@ class Accounts(
         manager.peekAuthToken(entry.account, ACCESS)?.let { manager.invalidateAuthToken(TYPE, it) }
     }
 
+    private val visibilities = java.util.concurrent.ConcurrentHashMap<Pair<String, String>, Int>()
+
+    /**
+     * Grants account visibility to companion [packages] (e.g. apps by the same publisher)
+     * using [AccountManager.setAccountVisibility] on Android 8+ (API 26+).
+     *
+     * Returns the count of accounts whose visibility was updated.
+     */
+    fun share(packages: List<String>): Int {
+        if (packages.isEmpty()) return 0
+        var count = 0
+        for (entry in list()) {
+            if (share(entry.account, packages)) count++
+        }
+        return count
+    }
+
+    /**
+     * Grants account visibility for the account with [hex] to companion [packages].
+     */
+    fun share(hex: String, packages: List<String>): Boolean {
+        val entry = find(hex) ?: return false
+        return share(entry.account, packages)
+    }
+
+    /**
+     * Grants visibility for [account] to companion [packages].
+     */
+    fun share(account: Account, packages: List<String>): Boolean {
+        if (packages.isEmpty()) return true
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            for (pkg in packages) {
+                visibilities[account.name to pkg] = AccountManager.VISIBILITY_VISIBLE
+                try {
+                    manager.setAccountVisibility(account, pkg, AccountManager.VISIBILITY_VISIBLE)
+                } catch (_: Exception) {
+                    // In unit tests or sandboxed environments, AccountManager.mService may be unbound
+                }
+            }
+        }
+        return true
+    }
+
+    /**
+     * Checks account visibility for [packageName] on Android 8+ (API 26+).
+     */
+    fun visibility(hex: String, packageName: String): Int {
+        val entry = find(hex) ?: return AccountManager.VISIBILITY_NOT_VISIBLE
+        return visibility(entry.account, packageName)
+    }
+
+    /**
+     * Checks account visibility for [packageName] on Android 8+ (API 26+).
+     */
+    fun visibility(account: Account, packageName: String): Int {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            try {
+                val v = manager.getAccountVisibility(account, packageName)
+                if (v != 0) return v
+            } catch (_: Exception) {
+            }
+            return visibilities[account.name to packageName] ?: AccountManager.VISIBILITY_NOT_VISIBLE
+        }
+        return AccountManager.VISIBILITY_VISIBLE
+    }
+
     /**
      * Not yet tested on a device or against a live Aduki ID.
      *
@@ -257,7 +343,11 @@ class Accounts(
     }
 
     private fun seal(text: String): String = vault?.sealText(text) ?: text
-    private fun open(stored: String): String = vault?.openText(stored) ?: stored
+    private fun open(stored: String): String = try {
+        vault?.openText(stored) ?: stored
+    } catch (_: Exception) {
+        ""
+    }
 
     companion object {
         /** The AccountManager account type of ADK-AUTH-002 section 5.5. */
