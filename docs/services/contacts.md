@@ -25,6 +25,7 @@ class Contacts internal constructor(...) {
     fun observe(): StateFlow<List<Contact>>?
     fun observe(group: String): StateFlow<List<Contact>>?
     fun search(query: String): StateFlow<List<Contact>>?
+    fun hit(contact: Contact, query: String): SearchHit?
     fun get(hex: String): Contact?
     fun card(hex: String): Card?
 
@@ -93,7 +94,10 @@ e-mail address and phone is kept. The list is walked with the `after` cursor
 ### `observe`, `search`, `get`, `card`
 - `observe()`: every contact, sorted by name, as a hot `StateFlow`.
 - `observe(group)`: the members of one group.
-- `search(query)`: case-insensitive substring match on name, e-mail and phone.
+- `search(query)`: case-insensitive substring match across name, company,
+  every e-mail address and phone, notes and group names.
+- `hit(contact, query)`: returns `SearchHit(contact, field, range)` naming the
+  matched property and its character offset range for search highlighting.
 - `get(hex)`: one contact from the local store.
 - `card(hex)`: the editable fields of a contact (see `Card` below), for an
   editor. Change them and pass them to `update`.

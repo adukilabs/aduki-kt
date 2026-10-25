@@ -36,6 +36,15 @@ data class Duplicate(
 )
 
 /**
+ * SearchHit represents a contact matching a query, with the field that matched and its range.
+ */
+data class SearchHit(
+    val contact: Contact,
+    val field: String,
+    val range: IntRange
+)
+
+/**
  * Contacts service providing high-level operations for address book.
  *
  * Writes are applied to the local store at once and queued in the outbox
@@ -77,9 +86,32 @@ class Contacts internal constructor(
 
     /**
      * Observes contacts filtered by search query as a hot StateFlow.
+     * Matches case-insensitively across name, company, all e-mails, phones,
+     * group tags, and notes.
      */
     fun search(query: String): StateFlow<List<Contact>>? {
         return repo?.search(query)
+    }
+
+    /**
+     * Finds the matched field and character range for search highlighting in [contact].
+     */
+    fun hit(contact: Contact, query: String): SearchHit? {
+        val q = query.trim()
+        if (q.isEmpty()) return null
+        fun find(text: String, field: String): SearchHit? {
+            val idx = text.indexOf(q, ignoreCase = true)
+            return if (idx >= 0) SearchHit(contact, field, idx until (idx + q.length)) else null
+        }
+        find(contact.name, "name")?.let { return it }
+        for (e in contact.emails) { find(e, "email")?.let { return it } }
+        find(contact.email, "email")?.let { return it }
+        for (p in contact.phones) { find(p, "phone")?.let { return it } }
+        find(contact.phone, "phone")?.let { return it }
+        find(contact.company, "company")?.let { return it }
+        for (g in contact.groups) { find(g, "group")?.let { return it } }
+        find(contact.notes, "notes")?.let { return it }
+        return null
     }
 
     /**

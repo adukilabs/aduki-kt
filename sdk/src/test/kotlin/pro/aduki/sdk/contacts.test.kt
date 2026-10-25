@@ -69,4 +69,28 @@ class ContactsSyncTest {
         val client = Aduki.builder().key("opaque").endpoint(server.url("/v1").toString()).build()
         assertEquals(false, client.contacts.sync())
     }
+
+    @Test
+    fun hitIdentifiesMatchedFieldAndRange() {
+        val client = Aduki.builder().key("opaque").endpoint(server.url("/v1").toString()).build()
+        val contact = ContactEntity(
+            hex = "c1",
+            name = "Ann Lee",
+            email = "ann@example.com",
+            emails = listOf("ann@example.com", "second@test.pro"),
+            notes = "Met in Mombasa"
+        )
+
+        val hitName = client.contacts.hit(contact, "Lee")
+        assertEquals("name", hitName?.field)
+        assertEquals(4..6, hitName?.range)
+
+        val hitSecondEmail = client.contacts.hit(contact, "test.pro")
+        assertEquals("email", hitSecondEmail?.field)
+        assertEquals(7..14, hitSecondEmail?.range)
+
+        val hitNotes = client.contacts.hit(contact, "mombasa")
+        assertEquals("notes", hitNotes?.field)
+        assertEquals(7..13, hitNotes?.range)
+    }
 }

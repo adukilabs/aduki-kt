@@ -70,5 +70,57 @@ class ContactTest {
         assertNotNull(single)
         assertEquals("Alice", single!!.name)
     }
+
+    @Test
+    fun searchMatchesEveryEmailPhoneNotesAndGroups() = runBlocking {
+        val source = TestContactSource()
+        val repo = Contact(source = source, scope = CoroutineScope(Dispatchers.Unconfined))
+
+        source.flow.value = listOf(
+            ContactEntity(
+                hex = "c1",
+                name = "Ann Lee",
+                email = "ann@primary.io",
+                emails = listOf("ann@primary.io", "secondary-ann@corp.net"),
+                phone = "+1000",
+                phones = listOf("+1000", "+254700000000"),
+                company = "Acme Corp",
+                groups = listOf("friends", "vip"),
+                notes = "Met at Nairobi summit"
+            ),
+            ContactEntity(
+                hex = "c2",
+                name = "Bob Smith",
+                email = "bob@primary.io",
+                emails = listOf("bob@primary.io"),
+                phone = "+3000"
+            )
+        )
+
+        // Matches second email
+        val bySecondEmail = repo.search("corp.net").value
+        assertEquals(1, bySecondEmail.size)
+        assertEquals("c1", bySecondEmail[0].hex)
+
+        // Matches second phone
+        val bySecondPhone = repo.search("+2547").value
+        assertEquals(1, bySecondPhone.size)
+        assertEquals("c1", bySecondPhone[0].hex)
+
+        // Matches company
+        val byCompany = repo.search("Acme").value
+        assertEquals(1, byCompany.size)
+        assertEquals("c1", byCompany[0].hex)
+
+        // Matches group tag
+        val byGroup = repo.search("vip").value
+        assertEquals(1, byGroup.size)
+        assertEquals("c1", byGroup[0].hex)
+
+        // Matches notes
+        val byNotes = repo.search("Nairobi").value
+        assertEquals(1, byNotes.size)
+        assertEquals("c1", byNotes[0].hex)
+    }
 }
 
