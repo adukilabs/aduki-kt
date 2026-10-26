@@ -2,6 +2,15 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
+## 0.5.2 (2026-10-26)
+
+Release notes:
+
+- Android Digital Asset Links federation (#81): Added default `asset_statements` manifest declaration pointing to `https://mail.aduki.pro/.well-known/assetlinks.json` (`@string/asset_statements`) for Android Credential Manager saved credential federation.
+- Transitive Credential Manager dependencies (#81): Exported `androidx.credentials:credentials-play-services-auth` as `api` in `pro.aduki:android` so Android 13 and below consumer apps inherit Play Services fallback automatically.
+- Documentation: Documented Digital Asset Links configuration, custom domain merging, and keystore fingerprint retrieval in `android/README.md` and `docs/start/android.md`.
+- Automated test coverage: Added Robolectric test verifying merged `asset_statements` manifest meta-data and JSON structure.
+
 ## 0.5.1 (2026-10-26)
 
 Release notes:

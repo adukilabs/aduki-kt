@@ -50,13 +50,13 @@ dependencyResolutionManagement {
 ```kotlin
 // build.gradle.kts
 // Maven Central / GitHub Packages:
-implementation("pro.aduki:sdk:0.5.1")
-implementation("pro.aduki:android:0.5.1") // Android-specific features
+implementation("pro.aduki:sdk:0.5.2")
+implementation("pro.aduki:android:0.5.2") // Android-specific features
 implementation("io.objectbox:objectbox-android:4.0.3")
 
 // Or JitPack:
-// implementation("com.github.adukilabs.aduki-kt:sdk:0.5.1")
-// implementation("com.github.adukilabs.aduki-kt:android:0.5.1")
+// implementation("com.github.adukilabs.aduki-kt:sdk:0.5.2")
+// implementation("com.github.adukilabs.aduki-kt:android:0.5.2")
 
 // Sign in at Aduki ID; the 10-minute token is renewed automatically
 val client = Aduki.login(handle = "ada@aduki.me", password = password, code = code)
