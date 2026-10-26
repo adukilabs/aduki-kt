@@ -37,5 +37,10 @@
                 <data android:scheme="${adukiRedirectScheme}" />
             </intent-filter>
         </activity>
+
+        <!-- Digital Asset Links statement for Credential Manager federation -->
+        <meta-data
+            android:name="asset_statements"
+            android:resource="@string/asset_statements" />
     </application>
 </manifest>
