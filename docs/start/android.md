@@ -95,9 +95,52 @@ thread { flow.start(context) }              // discovery is a network call: not 
 
 `RedirectActivity` (declared in the library manifest) receives the redirect. It accepts only the exact scheme, authority and path of your registered redirect, needs the `state` of a sign-in this app started, spends it (a redirect works once), refuses it after ten minutes, and never logs the URL. The pending sign-in (PKCE verifier) is stored sealed, so it survives Android killing the app while the browser is open.
 
-## Passkeys
+## Passkeys & Credential Manager
 
-`PasskeyFlow(client, identity, CredentialManagerAuthenticator(activity))` has `register`, `stepUp` and `signIn`. A dismissed sheet is `PasskeyFailure.Cancelled` (nothing is sent), a missing passkey `NoPasskey`, anything else `Platform`. The site must publish a Digital Asset Links file naming your package and signing certificate. Never run against a real Credential Manager provider yet.
+`PasskeyFlow(client, identity, CredentialManagerAuthenticator(activity))` has `register`, `stepUp` and `signIn`. A dismissed sheet is `PasskeyFailure.Cancelled` (nothing is sent), a missing passkey `NoPasskey`, anything else `Platform`.
+
+`pro.aduki:android` declares transitive `api` dependencies on `androidx.credentials:credentials` and `androidx.credentials:credentials-play-services-auth`, providing seamless backward compatibility on Android 13 and below.
+
+### Digital Asset Links
+
+Android Credential Manager verifies ownership between applications and web origins using Digital Asset Links (`assetlinks.json`).
+
+The library manifest automatically declares the `asset_statements` meta-data:
+
+```xml
+<meta-data
+    android:name="asset_statements"
+    android:resource="@string/asset_statements" />
+```
+
+By default, `@string/asset_statements` points to the hosted federation file:
+
+```json
+[{"include": "https://mail.aduki.pro/.well-known/assetlinks.json"}]
+```
+
+For self-hosted deployments or companion origins, override `@string/asset_statements` in the app's `res/values/strings.xml`:
+
+```xml
+<resources>
+    <string name="asset_statements" translatable="false">
+        [
+          {\"include\": \"https://mail.aduki.pro/.well-known/assetlinks.json\"},
+          {\"include\": \"https://mail.example.org/.well-known/assetlinks.json\"}
+        ]
+    </string>
+</resources>
+```
+
+#### Keystore Fingerprint Retrieval
+
+To associate your app in `assetlinks.json`, extract the SHA-256 certificate fingerprint:
+
+```bash
+keytool -list -v -keystore <keystore-path> -alias <key-alias>
+```
+
+Copy the `SHA256:` fingerprint in colon-separated hex format into the target server's `assetlinks.json` configuration.
 
 ## Build
 

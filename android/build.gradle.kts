@@ -47,7 +47,7 @@ dependencies {
     implementation(libs.androidx.core)
     implementation(libs.androidx.browser)
     api(libs.androidx.credentials)
-    implementation(libs.androidx.credentials.play)
+    api(libs.androidx.credentials.play)
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
