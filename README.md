@@ -1,5 +1,14 @@
 # Aduki Kotlin SDK
 
+[![Maven Central](https://img.shields.io/maven-central/v/pro.aduki/sdk.svg)](https://central.sonatype.com/artifact/pro.aduki/sdk)
+[![JitPack](https://jitpack.io/v/adukilabs/aduki-kt.svg)](https://jitpack.io/#adukilabs/aduki-kt)
+[![Tests](https://github.com/adukilabs/aduki-kt/actions/workflows/ci.yml/badge.svg)](https://github.com/adukilabs/aduki-kt/actions/workflows/ci.yml)
+[![Publish](https://github.com/adukilabs/aduki-kt/actions/workflows/publish.yml/badge.svg)](https://github.com/adukilabs/aduki-kt/actions/workflows/publish.yml)
+[![Docs](https://img.shields.io/badge/docs-docs.aduki.pro%2Fkt-blue.svg)](https://docs.aduki.pro/kt)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-purple.svg?logo=kotlin)](https://kotlinlang.org)
+[![Android](https://img.shields.io/badge/Android-26%2B-green.svg?logo=android)](https://developer.android.com)
+
 Kotlin client library for the [Aduki](https://aduki.pro) platform: sign-in at
 Aduki ID (DPoP, OIDC client), offline-first mail, contacts and scheduling
 sync, and a reactive state layer. Maven group `pro.aduki`; Apache 2.0.
