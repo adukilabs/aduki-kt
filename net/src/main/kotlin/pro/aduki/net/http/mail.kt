@@ -181,6 +181,16 @@ class Mail(
         return execute(request) { body -> parseMailbox(JSONObject(body)) }
     }
 
+    /** Moves a mailbox under [parent] (a mailbox hex, or null for root). */
+    fun moveMailbox(hex: String, parent: String? = null): MailboxRow {
+        val payload = JSONObject().put("parent", parent ?: JSONObject.NULL)
+        val request = Request.Builder()
+            .url(url("user", "mailbox", hex, "parent").build())
+            .patch(payload.toString().toRequestBody(mediaJson))
+            .build()
+        return execute(request) { body -> parseMailbox(JSONObject(body)) }
+    }
+
     /** Deletes a mailbox and the messages in it. */
     fun deleteMailbox(hex: String) {
         execute(Request.Builder().url(url("user", "mailbox", hex).build()).delete().build()) { }
@@ -270,7 +280,8 @@ class Mail(
             uidnext = item.optLong("uidnext"),
             role = text(item, "role").ifEmpty { null },
             messages = item.optLong("messages"),
-            unread = item.optLong("unread")
+            unread = item.optLong("unread"),
+            parent = text(item, "parent").ifEmpty { text(item, "parentId").ifEmpty { null } }
         )
 
         /** Parses a `/user/mail/changes` response. */

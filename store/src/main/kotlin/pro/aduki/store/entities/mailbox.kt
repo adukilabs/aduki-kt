@@ -15,6 +15,7 @@ data class Mailbox(
     @Index var hex: String = "",
     @Convert(converter = SealedText::class, dbType = String::class) var name: String = "",
     var role: String = "", // inbox, sent, trash, archive, drafts
+    var parent: String = "",
     var uidnext: Long = 0,
     var uidvalidity: Long = 0,
     var modseq: Long = 0,

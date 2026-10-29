@@ -153,6 +153,12 @@ class Mail internal constructor(
         outbox().renameMailbox(hex, name)
     }
 
+    /** Moves a mailbox under [parent] (null or empty for top-level). */
+    suspend fun moveMailbox(hex: String, parent: String? = null) {
+        outbox().moveMailbox(hex, parent)
+        worker?.drain()
+    }
+
     /** Deletes a mailbox and the messages in it, optimistically and queued. */
     suspend fun deleteMailbox(hex: String) {
         outbox().deleteMailbox(hex)
@@ -219,6 +225,12 @@ class Mail internal constructor(
      */
     fun listMailboxes(): List<Mailbox> = repo?.listMailboxes() ?: emptyList()
 
+    /** The local mailbox with [hex], or null. */
+    fun getMailbox(hex: String): Mailbox? {
+        val target = manager?.box(hex) ?: hex
+        return manager?.mailbox(target) ?: repo?.getMailbox(target)
+    }
+
     /**
      * The hex of the mailbox with [role] (`inbox`, `sent`, `drafts`, `trash`,
      * `junk`, `archive`) in the local store now, or null.
@@ -256,6 +268,115 @@ class Mail internal constructor(
     suspend fun save(attachment: Attachment, file: File): File = withContext(Dispatchers.IO) {
         open(attachment).use { input -> file.outputStream().use { input.copyTo(it) } }
         file
+    }
+
+    /**
+     * Resolves RFC 5322 headers for message [hex].
+     */
+    suspend fun headers(hex: String): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+        val reply = client.jmap.call(
+            "Email/get",
+            JSONObject()
+                .put("ids", JSONArray(listOf(hex)))
+                .put("properties", JSONArray(listOf("headers")))
+        )
+        val list = reply.optJSONArray("list") ?: return@withContext emptyList()
+        if (list.length() == 0) return@withContext emptyList()
+        val item = list.getJSONObject(0)
+        val arr = item.optJSONArray("headers") ?: return@withContext emptyList()
+        val out = mutableListOf<Pair<String, String>>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.getJSONObject(i)
+            out.add(obj.getString("name") to obj.optString("value"))
+        }
+        out
+    }
+
+    /**
+     * Resolves the full RFC 5322 raw message source for message [hex].
+     */
+    suspend fun source(hex: String): String = withContext(Dispatchers.IO) {
+        val reply = client.jmap.call(
+            "Email/get",
+            JSONObject()
+                .put("ids", JSONArray(listOf(hex)))
+                .put("properties", JSONArray(listOf("blobId")))
+        )
+        val list = reply.optJSONArray("list") ?: return@withContext ""
+        if (list.length() == 0) return@withContext ""
+        val blobId = list.getJSONObject(0).optString("blobId").ifBlank { return@withContext "" }
+        client.jmap.download(blobId).use { stream ->
+            stream.bufferedReader(Charsets.UTF_8).readText()
+        }
+    }
+
+    /**
+     * Mutes or unmutes a thread by threadId or message hex, setting the `$muted` keyword.
+     */
+    suspend fun mute(threadId: String, on: Boolean = true) {
+        val queue = outbox()
+        val local = repo
+        val messages = local?.listThread(threadId)?.ifEmpty { null }
+            ?: listOfNotNull(queue.message(threadId))
+        if (messages.isEmpty()) {
+            if (on) queue.keywords(threadId, add = listOf(Message.MUTED))
+            else queue.keywords(threadId, remove = listOf(Message.MUTED))
+        } else {
+            for (msg in messages) {
+                if (on) {
+                    if (!msg.muted()) queue.keywords(msg.hex, add = listOf(Message.MUTED))
+                } else {
+                    if (msg.muted()) queue.keywords(msg.hex, remove = listOf(Message.MUTED))
+                }
+            }
+        }
+        worker?.drain()
+    }
+
+    /**
+     * Saves a draft message in the Drafts mailbox and journals outbox sync.
+     */
+    suspend fun saveDraft(to: List<String>, subject: String, body: String, replace: String? = null): Message =
+        saveDraft(Draft(to = to, subject = subject, text = body), replace)
+
+    /**
+     * Saves a draft message in the Drafts mailbox and journals outbox sync.
+     * When [replace] is given, marks the replaced draft deleted.
+     */
+    suspend fun saveDraft(draft: Draft, replace: String? = null): Message {
+        val queue = outbox()
+        val draftsBox = repo?.listMailboxes()?.firstOrNull { it.role == "drafts" }?.hex
+            ?: repo?.listMailboxes()?.firstOrNull { it.name.equals("Drafts", ignoreCase = true) }?.hex
+            ?: "drafts"
+        val msg = queue.saveDraft(
+            subject = draft.subject,
+            to = draft.to,
+            cc = draft.cc,
+            bcc = draft.bcc,
+            text = draft.text,
+            html = draft.html,
+            mailbox = draftsBox,
+            replace = replace
+        )
+        content?.put(msg.hex, draft.text, draft.html.orEmpty())
+        worker?.drain()
+        return msg
+    }
+
+    /**
+     * Reads a draft message and its body content as a [Draft].
+     */
+    suspend fun openDraft(hex: String): Draft {
+        val msg = repo?.get(hex) ?: outbox().message(hex) ?: throw IllegalArgumentException("Draft not found: $hex")
+        val b = try { body(hex) } catch (_: Exception) { Body() }
+        return Draft(
+            to = msg.recipients(),
+            cc = msg.ccList(),
+            bcc = msg.bccList(),
+            subject = msg.subject,
+            text = if (b.text.isNotBlank()) b.text else msg.preview,
+            html = b.html.ifBlank { null }
+        )
     }
 
     /**

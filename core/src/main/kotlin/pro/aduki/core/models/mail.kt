@@ -79,7 +79,8 @@ data class MailboxRow(
     /** RFC 6154 special use (`inbox`, `sent`, `drafts`, `trash`, `junk`, `archive`), or null. */
     val role: String? = null,
     val messages: Long = 0,
-    val unread: Long = 0
+    val unread: Long = 0,
+    val parent: String? = null
 )
 
 /**
