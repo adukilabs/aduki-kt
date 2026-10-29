@@ -344,4 +344,71 @@ class SigninTest {
         assertEquals("", client.session.refresh())
         assertNull(store.load())
     }
+
+    @Test
+    fun listSessionsReturnsParsedSessions() = runBlocking {
+        val client = client()
+        // 1. Tokens renewal for audience 'id'
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"success":true,"data":{"access":"eyJ.id","refresh":"rt_2","expires":600}}"""
+            )
+        )
+        // 2. GET /id/sessions response
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"success":true,"data":[{"session":"s1","device":"Phone","tier":2,"bound":true,"created":"2026-10-29T06:00:00Z","seen":"2026-10-29T06:30:00Z","current":true},{"session":"s2","device":null,"tier":1,"bound":false,"created":"2026-10-28T12:00:00Z","seen":"2026-10-28T12:00:00Z","current":false}]}"""
+            )
+        )
+
+        val sessions = client.sessions()
+        assertEquals(2, sessions.size)
+        assertEquals("s1", sessions[0].id)
+        assertEquals("Phone", sessions[0].device)
+        assertTrue(sessions[0].bound)
+        assertTrue(sessions[0].current)
+        assertEquals("s2", sessions[1].id)
+        assertFalse(sessions[1].current)
+
+        val reqRenew = server.takeRequest()
+        assertEquals("/id/tokens", reqRenew.path)
+        val reqSessions = server.takeRequest()
+        assertEquals("/id/sessions", reqSessions.path)
+        assertEquals("Bearer eyJ.id", reqSessions.getHeader("Authorization"))
+    }
+
+    @Test
+    fun revokeSessionDeletesAndCurrentSessionLogsOut() = runBlocking {
+        val client = client()
+        // 1. Tokens renewal for audience 'id'
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"success":true,"data":{"access":"eyJ.id","refresh":"rt_2","expires":600}}"""
+            )
+        )
+        // 2. DELETE /id/sessions/s2 (another session)
+        server.enqueue(MockResponse().setResponseCode(204))
+
+        val revoked = client.revoke("s2")
+        assertTrue(revoked)
+        // Current session is still active
+        assertEquals("00000000000000ab", client.session.tokens.value?.session)
+
+        server.takeRequest() // renew
+        val delReq = server.takeRequest()
+        assertEquals("DELETE", delReq.method)
+        assertEquals("/id/sessions/s2", delReq.path)
+
+        // Now revoke current session "00000000000000ab" -> triggers local cleanup
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"success":true,"data":{"access":"eyJ.id2","refresh":"rt_3","expires":600}}"""
+            )
+        ) // POST /id/tokens for 'id' audience
+        server.enqueue(MockResponse().setResponseCode(204)) // DELETE /id/sessions/00000000000000ab
+
+        val selfRevoked = client.revoke("00000000000000ab")
+        assertTrue(selfRevoked)
+        assertNull(client.session.tokens.value)
+    }
 }

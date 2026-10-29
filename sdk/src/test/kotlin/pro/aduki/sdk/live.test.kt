@@ -4,6 +4,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -42,7 +43,13 @@ class LiveTest {
         val builder = Aduki.builder().endpoint(liveEndpoint())
         if (!token.isNullOrBlank()) builder.token(token) else builder.key(key!!)
         if (store) builder.store(dir.newFolder("db"))
-        return builder.build()
+        val client = builder.build()
+        val refresh = System.getenv("ADUKI_REFRESH")
+        val session = System.getenv("ADUKI_SESSION")
+        if (!refresh.isNullOrBlank() && !session.isNullOrBlank() && !token.isNullOrBlank()) {
+            client.session.update(pro.aduki.core.models.Tokens(token = token, refresh = refresh, session = session, expires = "600"))
+        }
+        return client
     }
 
     private fun liveEndpoint(): String {
@@ -446,5 +453,27 @@ class LiveTest {
         assertEquals("Draft $tag", opened.subject)
         assertEquals("Body $tag", opened.text)
         client.close()
+    }
+
+    /**
+     * T5-LIVE-19: List active account sessions and revoke a session over live server.
+     */
+    @Test
+    fun sessionsAndRevoke() = runBlocking<Unit> {
+        val client = live()
+        val sessions = client.sessions()
+        assertTrue("Expected active sessions", sessions.isNotEmpty())
+        val current = sessions.firstOrNull { it.current }
+        assertNotNull("Expected current session flag", current)
+        assertTrue(current!!.id.isNotBlank())
+
+        // Find an older, non-current session to test revocation
+        val other = sessions.firstOrNull { !it.current }
+        if (other != null) {
+            val revoked = client.revoke(other.id)
+            assertTrue("Expected revocation to succeed", revoked)
+            val after = client.sessions()
+            assertFalse("Revoked session should not be in list", after.any { it.id == other.id })
+        }
     }
 }

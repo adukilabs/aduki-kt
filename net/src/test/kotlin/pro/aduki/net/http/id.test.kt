@@ -8,6 +8,7 @@ import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -169,5 +170,38 @@ class IdTest {
         assertEquals("t", subject.token())
         assertEquals("cd", subject.session())
         assertEquals(0, id.requestCount)
+    }
+
+    @Test
+    fun listSessionsParsesActiveSessions() {
+        signIn()
+        id.enqueue(ok("id1", "r2"))
+        id.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"success":true,"data":[{"session":"s1","device":"Pixel","tier":2,"bound":true,"created":"2026-10-29T06:00:00Z","seen":"2026-10-29T06:30:00Z","current":true},{"session":"s2","device":null,"tier":1,"bound":false,"created":"2026-10-28T12:00:00Z","seen":"2026-10-28T12:00:00Z","current":false}]}"""
+            )
+        )
+        val sessions = subject.sessions()
+        assertEquals(2, sessions.size)
+        assertEquals("s1", sessions[0].id)
+        assertEquals("Pixel", sessions[0].device)
+        assertTrue(sessions[0].bound)
+        assertTrue(sessions[0].current)
+        assertEquals("s2", sessions[1].id)
+        assertNull(sessions[1].device)
+        assertFalse(sessions[1].current)
+    }
+
+    @Test
+    fun revokeSessionDeletesByHex() {
+        signIn()
+        id.enqueue(ok("id1", "r2"))
+        id.enqueue(MockResponse().setResponseCode(204))
+        assertTrue(subject.revoke("s2"))
+        id.takeRequest() // first was tokens renewal
+        val delReq = id.takeRequest()
+        assertEquals("DELETE", delReq.method)
+        assertEquals("/v1/sessions/s2", delReq.path)
+        assertEquals("Bearer id1", delReq.getHeader("Authorization"))
     }
 }

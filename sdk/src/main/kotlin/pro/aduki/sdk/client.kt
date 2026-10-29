@@ -5,12 +5,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.Authenticator
 import okhttp3.OkHttpClient
 import org.json.JSONObject
 import pro.aduki.core.config.Endpoints
 import pro.aduki.core.config.Options
 import pro.aduki.core.config.Pin
+import pro.aduki.core.models.AccountSession
 import pro.aduki.net.http.Client as HttpClient
 import pro.aduki.net.http.Dpop
 import pro.aduki.net.http.Events
@@ -457,6 +459,49 @@ class Aduki internal constructor(
         }
         revoked
     }
+
+    /**
+     * Lists active sessions for the signed-in account from Aduki ID.
+     */
+    suspend fun sessions(): List<AccountSession> = withContext(Dispatchers.IO) {
+        val current = session.tokens.value
+        if (current != null) align(current)
+        val list = id.sessions()
+        if (current != null && id.refreshToken().isNotBlank() && id.refreshToken() != current.refresh) {
+            val updated = current.copy(refresh = id.refreshToken())
+            session.update(updated)
+            try { tokenStore?.save(updated) } catch (_: Exception) {}
+        }
+        list
+    }
+
+    /**
+     * Revokes the active session with [hex].
+     * If the revoked session is this client's current session, clears local authentication as well.
+     */
+    suspend fun revoke(hex: String): Boolean = withContext(Dispatchers.IO) {
+        val current = session.tokens.value
+        if (current != null) align(current)
+        val revoked = id.revoke(hex)
+        if (current != null && id.refreshToken().isNotBlank() && id.refreshToken() != current.refresh) {
+            val updated = current.copy(refresh = id.refreshToken())
+            session.update(updated)
+            try { tokenStore?.save(updated) } catch (_: Exception) {}
+        }
+        if (revoked && current?.session == hex) {
+            watcher?.stop()
+            watcher = null
+            id.clear()
+            session.clear()
+            try { tokenStore?.clear() } catch (_: Exception) {}
+        }
+        revoked
+    }
+
+    /**
+     * Revokes the active session [target].
+     */
+    suspend fun revoke(target: AccountSession): Boolean = revoke(target.id)
 
     /**
      * Closes the local database if this client opened it (`Builder.store(dir)`).
