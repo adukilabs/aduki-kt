@@ -70,6 +70,12 @@ data class Message(
         /** Keyword prefix of a snoozed message: `$snoozed-<epoch seconds>`. */
         const val SNOOZED = "\$snoozed-"
 
+        /** JMAP keyword for muted threads / messages: `$muted`. */
+        const val MUTED = "\$muted"
+
+        /** Hex prefix of a message created offline, until the server names it. */
+        const val PENDING = "msg_"
+
         /** The flags in [flags] that are not system flags, space-separated. */
         fun keywords(flags: List<String>): String =
             flags.filter { SYSTEM[it.lowercase()] == null }.joinToString(" ")
@@ -79,8 +85,14 @@ data class Message(
 
     fun flagged(): Boolean = (flags and FLAGGED) != 0
 
+    /** Whether this message is marked with the `$muted` keyword. */
+    fun muted(): Boolean = keywordList().any { it.equals(MUTED, ignoreCase = true) }
+
     /** Marked `\Deleted` (awaiting expunge); hide it in the UI. */
     fun deleted(): Boolean = (flags and DELETED) != 0
+
+    /** Created offline and not on the server yet. */
+    fun pending(): Boolean = hex.startsWith(PENDING)
 
     fun toggle(flag: Int) {
         flags = flags xor flag

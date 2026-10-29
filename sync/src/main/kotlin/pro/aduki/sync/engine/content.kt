@@ -55,6 +55,19 @@ class Content(
     /** The cached body of [hex] without fetching, or null. */
     fun cached(hex: String): Body? = storage.get(hex)?.let(::body)
 
+    /** Saves a body directly into storage without network (e.g. for drafts). */
+    fun put(hex: String, text: String, html: String = "", attachments: List<Attachment> = emptyList()) {
+        storage.put(
+            ContentEntity(
+                hex = hex,
+                text = text,
+                html = html,
+                attachments = encode(attachments),
+                fetched = System.currentTimeMillis()
+            )
+        )
+    }
+
     /** Drops cached bodies (e.g. of deleted messages). */
     fun forget(hexes: List<String>) = storage.remove(hexes)
 

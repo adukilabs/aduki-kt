@@ -100,6 +100,7 @@ class MailTest {
         )
         path == "/jmap/upload/acc" -> MockResponse().setBody("""{"accountId":"acc","blobId":"blob-up","type":"text/plain","size":3}""")
         path.startsWith("/jmap/download/acc/blob-a/") -> MockResponse().setBody("PDFDATA")
+        path.startsWith("/jmap/download/acc/blob-src/") -> MockResponse().setBody("From: ada@example.com\r\nSubject: Lunch plans\r\n\r\nNoon?")
         path == "/jmap" -> {
             val body = JSONObject(request.body.readUtf8())
             val methods = body.getJSONArray("methodCalls")
@@ -123,6 +124,12 @@ class MailTest {
             val wanted = if (ids != null && ids.length() > 0) ids.getString(0) else ""
             val list = when {
                 args.has("#ids") -> previous?.let { JSONArray().put(it) } ?: JSONArray()
+                wanted == "m1" && args.optJSONArray("properties")?.toString()?.contains("headers") == true ->
+                    JSONArray().put(JSONObject().put("id", "m1").put("headers", JSONArray()
+                        .put(JSONObject().put("name", "From").put("value", "ada@example.com"))
+                        .put(JSONObject().put("name", "Subject").put("value", "Lunch plans"))))
+                wanted == "m1" && args.optJSONArray("properties")?.toString()?.contains("blobId") == true ->
+                    JSONArray().put(JSONObject().put("id", "m1").put("blobId", "blob-src"))
                 wanted == "m1" && args.optJSONArray("properties").toString().contains("messageId") ->
                     JSONArray().put(JSONObject().put("id", "m1").put("messageId", JSONArray().put("orig@example.com")).put("references", JSONArray().put("root@example.com")))
                 wanted == "m1" -> JSONArray().put(
@@ -138,9 +145,16 @@ class MailTest {
             JSONObject().put("list", list).put("notFound", JSONArray())
         }
         "Email/query" -> JSONObject().put("ids", JSONArray())
-        "Email/set" -> JSONObject()
-            .put("created", if (args.has("create")) JSONObject().put("d", JSONObject().put("id", "srv-rich")) else JSONObject())
-            .put("updated", JSONObject())
+        "Email/set" -> {
+            val created = JSONObject()
+            if (args.has("create")) {
+                val cr = args.getJSONObject("create")
+                for (k in cr.keySet()) {
+                    created.put(k, JSONObject().put("id", "srv-$k"))
+                }
+            }
+            JSONObject().put("created", created).put("updated", JSONObject())
+        }
         "EmailSubmission/set" -> JSONObject().put("created", JSONObject().put("s", JSONObject().put("id", "sub1")))
         // Listed second but the default: a draft without `from` goes out as it.
         "Identity/get" -> JSONObject().put("list", JSONArray()
@@ -149,6 +163,7 @@ class MailTest {
         "Mailbox/get" -> JSONObject().put("list", JSONArray()
             .put(JSONObject().put("id", "b-drafts").put("role", "drafts"))
             .put(JSONObject().put("id", "b-sent").put("role", "sent")))
+        "Mailbox/set" -> JSONObject().put("updated", args.optJSONObject("update") ?: JSONObject())
         else -> JSONObject()
     }
 
@@ -368,5 +383,106 @@ class MailTest {
         assertEquals("m9", fetched.hex)
         assertEquals("b-archive", fetched.mailbox)
         assertTrue(fetched.flagged())
+    }
+
+    @Test
+    fun mailboxHierarchyAndMove() = runBlocking<Unit> {
+        synced()
+
+        // Create mailbox under a parent
+        val child = client.mail.createMailbox("Projects", parent = "b-inbox")
+        assertEquals("b-inbox", child.parent)
+        client.sync.flush()
+
+        // Move mailbox under another folder
+        client.mail.moveMailbox(child.hex, "b-sent")
+        val moved = client.mail.getMailbox(child.hex)
+        assertNotNull(moved)
+        assertEquals("b-sent", moved!!.parent)
+        client.sync.flush()
+
+        // Move mailbox to root (null parent)
+        client.mail.moveMailbox(child.hex, null)
+        val root = client.mail.getMailbox(child.hex)
+        assertNotNull(root)
+        assertEquals("", root!!.parent)
+    }
+
+    @Test
+    fun headersAndRawSource() = runBlocking<Unit> {
+        synced()
+
+        val headers = client.mail.headers("m1")
+        assertTrue(headers.any { it.first == "From" && it.second == "ada@example.com" })
+        assertTrue(headers.any { it.first == "Subject" && it.second == "Lunch plans" })
+
+        val source = client.mail.source("m1")
+        assertTrue(source.contains("From: ada@example.com"))
+        assertTrue(source.contains("Subject: Lunch plans"))
+        assertTrue(source.contains("Noon?"))
+    }
+
+    @Test
+    fun muteAndUnmuteThread() = runBlocking<Unit> {
+        synced()
+
+        // Verify conversation is initially unmuted
+        val convsBefore = withTimeout(5_000) { client.mail.conversations("b-inbox")!!.first { it.isNotEmpty() } }
+        val t1Before = convsBefore.first { it.latest.threadId == "t1" }
+        assertFalse(t1Before.muted)
+
+        // Mute thread t1
+        client.mail.mute("t1", true)
+        val convsMuted = withTimeout(5_000) { client.mail.conversations("b-inbox")!!.first { convs -> convs.any { it.latest.threadId == "t1" && it.muted } } }
+        val t1Muted = convsMuted.first { it.latest.threadId == "t1" }
+        assertTrue(t1Muted.muted)
+
+        // Unmute thread t1
+        client.mail.mute("t1", false)
+        val convsUnmuted = withTimeout(5_000) { client.mail.conversations("b-inbox")!!.first { convs -> convs.any { it.latest.threadId == "t1" && !it.muted } } }
+        val t1Unmuted = convsUnmuted.first { it.latest.threadId == "t1" }
+        assertFalse(t1Unmuted.muted)
+    }
+
+    @Test
+    fun saveAndOpenDraft() = runBlocking<Unit> {
+        synced()
+
+        val draft = Draft(
+            to = listOf("partner@example.com"),
+            cc = listOf("team@example.com"),
+            subject = "Q4 Proposal",
+            text = "Here is the proposal outline."
+        )
+
+        val saved = client.mail.saveDraft(draft)
+        assertNotNull(saved)
+        assertTrue(saved.pending())
+        assertEquals("Q4 Proposal", saved.subject)
+        assertEquals("partner@example.com", saved.to)
+        assertTrue((saved.flags and Message.DRAFT) != 0)
+        assertEquals("b-drafts", saved.mailbox)
+
+        // Open the saved draft
+        val opened = client.mail.openDraft(saved.hex)
+        assertEquals(listOf("partner@example.com"), opened.to)
+        assertEquals(listOf("team@example.com"), opened.cc)
+        assertEquals("Q4 Proposal", opened.subject)
+        assertEquals("Here is the proposal outline.", opened.text)
+
+        // Replace draft with updated version
+        val updatedDraft = opened.copy(text = "Updated proposal text.")
+        val replaced = client.mail.saveDraft(updatedDraft, replace = saved.hex)
+        assertNotNull(replaced)
+        assertEquals("Q4 Proposal", replaced.subject)
+
+        // Old draft marked deleted
+        val old = client.mail.fetch(saved.hex)
+        assertNotNull(old)
+        assertTrue((old!!.flags and Message.DELETED) != 0)
+
+        // Replaced draft readable
+        val reopened = client.mail.openDraft(replaced.hex)
+        assertEquals("Updated proposal text.", reopened.text)
     }
 }

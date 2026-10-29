@@ -120,13 +120,13 @@ class Manager(private val storage: Storage) {
     // a caller may still hold a placeholder it got from [createMailbox].
     private val adopted = java.util.concurrent.ConcurrentHashMap<String, String>()
 
-    private fun box(hex: String): String = adopted[hex] ?: hex
+    fun box(hex: String): String = adopted[hex] ?: hex
 
     /** The local message with [hex], or null. */
     fun message(hex: String): Message? = storage.getMessage(hex)
 
     /** The local mailbox with [hex], or null. */
-    fun mailbox(hex: String): Mailbox? = storage.getMailbox(hex)
+    fun mailbox(hex: String): Mailbox? = storage.getMailbox(box(hex))
 
     /** Saves [message] directly into storage. */
     fun put(message: Message) { storage.putMessage(message) }
@@ -307,12 +307,25 @@ class Manager(private val storage: Storage) {
         require(name.isNotBlank()) { "Mailbox name cannot be empty" }
         val parent = under?.let(::box)
         return storage.tx {
-            val box = Mailbox(hex = Mailbox.PENDING + java.util.UUID.randomUUID(), name = name)
+            val box = Mailbox(hex = Mailbox.PENDING + java.util.UUID.randomUUID(), name = name, parent = parent ?: "")
             storage.putMailbox(box)
             val payload = JSONObject().put("hex", box.hex).put("name", name)
             if (!parent.isNullOrBlank()) payload.put("parent", parent)
             journal("mailbox_create", payload, box.hex)
             box
+        }.also { recount() }
+    }
+
+    /** Moves a mailbox under [parent] (null or empty for root) locally and journals `mailbox_move`. */
+    fun moveMailbox(target: String, parent: String? = null): Outbox {
+        val hex = box(target)
+        val parentHex = parent?.let(::box)?.ifBlank { null }
+        return storage.tx {
+            val box = storage.getMailbox(hex) ?: throw IllegalArgumentException("Mailbox not found: $hex")
+            box.parent = parentHex ?: ""
+            storage.putMailbox(box)
+            val payload = JSONObject().put("hex", hex).put("parent", parentHex ?: JSONObject.NULL)
+            journal("mailbox_move", payload, hex)
         }.also { recount() }
     }
 
@@ -334,6 +347,60 @@ class Manager(private val storage: Storage) {
         return storage.tx {
             storage.removeMailbox(hex)
             journal("mailbox_delete", JSONObject().put("hex", hex))
+        }.also { recount() }
+    }
+
+    /**
+     * Saves a draft message in [mailbox], marks any [replace] draft deleted,
+     * and journals a `draft_save` action.
+     */
+    fun saveDraft(
+        subject: String,
+        to: List<String>,
+        cc: List<String> = emptyList(),
+        bcc: List<String> = emptyList(),
+        text: String = "",
+        html: String? = null,
+        mailbox: String = "drafts",
+        replace: String? = null
+    ): Message {
+        val hex = Message.PENDING + java.util.UUID.randomUUID().toString()
+        return storage.tx {
+            if (!replace.isNullOrBlank()) {
+                val old = storage.getMessage(replace)
+                if (old != null) {
+                    old.flags = old.flags or Message.DELETED
+                    old.dirty = true
+                    storage.putMessage(old)
+                }
+            }
+            val msg = Message(
+                hex = hex,
+                mailbox = mailbox,
+                subject = subject,
+                to = to.joinToString(", "),
+                cc = cc.joinToString(", "),
+                bcc = bcc.joinToString(", "),
+                preview = text.take(120),
+                flags = Message.DRAFT or Message.SEEN,
+                receivedAt = System.currentTimeMillis(),
+                sentAt = System.currentTimeMillis(),
+                dirty = true
+            )
+            storage.putMessage(msg)
+            val payload = JSONObject().apply {
+                put("hex", hex)
+                put("mailbox", mailbox)
+                put("subject", subject)
+                put("to", JSONArray(to))
+                put("cc", JSONArray(cc))
+                put("bcc", JSONArray(bcc))
+                put("text", text)
+                if (html != null) put("html", html)
+                if (!replace.isNullOrBlank()) put("replace", replace)
+            }
+            journal("draft_save", payload, hex)
+            msg
         }.also { recount() }
     }
 

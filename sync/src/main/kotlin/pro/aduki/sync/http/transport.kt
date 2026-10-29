@@ -59,6 +59,7 @@ class HttpMailboxTransport(
             hex = row.hex,
             name = row.name,
             role = row.role ?: "",
+            parent = row.parent ?: "",
             uidnext = row.uidnext,
             exists = row.messages.toInt(),
             unseen = row.unread.toInt()

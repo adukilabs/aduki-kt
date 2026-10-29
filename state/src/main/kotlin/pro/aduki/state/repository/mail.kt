@@ -23,7 +23,8 @@ import pro.aduki.sync.outbox.Manager
 data class Conversation(
     val latest: Message,
     val count: Int,
-    val unread: Int
+    val unread: Int,
+    val muted: Boolean = false
 )
 
 /**
@@ -47,6 +48,9 @@ interface MailSource {
 
     /** The messages of one thread, in any mailbox. */
     fun thread(threadId: String): Flow<List<Message>> = emptyFlow()
+
+    /** The messages of one thread now, unordered. */
+    fun getThread(threadId: String): List<Message> = emptyList()
 }
 
 /**
@@ -104,6 +108,9 @@ class Mail(
                 val sub = query.subscribe().observer { data -> trySend(data) }
                 awaitClose { sub.cancel() }
             }
+
+            override fun getThread(threadId: String): List<Message> =
+                messageBox.query(Message_.threadId.equal(threadId)).build().use { it.find() }
 
             override fun getMessages(mailboxHex: String): List<Message> =
                 messageBox.query(Message_.mailbox.equal(mailboxHex)).build().use { it.find() }
@@ -209,15 +216,20 @@ class Mail(
                     .groupBy { it.threadId.ifBlank { it.hex } }
                     .values
                     .map { group ->
+                        val latest = group.maxBy { it.receivedAt }
                         Conversation(
-                            latest = group.maxBy { it.receivedAt },
+                            latest = latest,
                             count = group.size,
-                            unread = group.count { !it.seen() }
+                            unread = group.count { !it.seen() },
+                            muted = group.any { it.muted() }
                         )
                     }
                     .sortedByDescending { it.latest.receivedAt }
             }
             .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** The messages of one thread now (not a flow). */
+    fun listThread(threadId: String): List<Message> = source.getThread(threadId)
 
     /** The mailboxes now (not a flow), e.g. to find one by role or name. */
     fun listMailboxes(): List<Mailbox> = source.getMailboxes()

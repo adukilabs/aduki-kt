@@ -395,4 +395,56 @@ class LiveTest {
             ((hash[offset + 2].toInt() and 0xff) shl 8) or (hash[offset + 3].toInt() and 0xff)
         return "%06d".format(number % 1_000_000)
     }
+
+    /**
+     * T5-LIVE-17: Mailbox hierarchy and move over live server.
+     */
+    @Test
+    fun mailboxHierarchy() = runBlocking<Unit> {
+        val client = live(store = true)
+        val name = "live-box-${System.currentTimeMillis()}"
+        client.sync.mailboxes()
+        val inbox = client.mail.resolve("inbox") ?: error("no inbox found")
+        val child = client.mail.createMailbox(name, parent = inbox)
+        client.sync.flush()
+        assertEquals(0, client.sync.pending())
+        try {
+            val created = client.mail.getMailbox(child.hex)
+            assertNotNull(created)
+            assertEquals(inbox, created!!.parent)
+
+            // Move to root
+            client.mail.moveMailbox(child.hex, null)
+            client.sync.flush()
+            assertEquals(0, client.sync.pending())
+            val moved = client.mail.getMailbox(child.hex)
+            assertNotNull(moved)
+            assertEquals("", moved!!.parent)
+        } finally {
+            client.mail.deleteMailbox(child.hex)
+            client.sync.flush()
+        }
+        client.close()
+    }
+
+    /**
+     * T5-LIVE-18: Save and open draft.
+     */
+    @Test
+    fun draftSaveAndOpen() = runBlocking<Unit> {
+        val client = live(store = true)
+        val tag = "draft-${System.currentTimeMillis()}"
+        val draftMsg = client.mail.saveDraft(
+            to = listOf("draft@example.com"),
+            subject = "Draft $tag",
+            body = "Body $tag"
+        )
+        assertTrue(draftMsg.pending())
+        val opened = client.mail.openDraft(draftMsg.hex)
+        assertNotNull(opened)
+        assertEquals(listOf("draft@example.com"), opened!!.to)
+        assertEquals("Draft $tag", opened.subject)
+        assertEquals("Body $tag", opened.text)
+        client.close()
+    }
 }

@@ -82,7 +82,57 @@ class HttpDispatcher(
                         val obj = JSONObject(String(action.payload, Charsets.UTF_8))
                         api.renameMailbox(obj.getString("hex"), obj.getString("name"))
                     }
+                    "mailbox_move" -> {
+                        val obj = JSONObject(String(action.payload, Charsets.UTF_8))
+                        val hex = obj.getString("hex")
+                        val parent = obj.optString("parent").ifBlank { null }
+                        if (jmap != null) {
+                            val update = JSONObject().put(hex, JSONObject().put("parentId", parent ?: JSONObject.NULL))
+                            val reply = jmap.call("Mailbox/set", JSONObject().put("update", update))
+                            val failed = reply.optJSONObject("notUpdated")
+                            if (failed != null && failed.has(hex)) {
+                                val err = failed.getJSONObject(hex)
+                                throw Rejected("Mailbox move refused: ${err.optString("type")}")
+                            }
+                        } else {
+                            api.moveMailbox(hex, parent)
+                        }
+                    }
                     "mailbox_delete" -> api.deleteMailbox(hexOf(action))
+                    "draft_save" -> {
+                        val obj = JSONObject(String(action.payload, Charsets.UTF_8))
+                        val placeholderHex = obj.getString("hex")
+                        val replace = obj.optString("replace").ifBlank { null }
+                        val mailbox = obj.getString("mailbox")
+                        if (jmap != null) {
+                            val createObj = JSONObject().apply {
+                                put("mailboxIds", JSONObject().put(mailbox, true))
+                                put("keywords", JSONObject().put("\$draft", true))
+                                put("subject", obj.optString("subject"))
+                                val to = obj.optJSONArray("to")
+                                if (to != null && to.length() > 0) {
+                                    val toArr = JSONArray()
+                                    for (i in 0 until to.length()) {
+                                        toArr.put(JSONObject().put("email", to.getString(i)))
+                                    }
+                                    put("to", toArr)
+                                }
+                                val text = obj.optString("text")
+                                put("bodyValues", JSONObject().put("1", JSONObject().put("value", text)))
+                                put("textBody", JSONArray().put(JSONObject().put("partId", "1").put("type", "text/plain")))
+                            }
+                            val setArg = JSONObject().put("create", JSONObject().put("draft1", createObj))
+                            if (replace != null) {
+                                setArg.put("destroy", JSONArray().put(replace))
+                            }
+                            val reply = jmap.call("Email/set", setArg)
+                            val created = reply.optJSONObject("created")?.optJSONObject("draft1")
+                            val newHex = created?.optString("id")
+                            if (!newHex.isNullOrBlank()) {
+                                adopt(placeholderHex, newHex)
+                            }
+                        }
+                    }
                     "keywords" -> {
                         val obj = JSONObject(String(action.payload, Charsets.UTF_8))
                         api.flags(obj.getString("hex"), strings(obj.optJSONArray("add")), strings(obj.optJSONArray("remove")))
