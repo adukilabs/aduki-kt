@@ -3,8 +3,12 @@ package pro.aduki.net.http
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.json.JSONArray
+import org.json.JSONObject
 import pro.aduki.core.config.Endpoints
 import pro.aduki.core.errors.AdukiException
+import pro.aduki.core.models.AccountSession
+import java.time.Instant
 
 /**
  * Id is the Aduki ID client (ADK-KT-003 K2): one sign-in, many audiences.
@@ -164,4 +168,57 @@ class Id(
     /** Stage 2: Confirms the authenticator code and returns backup codes. */
     fun verify(hex: String, password: String, code: String): List<String> =
         Signup.verify(client, base, hex, password, code)
+
+    /** Lists active sessions for the authenticated account from Aduki ID. */
+    fun sessions(): List<AccountSession> {
+        val response = call("id") { token ->
+            Request.Builder()
+                .url(url("sessions"))
+                .header("Authorization", "Bearer $token")
+                .get()
+                .build()
+        }
+        return response.use { resp ->
+            if (!resp.isSuccessful) {
+                if (resp.code == 401) throw AdukiException.Unauthorized("Unauthorized")
+                throw AdukiException.Api(resp.code, "sessions.error", "Failed to list sessions: HTTP ${resp.code}")
+            }
+            val body = resp.body?.string().orEmpty()
+            val json = JSONObject(body)
+            val data = json.optJSONArray("data") ?: JSONArray()
+            val list = mutableListOf<AccountSession>()
+            for (i in 0 until data.length()) {
+                val item = data.getJSONObject(i)
+                list.add(
+                    AccountSession(
+                        id = item.getString("session"),
+                        device = if (item.isNull("device")) null else item.optString("device").ifBlank { null },
+                        tier = item.optInt("tier", 2),
+                        bound = item.optBoolean("bound", false),
+                        created = item.optString("created").takeIf { it.isNotBlank() }?.let { runCatching { Instant.parse(it) }.getOrNull() },
+                        seen = item.optString("seen").takeIf { it.isNotBlank() }?.let { runCatching { Instant.parse(it) }.getOrNull() },
+                        current = item.optBoolean("current", false)
+                    )
+                )
+            }
+            list
+        }
+    }
+
+    /** Revokes the session with [hex]. Returns true if successfully revoked. */
+    fun revoke(hex: String): Boolean {
+        require(hex.isNotBlank()) { "Session hex cannot be blank" }
+        val response = call("id") { token ->
+            Request.Builder()
+                .url(url("sessions/$hex"))
+                .header("Authorization", "Bearer $token")
+                .delete()
+                .build()
+        }
+        return response.use { resp ->
+            resp.isSuccessful || resp.code == 404
+        }
+    }
+
+    private fun url(path: String) = "${base.trimEnd('/')}/$path"
 }
