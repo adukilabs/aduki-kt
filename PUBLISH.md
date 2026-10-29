@@ -50,7 +50,6 @@ The automated publishing pipeline (`.github/workflows/publish.yml`) requires the
 
 The workflow defined in `.github/workflows/publish.yml` triggers automatically on:
 - Pushing a version tag: `git push origin v*`
-- Creating a GitHub Release in the repository
 - Manual invocation via `workflow_dispatch`
 
 ### Pipeline Execution Flow

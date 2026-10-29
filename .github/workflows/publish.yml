@@ -1,12 +1,14 @@
 name: publish
 
 on:
-  release:
-    types: [created]
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -80,6 +82,10 @@ jobs:
                 echo "Deployment successful: $STATE"
                 break
               elif [ "$STATE" = "FAILED" ]; then
+                if echo "$STATUS" | grep -qE "currently being published in another deployment|already been published"; then
+                  echo "Artifact already published or currently being published in another deployment: $STATUS"
+                  break
+                fi
                 echo "Deployment failed!"
                 exit 1
               fi
