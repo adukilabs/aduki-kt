@@ -82,12 +82,12 @@ Add the Aduki SDK to `app/build.gradle.kts`:
 ```kotlin
 dependencies {
     // Aduki SDK facade (Maven Central & GitHub Packages)
-    implementation("pro.aduki:sdk:0.5.2")
-    implementation("pro.aduki:android:0.5.2") // Android-specific features (optional)
+    implementation("pro.aduki:sdk:0.5.3")
+    implementation("pro.aduki:android:0.5.3") // Android-specific features (optional)
 
     // Or via JitPack:
-    // implementation("com.github.adukilabs.aduki-kt:sdk:0.5.2")
-    // implementation("com.github.adukilabs.aduki-kt:android:0.5.2")
+    // implementation("com.github.adukilabs.aduki-kt:sdk:0.5.3")
+    // implementation("com.github.adukilabs.aduki-kt:android:0.5.3")
 
     // ObjectBox persistence
     implementation("io.objectbox:objectbox-kotlin:4.0.3")
@@ -97,7 +97,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Kotlin Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
 }
 ```
 
@@ -107,14 +107,14 @@ If your application only needs specific subsystems, you can import individual mo
 
 | Module | Maven Central / GitHub Packages | JitPack | Purpose |
 | :--- | :--- | :--- | :--- |
-| **SDK Facade** | `pro.aduki:sdk:0.5.2` | `com.github.adukilabs.aduki-kt:sdk:0.5.2` | The `Aduki` entry point |
-| **Android** | `pro.aduki:android:0.5.2` | `com.github.adukilabs.aduki-kt:android:0.5.2` | Keystore DPoP key, account authenticator, Custom Tabs sign-in, passkeys (Android library, `minSdk` 26) |
-| **State** | `pro.aduki:state:0.5.2` | `com.github.adukilabs.aduki-kt:state:0.5.2` | Repositories exposing `StateFlow` |
-| **Sync** | `pro.aduki:sync:0.5.2` | `com.github.adukilabs.aduki-kt:sync:0.5.2` | RFC 7162 CONDSTORE synchronizer & Outbox |
-| **Store** | `pro.aduki:store:0.5.2` | `com.github.adukilabs.aduki-kt:store:0.5.2` | ObjectBox entities |
-| **Net** | `pro.aduki:net:0.5.2` | `com.github.adukilabs.aduki-kt:net:0.5.2` | HTTP clients (Aduki ID, mail, scheduling) |
-| **Crypto** | `pro.aduki:crypto:0.5.2` | `com.github.adukilabs.aduki-kt:crypto:0.5.2` | Keystore provider, AES-256-GCM cipher, TLS pinning, DPoP keys |
-| **Core** | `pro.aduki:core:0.5.2` | `com.github.adukilabs.aduki-kt:core:0.5.2` | models, errors, Jitter, Circuit, memory helpers |
+| **SDK Facade** | `pro.aduki:sdk:0.5.3` | `com.github.adukilabs.aduki-kt:sdk:0.5.3` | The `Aduki` entry point |
+| **Android** | `pro.aduki:android:0.5.3` | `com.github.adukilabs.aduki-kt:android:0.5.3` | Keystore DPoP key, account authenticator, Custom Tabs sign-in, passkeys (Android library, `minSdk` 26) |
+| **State** | `pro.aduki:state:0.5.3` | `com.github.adukilabs.aduki-kt:state:0.5.3` | Repositories exposing `StateFlow` |
+| **Sync** | `pro.aduki:sync:0.5.3` | `com.github.adukilabs.aduki-kt:sync:0.5.3` | RFC 7162 CONDSTORE synchronizer & Outbox |
+| **Store** | `pro.aduki:store:0.5.3` | `com.github.adukilabs.aduki-kt:store:0.5.3` | ObjectBox entities |
+| **Net** | `pro.aduki:net:0.5.3` | `com.github.adukilabs.aduki-kt:net:0.5.3` | HTTP clients (Aduki ID, mail, scheduling) |
+| **Crypto** | `pro.aduki:crypto:0.5.3` | `com.github.adukilabs.aduki-kt:crypto:0.5.3` | Keystore provider, AES-256-GCM cipher, TLS pinning, DPoP keys |
+| **Core** | `pro.aduki:core:0.5.3` | `com.github.adukilabs.aduki-kt:core:0.5.3` | models, errors, Jitter, Circuit, memory helpers |
 
 ---
 

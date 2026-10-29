@@ -14,7 +14,7 @@ In your app's `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("pro.aduki:android:0.5.2")
+    implementation("pro.aduki:android:0.5.3")
 }
 ```
 

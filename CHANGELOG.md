@@ -2,6 +2,19 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
+## 0.5.3 (2026-10-29)
+
+Release notes:
+
+- Account sessions & device revocation (#86, PR #94): Added `AccountSession` data class, `Aduki.sessions()`, `Aduki.revoke(hex)`, `Id.sessions()`, and `Id.revoke(hex)` for auditing and revoking active device logins and sessions. Refreshed token state is automatically synchronized across active sessions and token stores.
+- Mailbox hierarchy & move (#88, PR #93): Added `parent` hierarchy pointer to `Mailbox` entity and `MailboxRow`. Added `Mail.moveMailbox(hex, parent)` with optimistic local ObjectBox store updates and `mailbox.move` sync outbox journaling.
+- Mail raw RFC 822 source & headers (#85, PR #93): Added `Mail.headers(hex)` and `Mail.source(hex)` using JMAP `Email/get` properties and authenticated `/jmap/download` endpoint for RFC 822 message inspection.
+- Thread muting (#84, PR #93): Added `Message.MUTED` (`$muted`) keyword support, `Message.muted()`, `Conversation.muted`, and `Mail.mute(threadId, on)` outbox flag action.
+- Mail drafts (#83, PR #93): Added `Message.PENDING` (`msg_`) local prefix, `Mail.saveDraft(draft)` and `Mail.openDraft(hex)` creating and updating drafts in the local store and syncing via outbox action `draft_save`.
+- Vacation responder singleton (#87, PR #92): Wrapped `SINGLETON` ID in a singleton list for `Responder.fetch()` to resolve `NoSuchMethodError` across Android runtimes.
+- TokenStore & race recovery (#89, #90, PR #92): Added thread-safe `TokenStore` interface and default implementation for atomic token reloads upon HTTP 401 token expiry; prevented blanking refresh tokens when unauthorized.
+- Dependency updates (#91, PR #95): Upgraded `kotlinx.coroutines` to 1.10.1, `org.json` to 20240303, and AndroidX test libraries (`androidx.test.ext:junit` 1.3.0, `androidx.test:core` 1.7.0, `androidx.test:runner` 1.7.0, `androidx.test.espresso` 3.7.0).
+
 ## 0.5.2 (2026-10-26)
 
 Release notes:
