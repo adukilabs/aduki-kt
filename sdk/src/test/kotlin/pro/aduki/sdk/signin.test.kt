@@ -13,6 +13,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import pro.aduki.core.models.TokenStore
 import pro.aduki.core.models.Tokens
 
 /** Aduki ID sign-in wiring: renewal on 401 and sign-out. */
@@ -223,5 +224,124 @@ class SigninTest {
         assertEquals("DPoP $fresh", retry.getHeader("Authorization"))
         assertNotNull(retry.getHeader("DPoP"))
         assertTrue(retry.getHeader("DPoP") != first.getHeader("DPoP"))
+    }
+
+    @Test
+    fun twoClientsSharingTokenStoreRecoverWhenFirstRotatesTokens() = runBlocking {
+        val store = object : TokenStore {
+            var current: Tokens? = Tokens(token = "eyJ.old", refresh = "rt_1", expires = "600", session = "sess_1")
+            override fun load(): Tokens? = current
+            override fun save(tokens: Tokens) { current = tokens }
+            override fun clear() { current = null }
+        }
+
+        val clientA = Aduki.builder()
+            .tokens(store)
+            .endpoint(server.url("/v1").toString())
+            .identity(server.url("/id").toString())
+            .build()
+
+        val clientB = Aduki.builder()
+            .tokens(store)
+            .endpoint(server.url("/v1").toString())
+            .identity(server.url("/id").toString())
+            .build()
+
+        // Client A makes a request, gets 401, renews rt_1 -> rt_2, receives eyJ.newA
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"success":true,"data":{"access":"eyJ.newA","refresh":"rt_2","expires":600}}"""
+            )
+        )
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"hex":"u1","tenant":"t1"}"""))
+
+        val idA = clientA.me()
+        assertNotNull(idA)
+        assertEquals("u1", idA!!.user)
+        assertEquals("eyJ.newA", store.load()?.token)
+        assertEquals("rt_2", store.load()?.refresh)
+
+        // Client B still had eyJ.old in memory. When it requests /v1/user/me:
+        // 1) First call uses eyJ.old and gets 401
+        // 2) Client B renews, reloads from tokenStore, sees fresh eyJ.newA
+        // 3) Re-attempts request with eyJ.newA without rotating again
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"hex":"u1","tenant":"t1"}"""))
+
+        val idB = clientB.me()
+        assertNotNull(idB)
+        assertEquals("u1", idB!!.user)
+        assertEquals("eyJ.newA", clientB.session.token())
+        assertEquals("rt_2", clientB.session.refresh())
+    }
+
+    @Test
+    fun sharedTokenStoreRecoversWhenRefreshSpentElsewhereReturns401() = runBlocking {
+        var loadCount = 0
+        val store = object : TokenStore {
+            var current: Tokens? = Tokens(token = "eyJ.old", refresh = "rt_1", expires = "600", session = "sess_1")
+            override fun load(): Tokens? {
+                loadCount++
+                if (loadCount >= 4 && current?.refresh == "rt_1") {
+                    current = Tokens(token = "eyJ.old", refresh = "rt_2", expires = "600", session = "sess_1")
+                }
+                return current
+            }
+            override fun save(tokens: Tokens) { current = tokens }
+            override fun clear() { current = null }
+        }
+
+        val client = Aduki.builder()
+            .tokens(store)
+            .endpoint(server.url("/v1").toString())
+            .identity(server.url("/id").toString())
+            .build()
+
+        // 1. Mail rejects stale access token
+        server.enqueue(MockResponse().setResponseCode(401))
+        // 2. Aduki ID rejects rt_1 because it was already spent
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"success":false,"error":"token_revoked"}"""))
+        // 3. Client catches 401, re-checks store, sees rt_2, rotates rt_2 -> rt_3
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"success":true,"data":{"access":"eyJ.new3","refresh":"rt_3","expires":600}}"""
+            )
+        )
+        // 4. Retried mail request succeeds with eyJ.new3
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"hex":"u1","tenant":"t1"}"""))
+
+        val id = client.me()
+        assertNotNull(id)
+        assertEquals("u1", id!!.user)
+        assertEquals("eyJ.new3", client.session.token())
+        assertEquals("rt_3", client.session.refresh())
+        assertEquals("rt_3", store.load()?.refresh)
+    }
+
+    @Test
+    fun revocationClearsBothMemoryAndTokenStore() = runBlocking {
+        val store = object : TokenStore {
+            var current: Tokens? = Tokens(token = "eyJ.bad", refresh = "rt_revoked", expires = "600", session = "sess_1")
+            override fun load(): Tokens? = current
+            override fun save(tokens: Tokens) { current = tokens }
+            override fun clear() { current = null }
+        }
+
+        val client = Aduki.builder()
+            .tokens(store)
+            .endpoint(server.url("/v1").toString())
+            .identity(server.url("/id").toString())
+            .build()
+
+        // Mail rejects token
+        server.enqueue(MockResponse().setResponseCode(401))
+        // Aduki ID rejects refresh token
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"success":false,"error":"unauthorized"}"""))
+
+        val id = client.me()
+        assertNull(id)
+        assertEquals("", client.session.refresh())
+        assertNull(store.load())
     }
 }

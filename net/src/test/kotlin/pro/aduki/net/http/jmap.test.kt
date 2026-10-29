@@ -5,6 +5,7 @@ import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -65,7 +66,7 @@ class JmapTest {
 
     @Test
     fun aCallCarriesUsingAndTheAccount() {
-        val reply = jmap.call("Email/get", JSONObject().put("ids", listOf("m1")))
+        val reply = jmap.call("Email/get", JSONObject().put("ids", JSONArray(listOf("m1"))))
         assertEquals("m1", reply.getJSONArray("list").getJSONObject(0).getString("id"))
         val sent = JSONObject(requests.last { it.path == "/jmap" }.body.readUtf8())
         assertEquals("urn:ietf:params:jmap:core", sent.getJSONArray("using").getString(0))

@@ -11,3 +11,13 @@ data class Tokens(
     val expires: String = "",
     val session: String = ""
 )
+
+/**
+ * TokenStore loads, saves, and clears tokens across processes or in external
+ * secure persistence (e.g. Android AccountManager).
+ */
+interface TokenStore {
+    fun load(): Tokens?
+    fun save(tokens: Tokens)
+    fun clear() {}
+}
