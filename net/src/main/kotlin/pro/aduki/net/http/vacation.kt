@@ -1,5 +1,6 @@
 package pro.aduki.net.http
 
+import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
 import java.time.temporal.ChronoUnit
@@ -61,7 +62,7 @@ class Responder(private val jmap: Jmap) {
 
     /** The current reply; a disabled, empty one when none was ever set. */
     fun fetch(): Vacation {
-        val reply = jmap.call("VacationResponse/get", JSONObject().put("ids", listOf(SINGLETON)), using)
+        val reply = jmap.call("VacationResponse/get", JSONObject().put("ids", JSONArray(listOf(SINGLETON))), using)
         val obj = reply.optJSONArray("list")?.optJSONObject(0) ?: return Vacation()
         return Vacation.from(obj)
     }

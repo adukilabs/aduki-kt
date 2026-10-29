@@ -23,6 +23,7 @@ import pro.aduki.net.http.Enrolment
 import pro.aduki.net.http.Scheme
 import pro.aduki.net.http.Whoami
 import pro.aduki.core.models.Identity
+import pro.aduki.core.models.TokenStore
 import pro.aduki.core.models.Tokens
 import pro.aduki.state.repository.Session
 
@@ -77,8 +78,15 @@ class Aduki internal constructor(
     private val store: BoxStore? = null,
     /** Whether [close] closes [store] (it was opened by `Builder.store(dir)`). */
     private val owned: Boolean = false,
-    rejected: (Outbox, Rejected) -> Unit = { _, _ -> }
+    rejected: (Outbox, Rejected) -> Unit = { _, _ -> },
+    val tokenStore: TokenStore? = null
 ) {
+    init {
+        tokenStore?.load()?.let { stored ->
+            session.update(stored)
+        }
+    }
+
     private fun activeAuthString(): String {
         return session.token() ?: if (token.isNotBlank()) token else apiKey
     }
@@ -153,22 +161,80 @@ class Aduki internal constructor(
      * Renews the access token unless another caller already replaced [stale].
      */
     private fun renew(stale: String?): String? = synchronized(renewal) {
-        val current = session.tokens.value ?: return null
-        if (stale != null && current.token != stale) return current.token
+        var current = session.tokens.value ?: return null
+
+        if (tokenStore != null) {
+            val stored = try { tokenStore.load() } catch (_: Exception) { null }
+            if (stored != null && stored.refresh.isNotBlank() && stored.refresh != current.refresh) {
+                current = current.copy(
+                    token = if (stored.token.isNotBlank()) stored.token else current.token,
+                    refresh = stored.refresh,
+                    expires = if (stored.expires.isNotBlank()) stored.expires else current.expires,
+                    session = if (stored.session.isNotBlank()) stored.session else current.session
+                )
+                session.update(current)
+                align(current)
+                if (stale != null && current.token.isNotBlank() && current.token != stale) {
+                    return current.token
+                }
+            }
+        }
+
+        if (stale != null && current.token != stale && current.token.isNotBlank()) return current.token
         if (current.refresh.isBlank()) return null
         align(current)
+
+        val presented = current.refresh
         try {
             val fresh = id.rotate(Endpoints.AUDIENCE, current.token)
-            session.update(fresh.copy(session = current.session))
+            val updated = fresh.copy(session = current.session)
+            session.update(updated)
+            try { tokenStore?.save(updated) } catch (_: Exception) {}
             fresh.token
         } catch (e: pro.aduki.core.errors.AdukiException.Auth) {
             // A 2xx that failed validation spent the refresh token: keep the
             // rotated one if it came back, else drop it (reuse revokes the session).
             session.update(current.copy(refresh = e.refresh))
+            if (e.refresh.isNotBlank()) {
+                try { tokenStore?.save(current.copy(refresh = e.refresh)) } catch (_: Exception) {}
+            } else {
+                try { tokenStore?.clear() } catch (_: Exception) {}
+            }
             null
         } catch (e: pro.aduki.core.errors.AdukiException.Unauthorized) {
-            // Refused: spent, expired or revoked. Never present it again.
-            session.update(current.copy(refresh = ""))
+            if (tokenStore != null) {
+                val stored = try { tokenStore.load() } catch (_: Exception) { null }
+                if (stored != null && stored.refresh.isNotBlank() && stored.refresh != presented) {
+                    val adopted = current.copy(
+                        token = if (stored.token.isNotBlank()) stored.token else current.token,
+                        refresh = stored.refresh,
+                        expires = if (stored.expires.isNotBlank()) stored.expires else current.expires,
+                        session = if (stored.session.isNotBlank()) stored.session else current.session
+                    )
+                    session.update(adopted)
+                    align(adopted)
+                    if (stale != null && adopted.token.isNotBlank() && adopted.token != stale) {
+                        return adopted.token
+                    }
+                    try {
+                        val fresh = id.rotate(Endpoints.AUDIENCE, adopted.token)
+                        val updated = fresh.copy(session = adopted.session)
+                        session.update(updated)
+                        try { tokenStore.save(updated) } catch (_: Exception) {}
+                        return fresh.token
+                    } catch (e2: pro.aduki.core.errors.AdukiException.Unauthorized) {
+                        session.update(adopted.copy(refresh = ""))
+                        try { tokenStore.clear() } catch (_: Exception) {}
+                        return null
+                    } catch (_: Exception) {
+                        return null
+                    }
+                }
+                session.update(current.copy(refresh = ""))
+                try { tokenStore.clear() } catch (_: Exception) {}
+            } else {
+                session.update(current.copy(refresh = ""))
+            }
             null
         } catch (_: Exception) {
             null
@@ -375,15 +441,19 @@ class Aduki internal constructor(
         val current = session.tokens.value
         if (current == null) {
             session.clear()
+            try { tokenStore?.clear() } catch (_: Exception) {}
             return false
         }
         align(current)
         val revoked = id.signOut()
         if (id.signedIn()) {
             // Still signed in remotely: keep the retry credential.
-            session.update(current.copy(refresh = id.refreshToken()))
+            val retained = current.copy(refresh = id.refreshToken())
+            session.update(retained)
+            try { tokenStore?.save(retained) } catch (_: Exception) {}
         } else {
             session.clear()
+            try { tokenStore?.clear() } catch (_: Exception) {}
         }
         revoked
     }
@@ -434,6 +504,7 @@ class Aduki internal constructor(
         private var store: BoxStore? = null
         private var directory: File? = null
         private var rejected: (Outbox, Rejected) -> Unit = { _, _ -> }
+        private var tokenStore: TokenStore? = null
 
         fun key(key: String) = apply { this.apiKey = key }
         fun token(token: String) = apply { this.token = token }
@@ -504,13 +575,21 @@ class Aduki internal constructor(
         /** Told about each outbox action the server refused for good (e.g. an invalid recipient). */
         fun rejected(callback: (Outbox, Rejected) -> Unit) = apply { this.rejected = callback }
 
+        /**
+         * Persists and reloads tokens across processes or in external
+         * secure persistence (e.g. Android AccountManager).
+         */
+        fun tokens(store: TokenStore) = apply { this.tokenStore = store }
+
         fun engines(mailbox: MailboxEngine, contact: ContactEngine) = apply {
             this.mailboxEngine = mailbox
             this.contactEngine = contact
         }
 
         fun build(): Aduki {
-            require(apiKey.isNotBlank() || token.isNotBlank()) {
+            val storedTokens = tokenStore?.load()
+            val activeToken = if (token.isNotBlank()) token else (storedTokens?.token.orEmpty())
+            require(apiKey.isNotBlank() || activeToken.isNotBlank() || (tokenStore != null && storedTokens?.refresh?.isNotBlank() == true)) {
                 "Either API key or JWT token must not be blank"
             }
             (secureStore?.let { pro.aduki.crypto.cipher.Vault(it) } ?: pro.aduki.crypto.cipher.Vault.platform())
@@ -525,7 +604,7 @@ class Aduki internal constructor(
             )
             return Aduki(
                 apiKey = apiKey,
-                token = token,
+                token = activeToken,
                 options = options,
                 httpClient = httpClient,
                 manager = manager,
@@ -540,7 +619,8 @@ class Aduki internal constructor(
                 contactStorage = contactStorage,
                 store = local,
                 owned = store == null && local != null,
-                rejected = rejected
+                rejected = rejected,
+                tokenStore = tokenStore
             )
         }
     }
@@ -561,14 +641,17 @@ class Aduki internal constructor(
             identity: String = Endpoints.ID,
             backup: String? = null,
             dpop: pro.aduki.crypto.dpop.Key? = null,
-            pins: List<Pin> = emptyList()
+            pins: List<Pin> = emptyList(),
+            tokenStore: TokenStore? = null
         ): Aduki {
             val tempClient = HttpClient.create("", 15, pro.aduki.crypto.tls.Pinning.pinner(pins)).let { base ->
                 if (dpop == null) base else base.newBuilder().addInterceptor(Dpop(dpop)).build()
             }
             val tokens = Login.submit(tempClient, identity, handle, password, code, backup)
+            try { tokenStore?.save(tokens) } catch (_: Exception) {}
             val client = builder()
                 .apply { if (dpop != null) dpop(dpop) }
+                .apply { if (tokenStore != null) tokens(tokenStore) }
                 .endpoint(endpoint)
                 .identity(identity)
                 .pins(pins)
@@ -635,10 +718,11 @@ class Aduki internal constructor(
             identity: String = Endpoints.ID,
             backup: String? = null,
             dpop: pro.aduki.crypto.dpop.Key? = null,
-            pins: List<Pin> = emptyList()
+            pins: List<Pin> = emptyList(),
+            tokenStore: TokenStore? = null
         ): Pair<Aduki, List<String>> {
             val codes = verify(hex, password, code, identity, pins)
-            val client = login(handle, password, code, endpoint, identity, backup, dpop, pins)
+            val client = login(handle, password, code, endpoint, identity, backup, dpop, pins, tokenStore)
             return Pair(client, codes)
         }
     }
