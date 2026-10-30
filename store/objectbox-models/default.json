@@ -156,7 +156,7 @@
     },
     {
       "id": "2:8280994424801829309",
-      "lastPropertyId": "17:3378690510115235978",
+      "lastPropertyId": "18:6631041924827236901",
       "name": "Contact",
       "properties": [
         {
@@ -252,6 +252,13 @@
           "id": "17:3378690510115235978",
           "name": "photo",
           "type": 9
+        },
+        {
+          "id": "18:6631041924827236901",
+          "name": "collected",
+          "indexId": "31:283361709677764290",
+          "type": 1,
+          "flags": 8
         }
       ],
       "relations": []
@@ -710,7 +717,7 @@
     }
   ],
   "lastEntityId": "9:1819537701555628049",
-  "lastIndexId": "30:2981850047121275434",
+  "lastIndexId": "31:283361709677764290",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

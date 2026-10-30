@@ -31,6 +31,8 @@ data class Contact(
     @Index var phoneIndex: String = Sealing.index("phone", phone),
     /** The vCard UID; matches imported cards to stored ones. */
     @Index var uid: String = "",
+    /** True if this contact was auto-collected rather than added manually. */
+    @Index var collected: Boolean = false,
     @Convert(converter = SealedList::class, dbType = String::class) var emails: List<String> = emptyList(),
     @Convert(converter = SealedList::class, dbType = String::class) var phones: List<String> = emptyList(),
     @Convert(converter = SealedList::class, dbType = String::class) var groups: List<String> = emptyList(),

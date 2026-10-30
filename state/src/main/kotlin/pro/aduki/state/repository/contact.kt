@@ -120,6 +120,24 @@ class Contact(
      */
     fun observe(): StateFlow<List<ContactEntity>> = contactsFlow
 
+    private val collectedFlow: StateFlow<List<ContactEntity>> by lazy {
+        source.contacts()
+            .map { list -> list.filter { it.collected }.sortedBy { it.name } }
+            .stateIn(scope = scope, started = SharingStarted.Eagerly, initialValue = emptyList())
+    }
+
+    private val manualFlow: StateFlow<List<ContactEntity>> by lazy {
+        source.contacts()
+            .map { list -> list.filterNot { it.collected }.sortedBy { it.name } }
+            .stateIn(scope = scope, started = SharingStarted.Eagerly, initialValue = emptyList())
+    }
+
+    /** Hot StateFlow of automatically collected contacts, sorted by name. */
+    fun collected(): StateFlow<List<ContactEntity>> = collectedFlow
+
+    /** Hot StateFlow of manual contacts (not auto-collected), sorted by name. */
+    fun manual(): StateFlow<List<ContactEntity>> = manualFlow
+
     /**
      * Hot StateFlow of contacts matching a search prefix or substring.
      */

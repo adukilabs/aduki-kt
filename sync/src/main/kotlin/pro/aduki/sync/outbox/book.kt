@@ -220,17 +220,26 @@ class Book(private val store: BoxStore, private val manager: Manager) {
         const val LIMIT = 100_000
 
         /** The editable fields of [contact], with its vCard as the source. */
-        fun card(contact: Contact): Card = Card(
-            name = contact.name,
-            emails = contact.emails.ifEmpty { listOfNotNull(contact.email.ifBlank { null }) },
-            phones = contact.phones.ifEmpty { listOfNotNull(contact.phone.ifBlank { null }) },
-            company = contact.company,
-            notes = contact.notes,
-            photo = contact.photo,
-            groups = contact.groups,
-            uid = contact.uid,
-            vcard = contact.vcard
-        )
+        fun card(contact: Contact): Card {
+            val parsed = if (contact.vcard.isNotBlank()) runCatching { Vcard.parse(contact.vcard) }.getOrNull() else null
+            return Card(
+                name = contact.name,
+                emails = contact.emails.ifEmpty { listOfNotNull(contact.email.ifBlank { null }) },
+                phones = contact.phones.ifEmpty { listOfNotNull(contact.phone.ifBlank { null }) },
+                company = contact.company,
+                notes = contact.notes,
+                photo = contact.photo,
+                groups = contact.groups,
+                addresses = parsed?.addresses ?: emptyList(),
+                title = parsed?.title ?: "",
+                birthday = parsed?.birthday ?: "",
+                urls = parsed?.urls ?: emptyList(),
+                nickname = parsed?.nickname ?: "",
+                collected = contact.collected,
+                uid = contact.uid,
+                vcard = contact.vcard
+            )
+        }
 
         /** [into] with what [other] adds: see [merge]. */
         fun combine(into: Card, other: Card): Card = into.copy(
@@ -241,7 +250,13 @@ class Book(private val store: BoxStore, private val manager: Manager) {
             company = into.company.ifBlank { other.company },
             notes = listOf(into.notes, other.notes).filter { it.isNotBlank() }.distinct().joinToString("\n"),
             photo = into.photo.ifBlank { other.photo },
-            groups = (into.groups + other.groups).distinct()
+            groups = (into.groups + other.groups).distinct(),
+            addresses = (into.addresses + other.addresses).distinct(),
+            title = into.title.ifBlank { other.title },
+            birthday = into.birthday.ifBlank { other.birthday },
+            urls = (into.urls + other.urls).distinct(),
+            nickname = into.nickname.ifBlank { other.nickname },
+            collected = into.collected && other.collected
         )
 
         private fun fill(contact: Contact, card: Card): Contact {
@@ -256,6 +271,7 @@ class Book(private val store: BoxStore, private val manager: Manager) {
             contact.notes = card.notes
             contact.photo = card.photo.trim()
             contact.groups = card.groups.map { it.trim() }
+            contact.collected = card.collected
             contact.uid = card.uid
             contact.vcard = vcard
             return Sealing.reindex(contact)

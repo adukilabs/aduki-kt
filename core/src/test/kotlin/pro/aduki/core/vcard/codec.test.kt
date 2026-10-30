@@ -6,6 +6,8 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import pro.aduki.core.models.Card
+import pro.aduki.core.models.Link
+import pro.aduki.core.models.Postal
 
 /** vCard 3.0 and 4.0 reading and writing (#38). */
 class VcardTest {
@@ -201,5 +203,58 @@ class VcardTest {
         assertEquals(listOf("+100"), c1.phones)
         assertEquals("Card Two", c2.name)
         assertEquals(listOf("+200"), c2.phones)
+    }
+
+    @Test
+    fun parsesAndWritesPostalAddressesLinksTitleBirthdayNicknameAndCollected() {
+        val text = listOf(
+            "BEGIN:VCARD",
+            "VERSION:4.0",
+            "FN:Alice Developer",
+            "TITLE:Staff Engineer",
+            "BDAY:1995-05-15",
+            "NICKNAME:Ali",
+            "ADR;TYPE=HOME:;;123 Main St;Nairobi;Nairobi County;00100;Kenya",
+            "ADR;TYPE=WORK:PO Box 456;;Tech Park;Westlands;Nairobi;00800;Kenya",
+            "URL;TYPE=WORK:https://example.com/alice",
+            "URL:https://github.com/alice",
+            "X-ADUKI-COLLECTED:TRUE",
+            "END:VCARD"
+        ).joinToString("\r\n")
+
+        val card = Vcard.parse(text)
+        assertEquals("Alice Developer", card.name)
+        assertEquals("Staff Engineer", card.title)
+        assertEquals("1995-05-15", card.birthday)
+        assertEquals("Ali", card.nickname)
+        assertTrue(card.collected)
+        assertEquals(2, card.addresses.size)
+        assertEquals(
+            Postal(street = "123 Main St", locality = "Nairobi", region = "Nairobi County", code = "00100", country = "Kenya", type = "home"),
+            card.addresses[0]
+        )
+        assertEquals(
+            Postal(pobox = "PO Box 456", street = "Tech Park", locality = "Westlands", region = "Nairobi", code = "00800", country = "Kenya", type = "work"),
+            card.addresses[1]
+        )
+        assertEquals(2, card.urls.size)
+        assertEquals(Link(url = "https://example.com/alice", type = "work"), card.urls[0])
+        assertEquals(Link(url = "https://github.com/alice", type = "home"), card.urls[1])
+
+        // Roundtrip to V4
+        val outV4 = Vcard.write(card, Vcard.V4)
+        val roundtripV4 = Vcard.parse(outV4)
+        assertTrue(roundtripV4.same(card))
+        assertTrue("X-ADUKI-COLLECTED:TRUE" in outV4.split("\r\n"))
+        assertTrue("TITLE:Staff Engineer" in outV4.split("\r\n"))
+        assertTrue("BDAY:1995-05-15" in outV4.split("\r\n"))
+        assertTrue("NICKNAME:Ali" in outV4.split("\r\n"))
+
+        // Unmarking collected removes X-ADUKI-COLLECTED
+        val uncollected = card.copy(collected = false)
+        val outUncollected = Vcard.write(uncollected, Vcard.V4)
+        val roundtripUncollected = Vcard.parse(outUncollected)
+        assertFalse(roundtripUncollected.collected)
+        assertFalse(outUncollected.contains("COLLECTED"))
     }
 }
