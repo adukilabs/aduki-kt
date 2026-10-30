@@ -205,18 +205,28 @@ class Contacts(
         private fun name(vcard: String): String = runCatching { Vcard.parse(vcard).name }
             .getOrElse { throw IllegalArgumentException("Not a vCard 3.0 or 4.0 with a name", it) }
 
-        private fun row(obj: JSONObject) = ContactRow(
-            hex = obj.optString("hex"),
-            etag = if (obj.isNull("etag")) "" else obj.optString("etag"),
-            name = if (obj.isNull("name")) null else obj.optString("name"),
-            emails = strings(obj.optJSONArray("emails")),
-            phones = strings(obj.optJSONArray("phones")),
-            groups = strings(obj.optJSONArray("groups")),
-            created = if (obj.isNull("created")) 0L else Mail.timestamp(obj.optString("created")),
-            uid = if (obj.isNull("uid")) "" else obj.optString("uid"),
-            vcard = if (obj.isNull("vcard")) "" else obj.optString("vcard"),
-            updated = if (obj.isNull("updated")) 0L else Mail.timestamp(obj.optString("updated"))
-        )
+        private fun row(obj: JSONObject): ContactRow {
+            val vcard = if (obj.isNull("vcard")) "" else obj.optString("vcard")
+            val card = if (vcard.isNotBlank()) runCatching { Vcard.parse(vcard) }.getOrNull() else null
+            return ContactRow(
+                hex = obj.optString("hex"),
+                etag = if (obj.isNull("etag")) "" else obj.optString("etag"),
+                name = if (obj.isNull("name")) null else obj.optString("name"),
+                emails = strings(obj.optJSONArray("emails")),
+                phones = strings(obj.optJSONArray("phones")),
+                groups = strings(obj.optJSONArray("groups")),
+                addresses = card?.addresses ?: emptyList(),
+                title = card?.title ?: "",
+                birthday = card?.birthday ?: "",
+                urls = card?.urls ?: emptyList(),
+                nickname = card?.nickname ?: "",
+                collected = card?.collected ?: if (obj.has("collected")) obj.optBoolean("collected", false) else false,
+                created = if (obj.isNull("created")) 0L else Mail.timestamp(obj.optString("created")),
+                uid = if (obj.isNull("uid")) "" else obj.optString("uid"),
+                vcard = vcard,
+                updated = if (obj.isNull("updated")) 0L else Mail.timestamp(obj.optString("updated"))
+            )
+        }
 
         private fun strings(arr: JSONArray?): List<String> {
             if (arr == null) return emptyList()

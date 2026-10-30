@@ -122,5 +122,26 @@ class ContactTest {
         assertEquals(1, byNotes.size)
         assertEquals("c1", byNotes[0].hex)
     }
+
+    @Test
+    fun collectedAndManualFlowsSeparateContacts() = runBlocking {
+        val source = TestContactSource()
+        val repo = Contact(source = source, scope = CoroutineScope(Dispatchers.Unconfined))
+
+        source.flow.value = listOf(
+            ContactEntity(hex = "c1", name = "Collected One", collected = true),
+            ContactEntity(hex = "c2", name = "Manual One", collected = false),
+            ContactEntity(hex = "c3", name = "Collected Two", collected = true)
+        )
+
+        val collected = repo.collected().value
+        assertEquals(2, collected.size)
+        assertEquals("Collected One", collected[0].name)
+        assertEquals("Collected Two", collected[1].name)
+
+        val manual = repo.manual().value
+        assertEquals(1, manual.size)
+        assertEquals("Manual One", manual[0].name)
+    }
 }
 

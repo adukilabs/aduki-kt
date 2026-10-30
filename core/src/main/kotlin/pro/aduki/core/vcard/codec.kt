@@ -1,6 +1,8 @@
 package pro.aduki.core.vcard
 
 import pro.aduki.core.models.Card
+import pro.aduki.core.models.Link
+import pro.aduki.core.models.Postal
 
 /**
  * Vcard reads vCard 2.1, 3.0 and 4.0, and writes vCard 3.0 (RFC 2426) and 4.0 (RFC 6350).
@@ -19,7 +21,10 @@ object Vcard {
     const val V4 = "4.0"
 
     // Properties [write] produces itself; anything else is copied from the source.
-    private val OWN = setOf("BEGIN", "END", "VERSION", "UID", "FN", "N", "ORG", "EMAIL", "TEL", "NOTE", "PHOTO", "CATEGORIES")
+    private val OWN = setOf(
+        "BEGIN", "END", "VERSION", "UID", "FN", "N", "ORG", "EMAIL", "TEL", "NOTE", "PHOTO", "CATEGORIES",
+        "ADR", "TITLE", "BDAY", "URL", "NICKNAME", "X-ADUKI-COLLECTED", "X-COLLECTED"
+    )
 
     /** The cards in [text], each from `BEGIN:VCARD` to `END:VCARD` (an unterminated last one included). */
     fun split(text: String): List<String> {
@@ -58,20 +63,35 @@ object Vcard {
         var company = ""
         var photo = ""
         var uid = ""
+        var title = ""
+        var birthday = ""
+        var nickname = ""
+        var collected = false
         val emails = mutableListOf<String>()
         val phones = mutableListOf<String>()
         val notes = mutableListOf<String>()
         val groups = LinkedHashSet<String>()
+        val addresses = mutableListOf<Postal>()
+        val urls = mutableListOf<Link>()
         for (p in props) {
             when (p.name) {
                 "FN" -> if (name.isEmpty()) name = unescape(p.value).trim()
                 "N" -> if (structured.isEmpty()) structured = person(p.value)
                 "ORG" -> if (company.isEmpty()) company = unescape(components(p.value, ';').first()).trim()
+                "TITLE" -> if (title.isEmpty()) title = unescape(p.value).trim()
+                "BDAY" -> if (birthday.isEmpty()) birthday = p.value.trim()
+                "NICKNAME" -> if (nickname.isEmpty()) nickname = unescape(p.value).trim()
                 "EMAIL" -> email(p).takeIf { it.isNotEmpty() }?.let { emails += it }
                 "TEL" -> phone(p).takeIf { it.isNotEmpty() }?.let { phones += it }
                 "NOTE" -> unescape(p.value).takeIf { it.isNotBlank() }?.let { notes += it }
                 "PHOTO" -> if (photo.isEmpty()) photo = image(p)
                 "CATEGORIES" -> components(p.value, ',').map { unescape(it).trim() }.filter { it.isNotEmpty() }.forEach { groups += it }
+                "ADR" -> address(p)?.let { addresses += it }
+                "URL" -> link(p)?.let { urls += it }
+                "X-ADUKI-COLLECTED", "X-COLLECTED" -> {
+                    val v = p.value.trim()
+                    if (v.equals("TRUE", true) || v == "1") collected = true
+                }
                 "UID" -> uid = p.value.trim()
             }
         }
@@ -85,6 +105,12 @@ object Vcard {
             notes = notes.joinToString("\n"),
             photo = photo,
             groups = groups.toList(),
+            addresses = addresses.distinct(),
+            title = title,
+            birthday = birthday,
+            urls = urls.distinct(),
+            nickname = nickname,
+            collected = collected,
             uid = uid,
             vcard = card
         )
@@ -116,8 +142,22 @@ object Vcard {
             val org = source.firstOrNull { it.name == "ORG" }
             out += if (from != V2 && org != null && old?.company == card.company) org.raw else "ORG:${escape(card.company)}"
         }
+        if (card.title.isNotBlank()) {
+            val t = source.firstOrNull { it.name == "TITLE" }
+            out += if (from != V2 && t != null && old?.title == card.title) t.raw else "TITLE:${escape(card.title)}"
+        }
+        if (card.birthday.isNotBlank()) {
+            val b = source.firstOrNull { it.name == "BDAY" }
+            out += if (from != V2 && b != null && old?.birthday == card.birthday) b.raw else "BDAY:${escape(card.birthday)}"
+        }
+        if (card.nickname.isNotBlank()) {
+            val nick = source.firstOrNull { it.name == "NICKNAME" }
+            out += if (from != V2 && nick != null && old?.nickname == card.nickname) nick.raw else "NICKNAME:${escape(card.nickname)}"
+        }
         out += kept(card.emails, source.filter { it.name == "EMAIL" }, ::email, from) { "EMAIL:${escape(it)}" }
         out += kept(card.phones, source.filter { it.name == "TEL" }, ::phone, from) { "TEL:$it" }
+        out += keptPostal(card.addresses, source.filter { it.name == "ADR" }, from)
+        out += keptLink(card.urls, source.filter { it.name == "URL" }, from)
         if (card.notes.isNotBlank()) {
             out += if (from != V2 && old?.notes == card.notes) source.filter { it.name == "NOTE" }.map { it.raw } else listOf("NOTE:${escape(card.notes)}")
         }
@@ -126,6 +166,7 @@ object Vcard {
             out += if (line != null && old?.photo == card.photo && from == version) line.raw else photo(card.photo, version)
         }
         if (card.groups.isNotEmpty()) out += "CATEGORIES:${card.groups.joinToString(",") { escape(it) }}"
+        if (card.collected) out += "X-ADUKI-COLLECTED:TRUE"
         out += source.filter { it.name !in OWN }.map { p ->
             if (from == V2 && p.params["ENCODING"]?.any { it.equals("QUOTED-PRINTABLE", true) } == true) {
                 "${p.name}:${escape(p.value)}"
@@ -378,6 +419,76 @@ object Vcard {
                 }
             } else {
                 fresh(value)
+            }
+        }
+    }
+
+    private fun address(p: Property): Postal? {
+        val parts = components(p.value, ';').map { unescape(it).trim() }
+        val pobox = parts.getOrElse(0) { "" }
+        val ext = parts.getOrElse(1) { "" }
+        val street = parts.getOrElse(2) { "" }
+        val locality = parts.getOrElse(3) { "" }
+        val region = parts.getOrElse(4) { "" }
+        val code = parts.getOrElse(5) { "" }
+        val country = parts.getOrElse(6) { "" }
+        if (pobox.isEmpty() && ext.isEmpty() && street.isEmpty() && locality.isEmpty() && region.isEmpty() && code.isEmpty() && country.isEmpty()) {
+            return null
+        }
+        val type = p.params["TYPE"]?.firstOrNull()?.lowercase() ?: "home"
+        return Postal(
+            street = street,
+            locality = locality,
+            region = region,
+            code = code,
+            country = country,
+            pobox = pobox,
+            ext = ext,
+            type = type
+        )
+    }
+
+    private fun link(p: Property): Link? {
+        val value = unescape(p.value).trim()
+        if (value.isEmpty()) return null
+        val type = p.params["TYPE"]?.firstOrNull()?.lowercase() ?: "home"
+        return Link(url = value, type = type)
+    }
+
+    private fun keptPostal(
+        addresses: List<Postal>,
+        lines: List<Property>,
+        from: String? = null
+    ): List<String> {
+        val pool = lines.toMutableList()
+        return addresses.map { addr ->
+            val line = pool.firstOrNull { address(it) == addr }
+            if (line != null && from != V2) {
+                pool.remove(line)
+                line.raw
+            } else {
+                if (line != null) pool.remove(line)
+                val type = if (addr.type.isNotBlank()) ";TYPE=${addr.type.uppercase()}" else ""
+                "ADR$type:${escape(addr.pobox)};${escape(addr.ext)};${escape(addr.street)};${escape(addr.locality)};${escape(addr.region)};${escape(addr.code)};${escape(addr.country)}"
+            }
+        }
+    }
+
+    private fun keptLink(
+        links: List<Link>,
+        lines: List<Property>,
+        from: String? = null
+    ): List<String> {
+        val pool = lines.toMutableList()
+        return links.map { l ->
+            val line = pool.firstOrNull { link(it) == l }
+            if (line != null && from != V2) {
+                pool.remove(line)
+                line.raw
+            } else {
+                if (line != null) pool.remove(line)
+                val type = if (l.type.isNotBlank() && !l.type.equals("home", true)) ";TYPE=${l.type.uppercase()}" else ""
+                "URL$type:${escape(l.url)}"
             }
         }
     }

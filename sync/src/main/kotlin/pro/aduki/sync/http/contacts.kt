@@ -112,7 +112,8 @@ class HttpContactTransport(
                 phones = phones,
                 groups = row.groups,
                 notes = card?.notes ?: "",
-                photo = card?.photo ?: ""
+                photo = card?.photo ?: "",
+                collected = row.collected || (card?.collected ?: false)
             )
         }
     }
