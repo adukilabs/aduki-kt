@@ -2,6 +2,16 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
+## 0.5.4 (2026-10-31)
+
+Release notes:
+
+- Peer session grants & AccountManager visibility (#96, PR #104): Added per-package isolated token storage in `Accounts`, single-use peer session grants for companion apps without a TOTP prompt, and `Visibility` test seam for cross-app visibility verification.
+- 401 Token Refresh Deadlock (#97, PR #101): Fixed deadlock when access token was expired/null but refresh token was valid. In `Authenticator.authenticate()`, when `access` is blank/null but `refresh` is present, it now proceeds directly to renew tokens instead of returning null and triggering an auth failure loop.
+- RFC 6350 Card fields (#98, PR #102): Added `Postal` model and extended `Card` and `ContactRow` with typed postal addresses (`ADR`), job titles (`TITLE`), birthdays (`BDAY`), URLs (`URL`), and nicknames (`NICKNAME`) with lossless vCard 2.1/3.0/4.0 codec round-trip.
+- Auto-collected contact marker (#99, PR #102): Added indexed `collected: Boolean` property to `Card`, `ContactRow`, and ObjectBox `Contact` entity with reactive `collected()` and `manual()` filter flows in `ContactRepository`.
+- Progressive import & cancellation (#100, PR #103): Added `Progress` model and reactive `Contacts.ingest(InputStream): Flow<Progress>` with cooperative cancellation, partial import reports, background I/O execution, and non-cancellable outbox drain guarantee.
+
 ## 0.5.3 (2026-10-29)
 
 Release notes:

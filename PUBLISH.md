@@ -116,7 +116,7 @@ When cutting a new release:
 ### 1. Bump Version
 Update `release` in `build.gradle.kts`:
 ```kotlin
-val release = "0.5.3"
+val release = "0.5.4"
 ```
 
 ### 2. Update Documentation
@@ -137,17 +137,17 @@ The bundle zip is written to `build/bundle.zip`.
 
 ### 4. Commit and Tag
 ```bash
-git commit -s -m "chore: release 0.5.3"
-git tag v0.5.3
+git commit -s -m "chore: release 0.5.4"
+git tag v0.5.4
 git push origin main
-git push origin v0.5.3
+git push origin v0.5.4
 ```
 
 ### 5. Monitor and Verify
 1. **GitHub Actions**: Inspect the `publish` workflow run at `https://github.com/adukilabs/aduki-kt/actions`.
 2. **GitHub Packages**: Confirm all 8 packages appear at `https://github.com/orgs/adukilabs/packages?repo_name=aduki-kt`.
 3. **Maven Central**: Verify publication on Central Portal at `https://central.sonatype.com/artifact/pro.aduki/sdk`.
-4. **JitPack**: Check build status at `https://jitpack.io/#adukilabs/aduki-kt/v0.5.3`.
+4. **JitPack**: Check build status at `https://jitpack.io/#adukilabs/aduki-kt/v0.5.4`.
 
 ---
 
@@ -171,8 +171,8 @@ dependencyResolutionManagement {
 
 // app/build.gradle.kts
 dependencies {
-    implementation("pro.aduki:sdk:0.5.3")
-    implementation("pro.aduki:android:0.5.3") // Android-specific features
+    implementation("pro.aduki:sdk:0.5.4")
+    implementation("pro.aduki:android:0.5.4") // Android-specific features
 }
 ```
 
@@ -201,8 +201,8 @@ dependencyResolutionManagement {
 
 // app/build.gradle.kts
 dependencies {
-    implementation("pro.aduki:sdk:0.5.3")
-    implementation("pro.aduki:android:0.5.3")
+    implementation("pro.aduki:sdk:0.5.4")
+    implementation("pro.aduki:android:0.5.4")
 }
 ```
 
@@ -234,8 +234,8 @@ dependencyResolutionManagement {
 // app/build.gradle.kts
 dependencies {
     // Coordinates use com.github.adukilabs.aduki-kt:<module>:<tag>
-    implementation("com.github.adukilabs.aduki-kt:sdk:0.5.3")
-    implementation("com.github.adukilabs.aduki-kt:android:0.5.3")
+    implementation("com.github.adukilabs.aduki-kt:sdk:0.5.4")
+    implementation("com.github.adukilabs.aduki-kt:android:0.5.4")
 }
 ```
 
@@ -255,7 +255,7 @@ dependencyResolutionManagement {
 
 // app/build.gradle
 dependencies {
-    implementation 'com.github.adukilabs.aduki-kt:sdk:0.5.3'
-    implementation 'com.github.adukilabs.aduki-kt:android:0.5.3'
+    implementation 'com.github.adukilabs.aduki-kt:sdk:0.5.4'
+    implementation 'com.github.adukilabs.aduki-kt:android:0.5.4'
 }
 ```
