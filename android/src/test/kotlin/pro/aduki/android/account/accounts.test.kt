@@ -222,6 +222,124 @@ class AccountsTest {
         assertNull(accounts2.tokens("a1b2"))
     }
 
+    @Test fun peerAppRedeemsSilentSessionGrantOnShare() {
+        val mailContext = AppContext(context, "pro.aduki.mail")
+        val calContext = AppContext(context, "pro.aduki.calendar")
+        val contactsContext = AppContext(context, "pro.aduki.contacts")
+
+        val mailVault = softVault()
+        val mailAccounts = Accounts(mailContext, vault = mailVault, manager = manager)
+        mailAccounts.reconcile(center(ada))
+        val originalTokens = Tokens("mail_access_tok", "mail_refresh_tok", "600", "sess_mail")
+        mailAccounts.save("a1b2", originalTokens)
+
+        // Mail shares account with Calendar and Contacts
+        val sharedCount = mailAccounts.share(listOf("pro.aduki.calendar", "pro.aduki.contacts"))
+        assertEquals(1, sharedCount)
+
+        // Calendar opens with its own vault
+        val calVault = softVault()
+        val calAccounts = Accounts(calContext, vault = calVault, manager = manager)
+
+        // Calendar gets session silently via peer grant redemption
+        val calTokens = calAccounts.tokens("a1b2")
+        assertEquals(originalTokens, calTokens)
+
+        // Calendar tokens are now sealed in its own private store
+        // Calling tokens again retrieves from Calendar's own store
+        val calTokensAgain = calAccounts.tokens("a1b2")
+        assertEquals(originalTokens, calTokensAgain)
+
+        // Contacts opens with its own vault and redeems its own grant
+        val contactsVault = softVault()
+        val contactsAccounts = Accounts(contactsContext, vault = contactsVault, manager = manager)
+        val contactsTokens = contactsAccounts.tokens("a1b2")
+        assertEquals(originalTokens, contactsTokens)
+
+        // A second redemption attempt from Calendar returns null since grant was single-use
+        assertNull(calAccounts.redeem("a1b2"))
+
+        // An untrusted app with no grant cannot read tokens
+        val driveContext = AppContext(context, "pro.aduki.drive")
+        val driveAccounts = Accounts(driveContext, vault = softVault(), manager = manager)
+        assertNull(driveAccounts.tokens("a1b2"))
+    }
+
+    @Test fun customVisibilityProviderTestSeam() {
+        val recorded = mutableListOf<Triple<String, String, Int>>()
+        val customVisibility = object : Visibility {
+            override fun set(account: android.accounts.Account, target: String, mode: Int): Boolean {
+                recorded.add(Triple(account.name, target, mode))
+                return true
+            }
+            override fun get(account: android.accounts.Account, target: String): Int =
+                AccountManager.VISIBILITY_VISIBLE
+        }
+
+        val testAccounts = Accounts(context, vault = vault, manager = manager, visibility = customVisibility)
+        testAccounts.reconcile(center(ada))
+        testAccounts.share("a1b2", listOf("pro.aduki.calendar"))
+
+        assertEquals(1, recorded.size)
+        assertEquals("ada@aduki.me", recorded[0].first)
+        assertEquals("pro.aduki.calendar", recorded[0].second)
+        assertEquals(AccountManager.VISIBILITY_VISIBLE, recorded[0].third)
+        assertEquals(AccountManager.VISIBILITY_VISIBLE, testAccounts.visibility("a1b2", "pro.aduki.calendar"))
+    }
+
+    @Test fun expiredGrantReturnsNull() {
+        val mailContext = AppContext(context, "pro.aduki.mail")
+        val calContext = AppContext(context, "pro.aduki.calendar")
+
+        val mailAccounts = Accounts(mailContext, vault = softVault(), manager = manager)
+        mailAccounts.reconcile(center(ada))
+        val entry = mailAccounts.find("a1b2")!!
+
+        // Deposit an expired grant (ttl = -1000L)
+        mailAccounts.grant(entry.account, "pro.aduki.calendar", Tokens("acc", "ref", "600", "s"), ttl = -1000L)
+
+        val calAccounts = Accounts(calContext, vault = softVault(), manager = manager)
+        assertNull(calAccounts.tokens("a1b2"))
+    }
+
+    @Test fun revokeRemovesPendingGrant() {
+        val mailContext = AppContext(context, "pro.aduki.mail")
+        val calContext = AppContext(context, "pro.aduki.calendar")
+
+        val mailAccounts = Accounts(mailContext, vault = softVault(), manager = manager)
+        mailAccounts.reconcile(center(ada))
+        mailAccounts.save("a1b2", Tokens("acc", "ref", "600", "s"))
+        mailAccounts.grant("a1b2", "pro.aduki.calendar")
+
+        // Mail revokes the grant before Calendar redeems it
+        assertTrue(mailAccounts.revoke("a1b2", "pro.aduki.calendar"))
+
+        val calAccounts = Accounts(calContext, vault = softVault(), manager = manager)
+        assertNull(calAccounts.tokens("a1b2"))
+    }
+
+    @Test fun signingOutFromAnyAppDropsAccountForPeerApps() {
+        val mailContext = AppContext(context, "pro.aduki.mail")
+        val calContext = AppContext(context, "pro.aduki.calendar")
+
+        val mailAccounts = Accounts(mailContext, vault = softVault(), manager = manager)
+        mailAccounts.reconcile(center(ada))
+        mailAccounts.save("a1b2", Tokens("acc", "ref", "600", "s"))
+        mailAccounts.share(listOf("pro.aduki.calendar"))
+
+        val calAccounts = Accounts(calContext, vault = softVault(), manager = manager)
+        assertEquals("acc", calAccounts.tokens("a1b2")?.token)
+
+        // Sign out from Calendar app
+        calAccounts.remove("a1b2")
+
+        // Account is removed from AccountManager, gone for both apps
+        assertNull(mailAccounts.find("a1b2"))
+        assertNull(calAccounts.find("a1b2"))
+        assertTrue(mailAccounts.list().isEmpty())
+        assertTrue(calAccounts.list().isEmpty())
+    }
+
     @Test fun registerDeviceStoresCredential() {
         val key = Software.p256()
         MockWebServer().use { server ->
@@ -381,4 +499,11 @@ class AccountsTest {
     }
 
     @After fun clear() = accounts.clear()
+}
+
+private class AppContext(base: Context, private val pkg: String) : android.content.ContextWrapper(base) {
+    override fun getPackageName(): String = pkg
+    override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences =
+        baseContext.getSharedPreferences("${pkg}_$name", mode)
+    override fun getApplicationContext(): Context = this
 }
