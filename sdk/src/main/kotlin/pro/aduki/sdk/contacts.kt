@@ -1,7 +1,14 @@
 package pro.aduki.sdk
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import pro.aduki.core.models.Card
 import pro.aduki.core.vcard.Vcard
@@ -13,6 +20,20 @@ import pro.aduki.state.repository.Contact as ContactRepo
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
+
+/**
+ * Progress of a contact import operation.
+ */
+data class Progress(
+    val done: Int = 0,
+    val total: Int = 0,
+    val created: Int = 0,
+    val updated: Int = 0,
+    val skipped: Int = 0,
+    val errors: List<String> = emptyList()
+) {
+    fun report(): Imported = Imported(created, updated, skipped, errors)
+}
 
 /**
  * Imported is what [Contacts.import] did with each card of a file.
@@ -154,22 +175,35 @@ class Contacts internal constructor(
     /**
      * Imports a vCard file (3.0 or 4.0, one or more cards).
      *
-     * With a local store it runs on the device, so it works offline and
-     * each card goes through the outbox like any write: a card whose UID
-     * matches a stored contact, else one sharing an e-mail address with it,
-     * updates that contact (the file's values win for a UID match; for an
-     * e-mail match addresses, phones and groups are added and blank fields
-     * filled); a card that changes nothing is skipped; any other is created.
+     * With a local store it runs on the device off the main thread ([Dispatchers.IO]),
+     * so it works offline and each card goes through the outbox like any write.
+     * When [cancel] returns true or the calling coroutine is cancelled,
+     * the import stops after the current card and safely flushes what has been
+     * stored so far, returning a partial [Imported] report.
      *
      * Without a local store the file goes to the server in one call
-     * (`POST /user/contacts/import`, at most 5000 cards), which matches by
-     * UID only.
+     * (`POST /user/contacts/import`, at most 5000 cards), which matches by UID only.
      */
-    suspend fun import(vcf: InputStream): Imported {
+    suspend fun import(
+        vcf: InputStream,
+        cancel: (() -> Boolean)? = null,
+        onProgress: ((Progress) -> Unit)? = null
+    ): Imported = withContext(Dispatchers.IO) {
         val text = vcf.bufferedReader(Charsets.UTF_8).use { it.readText() }
         if (book == null) {
-            val report = withContext(Dispatchers.IO) { client.contactsApi.import(text) }
-            return Imported(report.created, report.updated, report.skipped, report.errors.map { (i, error) -> "card ${i + 1}: $error" })
+            val report = client.contactsApi.import(text)
+            val errors = report.errors.map { (i, error) -> "card ${i + 1}: $error" }
+            val total = report.created + report.updated + report.skipped + report.errors.size
+            val progress = Progress(
+                done = total,
+                total = total,
+                created = report.created,
+                updated = report.updated,
+                skipped = report.skipped,
+                errors = errors
+            )
+            onProgress?.invoke(progress)
+            return@withContext progress.report()
         }
         val book = book()
         val stored = repo?.all().orEmpty()
@@ -181,35 +215,132 @@ class Contacts internal constructor(
         }
         stored.forEach(::index)
 
+        val cards = Vcard.split(text)
         var created = 0
         var updated = 0
         var skipped = 0
         val errors = mutableListOf<String>()
-        for ((i, raw) in Vcard.split(text).withIndex()) {
-            try {
-                val card = Vcard.parse(raw)
-                val byUid = card.uid.takeIf { it.isNotBlank() }?.let { uids[it] }
-                val existing = byUid ?: card.emails.firstNotNullOfOrNull { emails[it.trim().lowercase()] }
-                if (existing == null) {
-                    index(book.create(card))
-                    created++
-                    continue
+
+        try {
+            for ((i, raw) in cards.withIndex()) {
+                if (cancel?.invoke() == true || !isActive) break
+                try {
+                    val card = Vcard.parse(raw)
+                    val byUid = card.uid.takeIf { it.isNotBlank() }?.let { uids[it] }
+                    val existing = byUid ?: card.emails.firstNotNullOfOrNull { emails[it.trim().lowercase()] }
+                    if (existing == null) {
+                        index(book.create(card))
+                        created++
+                    } else {
+                        val current = Book.card(existing)
+                        val next = if (byUid != null) card.copy(groups = (card.groups + current.groups).distinct()) else Book.combine(current, card)
+                        if (next.same(current)) {
+                            skipped++
+                        } else {
+                            index(book.update(existing.hex, next))
+                            updated++
+                        }
+                    }
+                } catch (e: IllegalArgumentException) {
+                    errors += "card ${i + 1}: ${e.message}"
                 }
-                val current = Book.card(existing)
-                val next = if (byUid != null) card.copy(groups = (card.groups + current.groups).distinct()) else Book.combine(current, card)
-                if (next.same(current)) {
-                    skipped++
-                } else {
-                    index(book.update(existing.hex, next))
-                    updated++
-                }
-            } catch (e: IllegalArgumentException) {
-                errors += "card ${i + 1}: ${e.message}"
+                val currentProgress = Progress(
+                    done = i + 1,
+                    total = cards.size,
+                    created = created,
+                    updated = updated,
+                    skipped = skipped,
+                    errors = errors.toList()
+                )
+                onProgress?.invoke(currentProgress)
+            }
+        } finally {
+            withContext(NonCancellable) {
+                worker?.drain()
             }
         }
-        worker?.drain()
-        return Imported(created, updated, skipped, errors)
+        Imported(created, updated, skipped, errors)
     }
+
+    /**
+     * Progressively imports a vCard file, emitting [Progress] after each card.
+     * Runs off the main thread on [Dispatchers.IO].
+     */
+    fun ingest(vcf: InputStream): Flow<Progress> = flow {
+        val text = vcf.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        if (book == null) {
+            val report = client.contactsApi.import(text)
+            val errors = report.errors.map { (i, error) -> "card ${i + 1}: $error" }
+            val total = report.created + report.updated + report.skipped + report.errors.size
+            emit(
+                Progress(
+                    done = total,
+                    total = total,
+                    created = report.created,
+                    updated = report.updated,
+                    skipped = report.skipped,
+                    errors = errors
+                )
+            )
+            return@flow
+        }
+        val book = book()
+        val stored = repo?.all().orEmpty()
+        val uids = stored.filter { it.uid.isNotBlank() }.associateBy { it.uid }.toMutableMap()
+        val emails = HashMap<String, Contact>()
+        fun index(contact: Contact) {
+            if (contact.uid.isNotBlank()) uids[contact.uid] = contact
+            for (email in Book.card(contact).emails) emails.putIfAbsent(email.trim().lowercase(), contact)
+        }
+        stored.forEach(::index)
+
+        val cards = Vcard.split(text)
+        var created = 0
+        var updated = 0
+        var skipped = 0
+        val errors = mutableListOf<String>()
+
+        try {
+            emit(Progress(done = 0, total = cards.size))
+            for ((i, raw) in cards.withIndex()) {
+                currentCoroutineContext().ensureActive()
+                try {
+                    val card = Vcard.parse(raw)
+                    val byUid = card.uid.takeIf { it.isNotBlank() }?.let { uids[it] }
+                    val existing = byUid ?: card.emails.firstNotNullOfOrNull { emails[it.trim().lowercase()] }
+                    if (existing == null) {
+                        index(book.create(card))
+                        created++
+                    } else {
+                        val current = Book.card(existing)
+                        val next = if (byUid != null) card.copy(groups = (card.groups + current.groups).distinct()) else Book.combine(current, card)
+                        if (next.same(current)) {
+                            skipped++
+                        } else {
+                            index(book.update(existing.hex, next))
+                            updated++
+                        }
+                    }
+                } catch (e: IllegalArgumentException) {
+                    errors += "card ${i + 1}: ${e.message}"
+                }
+                emit(
+                    Progress(
+                        done = i + 1,
+                        total = cards.size,
+                        created = created,
+                        updated = updated,
+                        skipped = skipped,
+                        errors = errors.toList()
+                    )
+                )
+            }
+        } finally {
+            withContext(NonCancellable) {
+                worker?.drain()
+            }
+        }
+    }.flowOn(Dispatchers.IO)
 
     /**
      * The contacts [hexes] (every stored contact when null) as one vCard
