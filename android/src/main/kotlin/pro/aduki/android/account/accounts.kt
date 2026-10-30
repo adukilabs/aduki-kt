@@ -5,6 +5,7 @@ import android.accounts.AccountManager
 import android.content.Context
 import android.os.Bundle
 import okhttp3.OkHttpClient
+import org.json.JSONObject
 import pro.aduki.core.models.Linked
 import pro.aduki.core.models.Switcher
 import pro.aduki.core.models.Tokens
@@ -13,6 +14,44 @@ import pro.aduki.crypto.cipher.Vault
 import pro.aduki.crypto.dpop.Key
 import pro.aduki.android.keystore.AndroidKey
 import pro.aduki.net.http.Center
+
+/**
+ * Provider for AccountManager cross-app visibility on API 26+.
+ */
+interface Visibility {
+    fun set(account: Account, target: String, mode: Int): Boolean
+    fun get(account: Account, target: String): Int
+
+    companion object {
+        fun system(manager: AccountManager): Visibility = object : Visibility {
+            private val fallback = java.util.concurrent.ConcurrentHashMap<Pair<String, String>, Int>()
+
+            override fun set(account: Account, target: String, mode: Int): Boolean {
+                fallback[account.name to target] = mode
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    try {
+                        manager.setAccountVisibility(account, target, mode)
+                    } catch (_: Exception) {
+                        // In unit tests or sandboxed environments, AccountManager.mService may be unbound
+                    }
+                }
+                return true
+            }
+
+            override fun get(account: Account, target: String): Int {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    try {
+                        val v = manager.getAccountVisibility(account, target)
+                        if (v != 0) return v
+                    } catch (_: Exception) {
+                    }
+                    return fallback[account.name to target] ?: AccountManager.VISIBILITY_NOT_VISIBLE
+                }
+                return AccountManager.VISIBILITY_VISIBLE
+            }
+        }
+    }
+}
 
 /**
  * Accounts keeps an Account Center's linked accounts in Android's
@@ -51,8 +90,11 @@ class Accounts(
     context: Context,
     private val vault: Vault? = Vault.platform(),
     private val manager: AccountManager = AccountManager.get(context),
-    private val center: CenterStore = CenterStore(context, vault)
+    private val center: CenterStore = CenterStore(context, vault),
+    private val visibility: Visibility = Visibility.system(manager)
 ) {
+    private val packageName: String = context.packageName
+    private val tokensPrefs = context.applicationContext.getSharedPreferences("pro.aduki.account.tokens", Context.MODE_PRIVATE)
 
     /** One entry, as read back. */
     data class Entry(
@@ -134,10 +176,19 @@ class Accounts(
     /** Stores the session [tokens] of the account [hex]; false when no such entry exists. */
     fun save(hex: String, tokens: Tokens, now: Long = System.currentTimeMillis()): Boolean {
         val entry = find(hex) ?: return false
+        val json = JSONObject().apply {
+            put("token", seal(tokens.token))
+            put("refresh", seal(tokens.refresh))
+            put("expires", tokens.expires)
+            put("session", tokens.session)
+            put("saved", now)
+        }
+        tokensPrefs.edit().putString(hex, json.toString()).apply()
+
         manager.setUserData(entry.account, SAVED, now.toString())
-        manager.setPassword(entry.account, seal(tokens.refresh))
         manager.setUserData(entry.account, EXPIRES, tokens.expires)
         manager.setUserData(entry.account, SESSION, tokens.session)
+        manager.setPassword(entry.account, seal(tokens.refresh))
         manager.setAuthToken(entry.account, ACCESS, seal(tokens.token))
         return true
     }
@@ -145,15 +196,43 @@ class Accounts(
     /** The stored session of [hex] (access, refresh, expiry, session id), or null when none was saved. */
     fun tokens(hex: String): Tokens? {
         val entry = find(hex) ?: return null
+        val stored = tokensPrefs.getString(hex, null)
+        if (stored != null) {
+            val parsed = runCatching {
+                val json = JSONObject(stored)
+                val access = open(json.optString("token"))
+                val refresh = open(json.optString("refresh"))
+                if (access.isNotEmpty() || refresh.isNotEmpty()) {
+                    Tokens(
+                        token = access,
+                        refresh = refresh,
+                        expires = json.optString("expires"),
+                        session = json.optString("session")
+                    )
+                } else null
+            }.getOrNull()
+            if (parsed != null) return parsed
+        }
+
+        val redeemed = redeem(entry.account)
+        if (redeemed != null) {
+            save(hex, redeemed)
+            return redeemed
+        }
+
         val access = manager.peekAuthToken(entry.account, ACCESS)?.let(::open).orEmpty()
         val refresh = manager.getPassword(entry.account)?.let(::open).orEmpty()
-        if (access.isEmpty() && refresh.isEmpty()) return null
-        return Tokens(
-            token = access,
-            refresh = refresh,
-            expires = manager.getUserData(entry.account, EXPIRES).orEmpty(),
-            session = manager.getUserData(entry.account, SESSION).orEmpty()
-        )
+        if (access.isNotEmpty() || refresh.isNotEmpty()) {
+            val fallback = Tokens(
+                token = access,
+                refresh = refresh,
+                expires = manager.getUserData(entry.account, EXPIRES).orEmpty(),
+                session = manager.getUserData(entry.account, SESSION).orEmpty()
+            )
+            save(hex, fallback)
+            return fallback
+        }
+        return null
     }
 
     /**
@@ -174,10 +253,73 @@ class Accounts(
     /** Forgets the access token of [hex] (after a 401); the refresh token stays. */
     fun invalidate(hex: String) {
         val entry = find(hex) ?: return
+        tokensPrefs.getString(hex, null)?.let { stored ->
+            runCatching {
+                val json = JSONObject(stored)
+                json.put("token", "")
+                tokensPrefs.edit().putString(hex, json.toString()).apply()
+            }
+        }
         manager.peekAuthToken(entry.account, ACCESS)?.let { manager.invalidateAuthToken(TYPE, it) }
     }
 
-    private val visibilities = java.util.concurrent.ConcurrentHashMap<Pair<String, String>, Int>()
+    /** Deposits a single-use peer session grant for [target] companion app package. */
+    fun grant(hex: String, target: String): Boolean {
+        val entry = find(hex) ?: return false
+        val current = tokens(hex) ?: return false
+        return grant(entry.account, target, current)
+    }
+
+    /** Deposits a single-use peer session grant for [target] on [account]. */
+    fun grant(account: Account, target: String, tokens: Tokens, ttl: Long = TTL): Boolean {
+        val json = JSONObject().apply {
+            put("token", tokens.token)
+            put("refresh", tokens.refresh)
+            put("expires", tokens.expires)
+            put("session", tokens.session)
+            put("created", System.currentTimeMillis())
+            put("ttl", ttl)
+        }
+        manager.setUserData(account, slot(target), json.toString())
+        return true
+    }
+
+    /** Redeems a single-use peer session grant for this app, or null when none exists or expired. */
+    fun redeem(hex: String): Tokens? {
+        val entry = find(hex) ?: return null
+        return redeem(entry.account)
+    }
+
+    /** Redeems a single-use peer session grant on [account] for this app package. */
+    fun redeem(account: Account): Tokens? {
+        val key = slot(packageName)
+        val raw = manager.getUserData(account, key) ?: return null
+        manager.setUserData(account, key, null)
+        return runCatching {
+            val json = JSONObject(raw)
+            val created = json.optLong("created", 0L)
+            val ttl = json.optLong("ttl", TTL)
+            if (created > 0 && System.currentTimeMillis() - created > ttl) {
+                return null
+            }
+            val token = json.optString("token")
+            val refresh = json.optString("refresh")
+            if (token.isEmpty() && refresh.isEmpty()) return null
+            Tokens(
+                token = token,
+                refresh = refresh,
+                expires = json.optString("expires"),
+                session = json.optString("session")
+            )
+        }.getOrNull()
+    }
+
+    /** Revokes an unredeemed peer grant for [target]. */
+    fun revoke(hex: String, target: String): Boolean {
+        val entry = find(hex) ?: return false
+        manager.setUserData(entry.account, slot(target), null)
+        return true
+    }
 
     /**
      * Grants account visibility to companion [packages] (e.g. apps by the same publisher)
@@ -203,45 +345,45 @@ class Accounts(
     }
 
     /**
-     * Grants visibility for [account] to companion [packages].
+     * Grants visibility for [account] to companion [packages] and deposits peer grants.
      */
     fun share(account: Account, packages: List<String>): Boolean {
         if (packages.isEmpty()) return true
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            for (pkg in packages) {
-                visibilities[account.name to pkg] = AccountManager.VISIBILITY_VISIBLE
-                try {
-                    manager.setAccountVisibility(account, pkg, AccountManager.VISIBILITY_VISIBLE)
-                } catch (_: Exception) {
-                    // In unit tests or sandboxed environments, AccountManager.mService may be unbound
+        var ok = true
+        for (pkg in packages) {
+            if (!visibility.set(account, pkg, AccountManager.VISIBILITY_VISIBLE)) {
+                ok = false
+            }
+        }
+        val hex = manager.getUserData(account, HEX)
+        if (hex != null) {
+            val current = tokens(hex)
+            if (current != null) {
+                for (pkg in packages) {
+                    if (pkg != packageName) {
+                        grant(account, pkg, current)
+                    }
                 }
             }
         }
-        return true
+        return ok
     }
 
     /**
-     * Checks account visibility for [packageName] on Android 8+ (API 26+).
+     * Checks account visibility for [target] package on Android 8+ (API 26+).
      */
-    fun visibility(hex: String, packageName: String): Int {
+    fun visibility(hex: String, target: String): Int {
         val entry = find(hex) ?: return AccountManager.VISIBILITY_NOT_VISIBLE
-        return visibility(entry.account, packageName)
+        return visibility(entry.account, target)
     }
 
     /**
-     * Checks account visibility for [packageName] on Android 8+ (API 26+).
+     * Checks account visibility for [target] package on Android 8+ (API 26+).
      */
-    fun visibility(account: Account, packageName: String): Int {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            try {
-                val v = manager.getAccountVisibility(account, packageName)
-                if (v != 0) return v
-            } catch (_: Exception) {
-            }
-            return visibilities[account.name to packageName] ?: AccountManager.VISIBILITY_NOT_VISIBLE
-        }
-        return AccountManager.VISIBILITY_VISIBLE
-    }
+    fun visibility(account: Account, target: String): Int =
+        visibility.get(account, target)
+
+    private fun slot(target: String): String = "grant.$target"
 
     /**
      * Registers this device's Keystore key as a device credential at Aduki ID (`ES256`, 65-byte
@@ -316,6 +458,7 @@ class Accounts(
 
     /** Removes every entry and the center token (sign-out of the device). */
     fun clear() {
+        tokensPrefs.edit().clear().apply()
         list().forEach(::drop)
         center.clear()
     }
@@ -353,6 +496,7 @@ class Accounts(
 
     // Removing the account deletes its password, auth tokens and user data with it.
     private fun drop(entry: Entry) {
+        tokensPrefs.edit().remove(entry.hex).apply()
         manager.removeAccountExplicitly(entry.account)
     }
 
@@ -370,6 +514,7 @@ class Accounts(
         /** The auth token type of the cached access token. */
         const val ACCESS = "access"
 
+        private const val TTL = 86_400_000L
         private const val HEX = "hex"
         private const val CENTER = "center"
         private const val PERSONAL = "personal"
