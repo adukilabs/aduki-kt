@@ -411,4 +411,80 @@ class SigninTest {
         assertTrue(selfRevoked)
         assertNull(client.session.tokens.value)
     }
+
+    @Test
+    fun renewWhenAccessTokenIsBlankAndRefreshTokenIsValid() = runBlocking {
+        val store = object : TokenStore {
+            var current: Tokens? = Tokens(token = "", refresh = "rt_initial", expires = "600", session = "sess_0")
+            override fun load(): Tokens? = current
+            override fun save(tokens: Tokens) { current = tokens }
+            override fun clear() { current = null }
+        }
+
+        val client = Aduki.builder()
+            .tokens(store)
+            .endpoint(server.url("/v1").toString())
+            .identity(server.url("/id").toString())
+            .build()
+
+        // 1. Proactive renewal on /id/tokens
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"success":true,"data":{"access":"eyJ.fresh","refresh":"rt_next","expires":600}}"""
+            )
+        )
+        // 2. Original /v1/user/whoami call succeeds with the fresh token
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"hex":"u1","tenant":"t1"}"""))
+
+        val me = client.me()
+        assertNotNull(me)
+        assertEquals("u1", me!!.user)
+
+        // Verify request order: first /id/tokens, then /v1/user/whoami with Bearer eyJ.fresh
+        val req1 = server.takeRequest()
+        assertEquals("/id/tokens", req1.path)
+        assertEquals("rt_initial", JSONObject(req1.body.readUtf8()).getString("refresh"))
+
+        val req2 = server.takeRequest()
+        assertEquals("/v1/user", req2.path)
+        assertEquals("Bearer eyJ.fresh", req2.getHeader("Authorization"))
+
+        assertEquals("eyJ.fresh", client.session.token())
+        assertEquals("rt_next", client.session.refresh())
+        assertEquals("rt_next", store.load()?.refresh)
+    }
+
+    @Test
+    fun renewWhenSessionHasBlankAccessAndValidRefreshAfterUpdate() = runBlocking {
+        val client = Aduki.builder()
+            .token("eyJ.initial")
+            .endpoint(server.url("/v1").toString())
+            .identity(server.url("/id").toString())
+            .build()
+
+        // Simulate AccountManager dropping the cached auth token mid-session:
+        client.session.update(Tokens(token = "", refresh = "rt_valid_refresh", expires = "600", session = "sess_1"))
+
+        // Proactive renewal on /id/tokens
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"success":true,"data":{"access":"eyJ.recovered","refresh":"rt_recovered","expires":600}}"""
+            )
+        )
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"hex":"u1","tenant":"t1"}"""))
+
+        val me = client.me()
+        assertNotNull(me)
+        assertEquals("u1", me!!.user)
+        assertEquals("eyJ.recovered", client.session.token())
+        assertEquals("rt_recovered", client.session.refresh())
+
+        val req1 = server.takeRequest()
+        assertEquals("/id/tokens", req1.path)
+        assertEquals("rt_valid_refresh", JSONObject(req1.body.readUtf8()).getString("refresh"))
+
+        val req2 = server.takeRequest()
+        assertEquals("/v1/user", req2.path)
+        assertEquals("Bearer eyJ.recovered", req2.getHeader("Authorization"))
+    }
 }

@@ -102,11 +102,21 @@ class Aduki internal constructor(
         if (options.secure) pro.aduki.crypto.tls.Pinning.pinner(options.pins) else null
     }
 
+    private fun hasRefresh(): Boolean {
+        val mem = session.tokens.value?.refresh
+        if (!mem.isNullOrBlank()) return true
+        val stored = try { tokenStore?.load() } catch (_: Exception) { null }
+        return !stored?.refresh.isNullOrBlank()
+    }
+
     private val defaultClient: OkHttpClient by lazy {
         val base = HttpClient.create(activeAuthString(), options.timeoutSeconds, pinner, usingApiKey())
         base.newBuilder()
             .addInterceptor { chain ->
-                val auth = activeAuthString()
+                var auth = activeAuthString()
+                if (auth.isBlank() && hasRefresh()) {
+                    renew(null)?.let { fresh -> auth = fresh }
+                }
                 val request = if (auth.isNotBlank()) {
                     chain.request().newBuilder()
                         .header("Authorization", Scheme.header(auth, usingApiKey()))
@@ -124,15 +134,21 @@ class Aduki internal constructor(
     // Aduki ID access tokens live ten minutes: on a 401 renew once with the
     // refresh token and retry. API keys are not renewed.
     private val renewer = Authenticator { _, response ->
+        if (response.priorResponse != null || response.request.header("X-Aduki-Retry") != null) {
+            return@Authenticator null
+        }
+        if (usingApiKey()) return@Authenticator null
+
         val sent = response.request.header("Authorization").orEmpty()
         val scheme = listOf("Bearer ", "DPoP ").firstOrNull { sent.startsWith(it) }
-        if (response.priorResponse != null || scheme == null) {
-            null
-        } else {
-            renew(sent.removePrefix(scheme))?.let { fresh ->
-                val next = response.request.newBuilder().header("Authorization", "Bearer $fresh").build()
-                dpop?.apply(next) ?: next // a rebuilt request needs its own proof
-            }
+        val staleToken = if (scheme != null) sent.removePrefix(scheme) else null
+
+        renew(staleToken)?.let { fresh ->
+            val next = response.request.newBuilder()
+                .header("Authorization", "Bearer $fresh")
+                .header("X-Aduki-Retry", "1")
+                .build()
+            dpop?.apply(next) ?: next // a rebuilt request needs its own proof
         }
     }
 
@@ -163,7 +179,7 @@ class Aduki internal constructor(
      * Renews the access token unless another caller already replaced [stale].
      */
     private fun renew(stale: String?): String? = synchronized(renewal) {
-        var current = session.tokens.value ?: return null
+        var current = session.tokens.value ?: tokenStore?.load() ?: return null
 
         if (tokenStore != null) {
             val stored = try { tokenStore.load() } catch (_: Exception) { null }
@@ -188,7 +204,7 @@ class Aduki internal constructor(
 
         val presented = current.refresh
         try {
-            val fresh = id.rotate(Endpoints.AUDIENCE, current.token)
+            val fresh = id.rotate(Endpoints.AUDIENCE, current.token.ifBlank { null })
             val updated = fresh.copy(session = current.session)
             session.update(updated)
             try { tokenStore?.save(updated) } catch (_: Exception) {}
@@ -219,7 +235,7 @@ class Aduki internal constructor(
                         return adopted.token
                     }
                     try {
-                        val fresh = id.rotate(Endpoints.AUDIENCE, adopted.token)
+                        val fresh = id.rotate(Endpoints.AUDIENCE, adopted.token.ifBlank { null })
                         val updated = fresh.copy(session = adopted.session)
                         session.update(updated)
                         try { tokenStore.save(updated) } catch (_: Exception) {}
