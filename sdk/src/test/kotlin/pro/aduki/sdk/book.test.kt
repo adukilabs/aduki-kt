@@ -232,4 +232,63 @@ class BookTest {
         assertEquals(1, paths.count { it.endsWith("/merge") })
         assertEquals(0, aduki.sync.outbox.value)
     }
+
+    @Test
+    fun importEmitsProgressAndAllowsCooperativeCancel() = runBlocking<Unit> {
+        val aduki = build()
+        val cards = listOf(
+            "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:User One\r\nEMAIL:u1@example.com\r\nEND:VCARD\r\n",
+            "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:User Two\r\nEMAIL:u2@example.com\r\nEND:VCARD\r\n",
+            "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:User Three\r\nEMAIL:u3@example.com\r\nEND:VCARD\r\n",
+            "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:User Four\r\nEMAIL:u4@example.com\r\nEND:VCARD\r\n"
+        ).joinToString("")
+
+        val steps = mutableListOf<Progress>()
+        val report = aduki.contacts.import(cards.byteInputStream()) { progress ->
+            steps += progress
+        }
+
+        assertEquals(4, report.created)
+        assertEquals(4, steps.size)
+        assertEquals(1, steps[0].done)
+        assertEquals(4, steps[0].total)
+        assertEquals(1, steps[0].created)
+        assertEquals(4, steps[3].done)
+        assertEquals(4, steps[3].created)
+
+        // Cancel after 2 cards
+        var cancelAfterTwo = false
+        val partialSteps = mutableListOf<Progress>()
+        val partialReport = aduki.contacts.import(
+            cards.replace("User", "NewUser").replace("example.com", "other.example").byteInputStream(),
+            cancel = { cancelAfterTwo }
+        ) { progress ->
+            partialSteps += progress
+            if (progress.done >= 2) {
+                cancelAfterTwo = true
+            }
+        }
+
+        assertEquals(2, partialReport.created)
+        assertEquals(2, partialSteps.size)
+    }
+
+    @Test
+    fun ingestFlowStreamsProgress() = runBlocking<Unit> {
+        val aduki = build()
+        val cards = listOf(
+            "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Flow One\r\nEMAIL:f1@example.com\r\nEND:VCARD\r\n",
+            "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Flow Two\r\nEMAIL:f2@example.com\r\nEND:VCARD\r\n"
+        ).joinToString("")
+
+        val list = mutableListOf<Progress>()
+        aduki.contacts.ingest(cards.byteInputStream()).collect { list += it }
+
+        assertEquals(3, list.size) // initial (0/2) + card 1 (1/2) + card 2 (2/2)
+        assertEquals(0, list[0].done)
+        assertEquals(2, list[0].total)
+        assertEquals(1, list[1].done)
+        assertEquals(2, list[2].done)
+        assertEquals(2, list[2].created)
+    }
 }
