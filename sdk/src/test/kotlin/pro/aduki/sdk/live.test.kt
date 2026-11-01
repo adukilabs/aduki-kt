@@ -446,7 +446,8 @@ class LiveTest {
             subject = "Draft $tag",
             body = "Body $tag"
         )
-        assertTrue(draftMsg.pending())
+        assertFalse("the draft reached the server and took its id", draftMsg.pending())
+        assertEquals(0, client.sync.pending())
         val opened = client.mail.openDraft(draftMsg.hex)
         assertNotNull(opened)
         assertEquals(listOf("draft@example.com"), opened!!.to)
@@ -460,20 +461,26 @@ class LiveTest {
      */
     @Test
     fun sessionsAndRevoke() = runBlocking<Unit> {
-        val client = live()
-        val sessions = client.sessions()
-        assertTrue("Expected active sessions", sessions.isNotEmpty())
-        val current = sessions.firstOrNull { it.current }
-        assertNotNull("Expected current session flag", current)
-        assertTrue(current!!.id.isNotBlank())
-
-        // Find an older, non-current session to test revocation
-        val other = sessions.firstOrNull { !it.current }
-        if (other != null) {
-            val revoked = client.revoke(other.id)
-            assertTrue("Expected revocation to succeed", revoked)
-            val after = client.sessions()
-            assertFalse("Revoked session should not be in list", after.any { it.id == other.id })
+        val handle = System.getenv("ADUKI_LOGIN_HANDLE")
+        val password = System.getenv("ADUKI_LOGIN_PASSWORD")
+        val secret = System.getenv("ADUKI_LOGIN_TOTP")
+        assumeTrue("Skipping live sessions: set ADUKI_LOGIN_HANDLE, ADUKI_LOGIN_PASSWORD and ADUKI_LOGIN_TOTP",
+            !handle.isNullOrBlank() && !password.isNullOrBlank() && !secret.isNullOrBlank())
+        val tag = "live-${System.currentTimeMillis()}"
+        val clients = listOf("old", "new").map { name ->
+            // An authenticator code is single use: each sign-in starts in a fresh 30-second window.
+            Thread.sleep(30_000 - System.currentTimeMillis() % 30_000 + 1_000)
+            Aduki.login(handle!!, password!!, code = totp(secret!!), endpoint = liveEndpoint(), device = "$tag $name")
         }
+        val (old, new) = clients
+        val sessions = new.sessions()
+        val current = sessions.single { it.current }
+        assertEquals("the device name is listed", "$tag new", current.device)
+        val first = sessions.single { it.device == "$tag old" }
+        assertTrue(new.revoke(first.id))
+        assertFalse("revoked", new.sessions().any { it.id == first.id })
+        assertTrue("the client still renews after the id-audience rotations", new.refresh())
+        new.logout()
+        old.close()
     }
 }
