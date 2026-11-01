@@ -14,6 +14,7 @@ import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import pro.aduki.core.errors.AdukiException
+import pro.aduki.net.http.Jmap
 import pro.aduki.net.http.Mail
 import pro.aduki.store.entities.Mailbox as MailboxEntity
 import pro.aduki.store.entities.Message
@@ -288,6 +289,114 @@ class HttpTest {
             HttpDispatcher(api).dispatch(Outbox(action = "appointment_cancel"))
             fail("expected Rejected")
         } catch (_: Rejected) {
+        }
+    }
+
+    // JMAP calls answered in order; the session is served first.
+    private fun jmap(vararg replies: String): Jmap {
+        val base = server.url("").toString().trimEnd('/')
+        server.enqueue(MockResponse().setBody(
+            """{"primaryAccounts":{"urn:ietf:params:jmap:mail":"acc"},"capabilities":{},
+               "apiUrl":"$base/jmap","uploadUrl":"$base/jmap/upload/{accountId}",
+               "downloadUrl":"$base/jmap/download/{accountId}/{blobId}/{name}?type={type}"}"""
+        ))
+        for (r in replies) reply("""{"methodResponses":[["${r.substringBefore('|')}",${r.substringAfter('|')},"0"]]}""")
+        return Jmap(OkHttpClient(), base)
+    }
+
+    private fun call(): JSONObject {
+        val body = JSONObject(server.takeRequest().body.readUtf8())
+        return body.getJSONArray("methodCalls").getJSONArray(0).getJSONObject(1)
+    }
+
+    @Test
+    fun aMailboxMoveIsSentThroughDispatch() = runBlocking {
+        val client = jmap("Mailbox/set|{\"updated\":{\"b1\":null}}")
+        val journal = Journal()
+        val manager = Manager(journal)
+        manager.enqueue("mailbox_move", """{"hex":"b1","parent":"b0"}""".toByteArray(), "b1")
+        val worker = Worker(manager, HttpDispatcher(api, fallback = null, jmap = client))
+        assertEquals(1, worker.drain())
+        server.takeRequest() // session
+        val args = call()
+        assertEquals("b0", args.getJSONObject("update").getJSONObject("b1").getString("parentId"))
+        assertTrue(manager.failed().isEmpty())
+    }
+
+    @Test
+    fun aMailboxMovedToTheTopSendsANullParent() = runBlocking {
+        val client = jmap("Mailbox/set|{\"notUpdated\":{\"b1\":{\"type\":\"invalidProperties\"}}}")
+        try {
+            HttpDispatcher(api, jmap = client).dispatch(Outbox(id = 1, action = "mailbox_move", payload = """{"hex":"b1"}""".toByteArray()))
+            fail("expected Rejected")
+        } catch (e: Rejected) {
+            assertTrue(e.message!!.contains("invalidProperties"))
+        }
+        server.takeRequest()
+        assertTrue(call().getJSONObject("update").getJSONObject("b1").isNull("parentId"))
+    }
+
+    @Test
+    fun aDraftIsCreatedInTheDraftsMailboxAndAdopted() = runBlocking {
+        val client = jmap(
+            "Mailbox/query|{\"ids\":[\"D1\"]}",
+            "Email/set|{\"created\":{\"draft\":{\"id\":\"M9\"}}}"
+        )
+        val journal = Journal()
+        val manager = Manager(journal)
+        val placeholder = manager.saveDraft("Hi", listOf("bob@example.com"), cc = listOf("c@example.com"), text = "body", html = "<p>body</p>", replace = "M1").hex
+        val worker = Worker(manager, HttpDispatcher(api, journal::getMessage, manager::rename, jmap = client, adopt = manager::adopt))
+        assertEquals(1, worker.drain())
+        server.takeRequest()
+        assertEquals("drafts", call().getJSONObject("filter").getString("role"))
+        val args = call()
+        val created = args.getJSONObject("create").getJSONObject("draft")
+        assertTrue(created.getJSONObject("mailboxIds").getBoolean("D1"))
+        assertTrue(created.getJSONObject("keywords").getBoolean("\$draft"))
+        assertEquals("c@example.com", created.getJSONArray("cc").getJSONObject(0).getString("email"))
+        assertEquals("text/html", created.getJSONArray("htmlBody").getJSONObject(0).getString("type"))
+        assertEquals("M1", args.getJSONArray("destroy").getString(0))
+        assertNull(journal.messages[placeholder])
+        assertFalse(journal.messages["M9"]!!.dirty)
+        assertTrue(manager.failed().isEmpty())
+    }
+
+    @Test
+    fun aRefusedDraftIsRejectedNotDropped() = runBlocking {
+        val client = jmap("Email/set|{\"notCreated\":{\"draft\":{\"type\":\"invalidProperties\"}}}")
+        val journal = Journal()
+        val manager = Manager(journal)
+        manager.saveDraft("Hi", listOf("bob@example.com"), mailbox = "D1", replace = "msg_never_sent")
+        val rejected = mutableListOf<String>()
+        val worker = Worker(manager, HttpDispatcher(api, jmap = client), onRejected = { a, _ -> rejected.add(a.action) })
+        assertEquals(1, worker.drain())
+        server.takeRequest()
+        assertFalse(call().has("destroy")) // a placeholder never reached the server
+        assertEquals(listOf("draft_save"), rejected)
+        assertEquals(1, manager.failed().size)
+    }
+
+    @Test
+    fun aDraftWithoutJmapIsRejected() = runBlocking {
+        try {
+            HttpDispatcher(api).dispatch(Outbox(id = 1, action = "draft_save", payload = """{"hex":"msg_1","mailbox":"D1"}""".toByteArray()))
+            fail("expected Rejected")
+        } catch (_: Rejected) {
+        }
+    }
+
+    /** Every action the outbox journals is one some dispatcher of the chain sends. */
+    @Test
+    fun everyJournaledMailActionHasADispatcher() = runBlocking {
+        (server.dispatcher as okhttp3.mockwebserver.QueueDispatcher).setFailFast(true)
+        for (action in listOf("send", "compose", "flag", "move", "delete", "flags", "moves", "deletes", "keywords",
+            "mailbox_create", "mailbox_rename", "mailbox_move", "mailbox_delete", "draft_save")) {
+            var fellThrough = false
+            try {
+                HttpDispatcher(api, fallback = Dispatcher { fellThrough = true }).dispatch(Outbox(id = 1, action = action, payload = "{}".toByteArray()))
+            } catch (_: Exception) {
+            }
+            assertFalse("$action went to the fallback", fellThrough)
         }
     }
 }
