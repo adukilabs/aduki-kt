@@ -3,7 +3,7 @@
 ## HTTP (OkHttp)
 
 All typed clients (`Id`, `Login`, `Center`, `Mail`, `Scheduling`, `Oidc`) use
-OkHttp 4.12.0. `pro.aduki.net.http.Client.create(key, timeout, pinner, apiKey)` builds the base
+OkHttp 5.5.1. `pro.aduki.net.http.Client.create(key, timeout, pinner, apiKey)` builds the base
 client (an idle connection pool of 8 for 5 minutes, the given timeout on connect, read and write, retry on connection failure); `Aduki` adds the `Authorization` header, the `401`
 renewal authenticator, TLS pinning (see [TLS](../security/tls.md)) and, when
 configured, the [DPoP](../auth/dpop.md) interceptor.

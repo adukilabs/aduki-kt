@@ -19,7 +19,7 @@ appointment `status`, `method` and times, tenant, host, service and `slug` ids,
 `ctag`/etag values and sync tokens. These can reveal when and how much you
 use the app, not what was said or to whom.
 
-The database file as a whole is **not** encrypted: ObjectBox 4.0.3 has no
+The database file as a whole is **not** encrypted: ObjectBox 5.4.2 has no
 encryption option, and the file relies on the operating system (Android
 file-based encryption). Do not describe the SDK as encrypting the database.
 Old pages of a database rewritten in place may still hold older values until

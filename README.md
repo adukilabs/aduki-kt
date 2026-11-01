@@ -52,7 +52,7 @@ dependencyResolutionManagement {
 // Maven Central / GitHub Packages:
 implementation("pro.aduki:sdk:0.6.0")
 implementation("pro.aduki:android:0.6.0") // Android-specific features
-implementation("io.objectbox:objectbox-android:4.0.3")
+implementation("io.objectbox:objectbox-android:5.4.2")
 
 // Or JitPack:
 // implementation("com.github.adukilabs.aduki-kt:sdk:0.6.0")
