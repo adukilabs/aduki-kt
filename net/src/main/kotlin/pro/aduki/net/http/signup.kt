@@ -81,18 +81,25 @@ object Signup {
 
     /**
      * Stage 2: Confirms the authenticator code, activating the account.
-     * Returns the one-time backup codes.
+     * Returns the one-time backup codes and, when [audience] is given, the
+     * session Aduki ID opened with the same code ([Verified.tokens]; null from
+     * a server that predates it). The code is spent here: Aduki ID accepts each
+     * authenticator step once, so a separate sign-in needs the next code.
      */
     fun verify(
         client: OkHttpClient,
         identity: String,
         hex: String,
         password: String,
-        code: String
-    ): List<String> {
+        code: String,
+        audience: String? = null,
+        device: String? = null
+    ): Verified {
         val root = JSONObject().apply {
             put("password", password)
             put("code", code.trim())
+            audience?.let { put("audience", it) }
+            device?.trim()?.take(Login.DEVICE)?.ifBlank { null }?.let { put("device", it) }
         }
         val request = Request.Builder()
             .url(url(identity, "accounts/${hex.trim()}/verifications"))
@@ -102,11 +109,15 @@ object Signup {
         client.newCall(request).execute().use { response ->
             val data = data(response, "Account verification")
             val array = data.optJSONArray("codes")
-            return if (array == null) {
-                emptyList()
-            } else {
-                List(array.length()) { i -> array.getString(i) }
-            }
+            val codes = if (array == null) emptyList() else List(array.length()) { i -> array.getString(i) }
+            val refresh = data.optString("refresh")
+            val tokens = if (refresh.isBlank()) null else Tokens(
+                token = data.optString("access"),
+                refresh = refresh,
+                expires = data.optLong("expires", 0).toString(),
+                session = data.optString("session")
+            )
+            return Verified(codes, tokens)
         }
     }
 
@@ -133,3 +144,6 @@ object Signup {
         return value
     }
 }
+
+/** What [Signup.verify] returns: the backup codes, and the session opened with the code when one was asked for. */
+data class Verified(val codes: List<String>, val tokens: Tokens? = null)

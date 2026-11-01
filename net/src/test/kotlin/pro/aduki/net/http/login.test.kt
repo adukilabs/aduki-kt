@@ -56,6 +56,20 @@ class LoginTest {
         assertEquals("123456", body.getString("code"))
         assertEquals("mail", body.getString("audience"))
         assertFalse(body.has("backup"))
+        assertFalse(body.has("device"))
+    }
+
+    @Test
+    fun aDeviceNameIsSentTrimmedAndCut() {
+        repeat(2) {
+            server.enqueue(MockResponse().setResponseCode(201).setBody(
+                """{"success":true,"data":{"session":"ab","access":"a","refresh":"r","expires":600}}"""
+            ))
+        }
+        Login.submit(client, identity(), "ada@aduki.me", "pw", code = "123456", device = "  Mail on Pixel 9 ")
+        assertEquals("Mail on Pixel 9", JSONObject(server.takeRequest().body.readUtf8()).getString("device"))
+        Login.submit(client, identity(), "ada@aduki.me", "pw", code = "123456", device = "x".repeat(300))
+        assertEquals(Login.DEVICE, JSONObject(server.takeRequest().body.readUtf8()).getString("device").length)
     }
 
     @Test

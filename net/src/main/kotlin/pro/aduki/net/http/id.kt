@@ -46,9 +46,10 @@ class Id(
         password: String,
         code: String? = null,
         backup: String? = null,
-        audience: String = Endpoints.AUDIENCE
+        audience: String = Endpoints.AUDIENCE,
+        device: String? = null
     ): Tokens {
-        val tokens = Login.submit(client, base, handle, password, code, backup, audience)
+        val tokens = Login.submit(client, base, handle, password, code, backup, audience, device)
         synchronized(lock) {
             cache.clear()
             session = tokens.session
@@ -167,7 +168,7 @@ class Id(
 
     /** Stage 2: Confirms the authenticator code and returns backup codes. */
     fun verify(hex: String, password: String, code: String): List<String> =
-        Signup.verify(client, base, hex, password, code)
+        Signup.verify(client, base, hex, password, code).codes
 
     /** Lists active sessions for the authenticated account from Aduki ID. */
     fun sessions(): List<AccountSession> {

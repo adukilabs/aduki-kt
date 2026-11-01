@@ -692,7 +692,8 @@ class Aduki internal constructor(
         /**
          * Signs in at Aduki ID with a full address, password and second factor
          * (an authenticator [code] or a [backup] code) and returns a client
-         * that sends the resulting mail token.
+         * that sends the resulting mail token. [device] names the session in
+         * [sessions] (e.g. "Mail on Pixel 9"); without it the session has no name.
          */
         suspend fun login(
             handle: String,
@@ -703,12 +704,28 @@ class Aduki internal constructor(
             backup: String? = null,
             dpop: pro.aduki.crypto.dpop.Key? = null,
             pins: List<Pin> = emptyList(),
-            tokenStore: TokenStore? = null
+            tokenStore: TokenStore? = null,
+            device: String? = null
         ): Aduki {
-            val tempClient = HttpClient.create("", 15, pro.aduki.crypto.tls.Pinning.pinner(pins)).let { base ->
+            val tokens = Login.submit(signing(dpop, pins), identity, handle, password, code, backup, device = device)
+            return open(tokens, endpoint, identity, dpop, pins, tokenStore)
+        }
+
+        // An unauthenticated client for Aduki ID; with [dpop] the session it opens is bound to that key.
+        private fun signing(dpop: pro.aduki.crypto.dpop.Key?, pins: List<Pin>): okhttp3.OkHttpClient =
+            HttpClient.create("", 15, pro.aduki.crypto.tls.Pinning.pinner(pins)).let { base ->
                 if (dpop == null) base else base.newBuilder().addInterceptor(Dpop(dpop)).build()
             }
-            val tokens = Login.submit(tempClient, identity, handle, password, code, backup)
+
+        // A client for a session just opened at Aduki ID: stored, adopted and its identity resolved.
+        private suspend fun open(
+            tokens: Tokens,
+            endpoint: String,
+            identity: String,
+            dpop: pro.aduki.crypto.dpop.Key?,
+            pins: List<Pin>,
+            tokenStore: TokenStore?
+        ): Aduki {
             try { tokenStore?.save(tokens) } catch (_: Exception) {}
             val client = builder()
                 .apply { if (dpop != null) dpop(dpop) }
@@ -762,29 +779,36 @@ class Aduki internal constructor(
             pins: List<Pin> = emptyList()
         ): List<String> {
             val tempClient = HttpClient.create("", 15, pro.aduki.crypto.tls.Pinning.pinner(pins))
-            return Signup.verify(tempClient, identity, hex, password, code)
+            return Signup.verify(tempClient, identity, hex, password, code).codes
         }
 
         /**
-         * Complete staged registration: confirms the authenticator code, activates the account,
-         * logs in, and returns the authenticated Aduki client alongside the one-time backup codes.
+         * Completes staged registration: confirms the authenticator [code], which activates the
+         * account and opens its first session in the same call, and returns the authenticated
+         * client with the one-time backup codes. [device] names that session.
+         *
+         * Aduki ID accepts each authenticator step once, so the code cannot also be used for a
+         * separate sign-in (0.5.x signed in again with it and was refused).
+         *
+         * @throws AdukiException.Protocol from an Aduki ID that does not open a session on
+         * verification; the account is active then, sign in with the next code.
          */
         suspend fun register(
-            handle: String,
-            name: String,
+            hex: String,
             password: String,
             code: String,
-            hex: String,
             endpoint: String = Endpoints.REST,
             identity: String = Endpoints.ID,
-            backup: String? = null,
             dpop: pro.aduki.crypto.dpop.Key? = null,
             pins: List<Pin> = emptyList(),
-            tokenStore: TokenStore? = null
+            tokenStore: TokenStore? = null,
+            device: String? = null
         ): Pair<Aduki, List<String>> {
-            val codes = verify(hex, password, code, identity, pins)
-            val client = login(handle, password, code, endpoint, identity, backup, dpop, pins, tokenStore)
-            return Pair(client, codes)
+            val verified = Signup.verify(signing(dpop, pins), identity, hex, password, code, Endpoints.AUDIENCE, device)
+            val tokens = verified.tokens ?: throw pro.aduki.core.errors.AdukiException.Protocol(
+                "Aduki ID activated the account but opened no session; sign in with the next code"
+            )
+            return Pair(open(tokens, endpoint, identity, dpop, pins, tokenStore), verified.codes)
         }
     }
 }

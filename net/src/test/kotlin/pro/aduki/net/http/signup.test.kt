@@ -96,7 +96,7 @@ class SignupTest {
             )
         )
 
-        val codes = Signup.verify(client, identity(), "01a14179", "password123456", "123456")
+        val codes = Signup.verify(client, identity(), "01a14179", "password123456", "123456").codes
 
         assertEquals(listOf("backup-1", "backup-2"), codes)
 

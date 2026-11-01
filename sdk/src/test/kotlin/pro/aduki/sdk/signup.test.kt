@@ -74,38 +74,42 @@ class SignupTest {
     }
 
     @Test
-    fun registerCompletesVerificationAndSignsIn() = runBlocking {
-        // 1. Verify returns backup codes
+    fun registerVerifiesAndOpensTheSessionInOneCall() = runBlocking {
+        // 1. Verify activates the account and opens its first session with the same code
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
-                """{"success":true,"data":{"codes":["b1","b2"]}}"""
+                """{"success":true,"data":{"codes":["b1","b2"],"session":"00000000000000ab","access":"eyJ.mail","refresh":"rt_1","expires":600}}"""
             )
         )
-        // 2. Login returns tokens
-        server.enqueue(
-            MockResponse().setResponseCode(201).setBody(
-                """{"success":true,"data":{"session":"00000000000000ab","access":"eyJ.mail","refresh":"rt_1","expires":600}}"""
-            )
-        )
-        // 3. me() resolves identity
-        server.enqueue(
-            MockResponse().setResponseCode(200).setBody(
-                """{"hex":"u1","tenant":"t1"}"""
-            )
-        )
+        // 2. me() resolves identity
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"hex":"u1","tenant":"t1"}"""))
 
         val (client, codes) = Aduki.register(
-            handle = "user@user.aduki.pro",
-            name = "User",
+            hex = "01a14179",
             password = "password123456",
             code = "123456",
-            hex = "01a14179",
             endpoint = endpoint(),
-            identity = identity()
+            identity = identity(),
+            device = "Mail on Pixel"
         )
 
         assertEquals(listOf("b1", "b2"), codes)
-        assertNotNull(client)
         assertEquals("eyJ.mail", client.session.token())
+        val verify = org.json.JSONObject(server.takeRequest().body.readUtf8())
+        assertEquals("123456", verify.getString("code"))
+        assertEquals("mail", verify.getString("audience"))
+        assertEquals("Mail on Pixel", verify.getString("device"))
+        assertEquals(2, server.requestCount) // no second sign-in that would replay the code
+    }
+
+    @Test
+    fun registerAgainstAnOlderIdSaysToSignInWithTheNextCode() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"success":true,"data":{"codes":["b1"]}}"""))
+        try {
+            Aduki.register(hex = "01a14179", password = "pw", code = "123456", endpoint = endpoint(), identity = identity())
+            org.junit.Assert.fail("expected Protocol")
+        } catch (e: pro.aduki.core.errors.AdukiException.Protocol) {
+            assertTrue(e.message!!.contains("next code"))
+        }
     }
 }

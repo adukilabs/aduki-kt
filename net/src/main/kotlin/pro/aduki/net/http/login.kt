@@ -35,9 +35,14 @@ object Login {
 
     private val JSON = "application/json; charset=utf-8".toMediaType()
 
+    /** The longest device name sent; Aduki ID lists it with the session. */
+    const val DEVICE = 128
+
     /**
      * Signs in with a full address ([handle], e.g. `ada@aduki.me`), password
      * and a second factor: an authenticator [code] or a [backup] code.
+     * [device] names the session in the account's session list (e.g.
+     * "Mail on Pixel 9"); it is trimmed and cut to [DEVICE] characters.
      *
      * @throws AdukiException.Unauthorized on a wrong password, a missing or
      * wrong second factor, or an inactive account.
@@ -49,7 +54,8 @@ object Login {
         password: String,
         code: String? = null,
         backup: String? = null,
-        audience: String = Endpoints.AUDIENCE
+        audience: String = Endpoints.AUDIENCE,
+        device: String? = null
     ): Tokens {
         val root = JSONObject().apply {
             put("handle", handle)
@@ -57,6 +63,7 @@ object Login {
             if (!code.isNullOrBlank()) put("code", code.trim())
             if (!backup.isNullOrBlank()) put("backup", backup.trim())
             put("audience", audience)
+            device?.trim()?.take(DEVICE)?.ifBlank { null }?.let { put("device", it) }
         }
         val request = Request.Builder()
             .url(url(identity, "sessions"))
