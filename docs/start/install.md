@@ -91,14 +91,14 @@ dependencies {
     // implementation("com.github.adukilabs.aduki-kt:android:0.6.0")
 
     // ObjectBox persistence
-    implementation("io.objectbox:objectbox-kotlin:4.0.3")
-    implementation("io.objectbox:objectbox-android:4.0.3")
+    implementation("io.objectbox:objectbox-kotlin:5.4.2")
+    implementation("io.objectbox:objectbox-android:5.4.2")
 
     // Network
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:okhttp:5.5.1")
 
     // Kotlin Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 }
 ```
 

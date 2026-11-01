@@ -1,6 +1,6 @@
 # Storage
 
-Local data is stored with [ObjectBox](https://objectbox.io) 4.0.3. The `store`
+Local data is stored with [ObjectBox](https://objectbox.io) 5.4.2. The `store`
 module holds the entities, a factory that opens a `BoxStore`, and a `Batch`
 helper for transactions. The sync engines, the outbox and the repositories
 read and write through it.
@@ -14,7 +14,7 @@ val store: BoxStore = Factory.build(context.filesDir)   // pro.aduki.store.box.F
 
 ## Encryption
 
-The database file as a whole is **not** encrypted: ObjectBox 4.0.3 has no
+The database file as a whole is **not** encrypted: ObjectBox 5.4.2 has no
 encryption option, so the file relies on the platform (file-based encryption on
 Android). The SDK additionally seals every personal text column with
 AES-256-GCM ([Vault](../security/vault.md)): message subject, sender, recipients,
