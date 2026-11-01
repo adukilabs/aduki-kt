@@ -40,7 +40,7 @@ class AccountsTest {
     @Before fun setup() {
         context = ApplicationProvider.getApplicationContext()
         manager = AccountManager.get(context)
-        accounts = Accounts(context, vault, manager)
+        accounts = Accounts(context, Accounts.Mode.Own(vault), manager)
     }
 
     private fun center(vararg list: Linked, id: String = "c1", token: String = "center-token") =
@@ -90,16 +90,16 @@ class AccountsTest {
         assertEquals("center", accounts.find("c3d4")!!.unlock)
     }
 
-    @Test fun tokensAreSealedInTheSystemStoreAndRoundTrip() {
+    @Test fun ownTokensAreSealedInThePrivateStoreOnlyAndRoundTrip() {
         accounts.reconcile(center(ada))
         accounts.save("a1b2", Tokens("adka_secret_access", "adkr_secret_refresh", "600", "s1"))
         val entry = accounts.find("a1b2")!!
-        val storedPassword = manager.getPassword(entry.account)
-        val storedAccess = manager.peekAuthToken(entry.account, "access")
-        assertNotEquals("adkr_secret_refresh", storedPassword)
-        assertNotEquals("adka_secret_access", storedAccess)
-        assertTrue(storedPassword!!.startsWith("aduki:1:") && storedAccess!!.startsWith("aduki:1:"))
+        assertNull("no copy in the shared entry", manager.getPassword(entry.account))
+        assertNull(manager.peekAuthToken(entry.account, "access"))
+        val raw = context.getSharedPreferences("pro.aduki.account.tokens", Context.MODE_PRIVATE).getString("a1b2", "")!!
+        assertFalse("sealed at rest", raw.contains("adkr_secret_refresh") || raw.contains("adka_secret_access"))
         assertEquals(Tokens("adka_secret_access", "adkr_secret_refresh", "600", "s1"), accounts.tokens("a1b2"))
+        assertTrue(accounts.holds("a1b2", context.packageName))
     }
 
     @Test fun theCenterTokenIsNeverInAnAccountEntryOrAnAccessToken() {
@@ -184,85 +184,137 @@ class AccountsTest {
         assertNotEquals(AccountManager.VISIBILITY_VISIBLE, accounts.visibility("c3d4", "pro.aduki.suite.drive"))
     }
 
-    @Test fun secondAccountsInstanceReadsSharedEntriesAndUnsealedTokens() {
-        val accounts1 = Accounts(context, vault = null, manager = manager)
-        accounts1.reconcile(center(ada))
-        accounts1.save("a1b2", Tokens("access_tok", "refresh_tok", "600", "sess_1"))
-        accounts1.share(listOf("pro.aduki.suite.mail"))
+    @Test fun sharedModeKeepsOneCopyInTheEntryAndEveryAppReadsIt() {
+        val mail = Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Shared, manager)
+        val calendar = Accounts(AppContext(context, "pro.aduki.calendar"), Accounts.Mode.Shared, manager)
+        mail.reconcile(center(ada))
+        mail.save("a1b2", Tokens("access_1", "refresh_1", "600", "sess_1"))
+        assertEquals("refresh_1", calendar.tokens("a1b2")?.refresh)
 
-        // Second accounts instance (e.g. companion app of the same publisher)
-        val accounts2 = Accounts(context, vault = null, manager = manager)
-        val list = accounts2.list()
-        assertEquals(1, list.size)
-        assertEquals("ada@aduki.me", list[0].handle)
-        assertEquals("a1b2", list[0].hex)
-        assertEquals("c1", list[0].center)
-
-        val tokens = accounts2.tokens("a1b2")
-        assertEquals(Tokens("access_tok", "refresh_tok", "600", "sess_1"), tokens)
+        // Mail renews: Calendar's next read is the rotated pair, never a stale copy (aduki-kt#118).
+        mail.save("a1b2", Tokens("access_2", "refresh_2", "600", "sess_1"))
+        assertEquals(Tokens("access_2", "refresh_2", "600", "sess_1"), calendar.tokens("a1b2"))
     }
 
-    @Test fun secondAccountsInstanceReadsMetadataWhenTokensAreVaultSealed() {
-        val vault1 = softVault()
-        val accounts1 = Accounts(context, vault = vault1, manager = manager)
-        accounts1.reconcile(center(ada))
-        accounts1.save("a1b2", Tokens("access_tok", "refresh_tok", "600", "sess_1"))
-
-        // Companion app has its own Keystore/Vault key
-        val vault2 = softVault()
-        val accounts2 = Accounts(context, vault = vault2, manager = manager)
-        val list = accounts2.list()
-        assertEquals(1, list.size)
-        assertEquals("ada@aduki.me", list[0].handle)
-        assertEquals("a1b2", list[0].hex)
-        assertEquals("c1", list[0].center)
-
-        // Tokens sealed with vault1 cannot be decrypted by vault2; companion app
-        // reads handle/hex/center to run its own DPoP authentication flow.
-        assertNull(accounts2.tokens("a1b2"))
-    }
-
-    @Test fun peerAppRedeemsSilentSessionGrantOnShare() {
-        val mailContext = AppContext(context, "pro.aduki.mail")
+    @Test fun sharedModeDropsAStalePrivateCopyAnOlderSdkLeft() {
         val calContext = AppContext(context, "pro.aduki.calendar")
-        val contactsContext = AppContext(context, "pro.aduki.contacts")
+        val calendar = Accounts(calContext, Accounts.Mode.Shared, manager)
+        calendar.reconcile(center(ada))
+        calendar.save("a1b2", Tokens("fresh_access", "fresh_refresh", "600", "s"))
+        // what 0.5.4 left in the app's own preferences
+        calContext.getSharedPreferences("pro.aduki.account.tokens", Context.MODE_PRIVATE).edit()
+            .putString("a1b2", JSONObject().put("token", "old").put("refresh", "spent").toString()).commit()
+        assertEquals("fresh_refresh", calendar.tokens("a1b2")?.refresh)
+        assertNull(calContext.getSharedPreferences("pro.aduki.account.tokens", Context.MODE_PRIVATE).getString("a1b2", null))
+    }
 
+    @Test fun readTellsMissingFromSealed() {
+        val mail = Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Own(softVault()), manager)
+        mail.reconcile(center(ada))
+        assertEquals(Accounts.Stored.Missing, mail.read("a1b2"))
+        mail.save("a1b2", Tokens("a", "r", "600", "s"))
+        assertTrue(mail.read("a1b2") is Accounts.Stored.Found)
+
+        // the Keystore key is gone (or the file came from another app): sealed, not "signed out"
+        val rekeyed = Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Own(softVault()), manager)
+        assertEquals(Accounts.Stored.Sealed, rekeyed.read("a1b2"))
+        assertNull(rekeyed.tokens("a1b2"))
+
+        // a shared entry holding sealed text cannot be used by a Shared reader
+        val entry = mail.find("a1b2")!!
+        manager.setPassword(entry.account, softVault().sealText("r"))
+        assertEquals(Accounts.Stored.Sealed, Accounts(context, Accounts.Mode.Shared, manager).read("a1b2"))
+    }
+
+    @Test fun ownModeNeverAdoptsTheSharedEntry() {
+        val shared = Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Shared, manager)
+        shared.reconcile(center(ada))
+        shared.save("a1b2", Tokens("plain_access", "plain_refresh", "600", "s"))
+        val own = Accounts(AppContext(context, "pro.aduki.calendar"), Accounts.Mode.Own(softVault()), manager)
+        assertEquals(Accounts.Stored.Missing, own.read("a1b2"))
+        assertEquals("unsealed tokens of another app are not adopted (aduki-kt#113)", Accounts.Stored.Sealed, own.migrate("a1b2"))
+        assertEquals(Accounts.Stored.Missing, own.read("a1b2"))
+    }
+
+    @Test fun migrateMovesThisAppsOldSealedEntryIntoThePrivateStore() {
         val mailVault = softVault()
-        val mailAccounts = Accounts(mailContext, vault = mailVault, manager = manager)
-        mailAccounts.reconcile(center(ada))
-        val originalTokens = Tokens("mail_access_tok", "mail_refresh_tok", "600", "sess_mail")
-        mailAccounts.save("a1b2", originalTokens)
+        val mailContext = AppContext(context, "pro.aduki.mail")
+        val mail = Accounts(mailContext, Accounts.Mode.Own(mailVault), manager)
+        mail.reconcile(center(ada))
+        val entry = mail.find("a1b2")!!
+        // what 0.5.3 wrote: sealed with this app's vault, in the entry
+        manager.setPassword(entry.account, mailVault.sealText("old_refresh"))
+        manager.setAuthToken(entry.account, "access", mailVault.sealText("old_access"))
+        manager.setUserData(entry.account, "expires", "600")
+        assertEquals(Accounts.Stored.Missing, mail.read("a1b2"))
+        val moved = mail.migrate("a1b2") as Accounts.Stored.Found
+        assertEquals("old_refresh", moved.tokens.refresh)
+        assertNull("the entry no longer holds it", manager.getPassword(entry.account))
+    }
 
-        // Mail shares account with Calendar and Contacts
-        val sharedCount = mailAccounts.share(listOf("pro.aduki.calendar", "pro.aduki.contacts"))
-        assertEquals(1, sharedCount)
+    @Test fun aHandoffIsOfferedToOnePeerAndClaimedOnce() {
+        val mail = Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Own(softVault()), manager)
+        val calendar = Accounts(AppContext(context, "pro.aduki.calendar"), Accounts.Mode.Own(softVault()), manager)
+        val contacts = Accounts(AppContext(context, "pro.aduki.contacts"), Accounts.Mode.Own(softVault()), manager)
+        mail.reconcile(center(ada))
+        mail.save("a1b2", Tokens("mail_access", "mail_refresh", "600", "s"))
+        assertFalse(mail.holds("a1b2", "pro.aduki.calendar"))
+        val later = System.currentTimeMillis() / 1000 + 3600
+        assertTrue(mail.offer("a1b2", "pro.aduki.calendar", pro.aduki.net.http.Handoff("adkh_cal", later)))
+        assertFalse("not to itself", mail.offer("a1b2", "pro.aduki.mail", pro.aduki.net.http.Handoff("adkh_x", later)))
 
-        // Calendar opens with its own vault
-        val calVault = softVault()
-        val calAccounts = Accounts(calContext, vault = calVault, manager = manager)
+        // nothing of Mail's session is readable by the peers
+        assertNull(calendar.tokens("a1b2"))
+        assertNull(contacts.claim("a1b2"))
+        assertEquals("adkh_cal", calendar.claim("a1b2"))
+        assertNull("single use", calendar.claim("a1b2"))
+        for (key in listOf("handoff.pro.aduki.calendar", "handoff.pro.aduki.contacts")) {
+            assertNull(manager.getUserData(mail.find("a1b2")!!.account, key))
+        }
 
-        // Calendar gets session silently via peer grant redemption
-        val calTokens = calAccounts.tokens("a1b2")
-        assertEquals(originalTokens, calTokens)
+        // Calendar redeems it at Aduki ID with its own key and saves its own session
+        calendar.save("a1b2", Tokens("cal_access", "cal_refresh", "600", "s2"))
+        assertTrue(mail.holds("a1b2", "pro.aduki.calendar"))
+        assertEquals("mail_refresh", mail.tokens("a1b2")?.refresh)
+    }
 
-        // Calendar tokens are now sealed in its own private store
-        // Calling tokens again retrieves from Calendar's own store
-        val calTokensAgain = calAccounts.tokens("a1b2")
-        assertEquals(originalTokens, calTokensAgain)
+    @Test fun expiredOrWithdrawnHandoffsAreNotClaimed() {
+        val mail = Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Own(softVault()), manager)
+        val calendar = Accounts(AppContext(context, "pro.aduki.calendar"), Accounts.Mode.Own(softVault()), manager)
+        mail.reconcile(center(ada))
+        val now = System.currentTimeMillis() / 1000
+        assertFalse("already expired", mail.offer("a1b2", "pro.aduki.calendar", pro.aduki.net.http.Handoff("adkh_old", now - 1)))
+        assertTrue(mail.offer("a1b2", "pro.aduki.calendar", pro.aduki.net.http.Handoff("adkh_1", now + 60)))
+        assertNull("expired by the time it is claimed", calendar.claim("a1b2", now = now + 61))
+        assertTrue(mail.offer("a1b2", "pro.aduki.calendar", pro.aduki.net.http.Handoff("adkh_2", now + 60)))
+        assertTrue(mail.withdraw("a1b2", "pro.aduki.calendar"))
+        assertNull(calendar.claim("a1b2"))
+    }
 
-        // Contacts opens with its own vault and redeems its own grant
-        val contactsVault = softVault()
-        val contactsAccounts = Accounts(contactsContext, vault = contactsVault, manager = manager)
-        val contactsTokens = contactsAccounts.tokens("a1b2")
-        assertEquals(originalTokens, contactsTokens)
+    @Test fun shareGrantsVisibilityAndHandsOverNoTokens() {
+        val mail = Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Own(softVault()), manager)
+        mail.reconcile(center(ada))
+        mail.save("a1b2", Tokens("acc", "ref", "600", "s"))
+        mail.share(listOf("pro.aduki.calendar"))
+        val calendar = Accounts(AppContext(context, "pro.aduki.calendar"), Accounts.Mode.Own(softVault()), manager)
+        assertEquals("a1b2", calendar.list().single().hex)
+        assertEquals(Accounts.Stored.Missing, calendar.read("a1b2"))
+        assertNull(calendar.claim("a1b2"))
+    }
 
-        // A second redemption attempt from Calendar returns null since grant was single-use
-        assertNull(calAccounts.redeem("a1b2"))
+    @Test fun forgetEndsThisAppsSessionAndKeepsTheEntry() {
+        val mail = Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Own(softVault()), manager)
+        mail.reconcile(center(ada))
+        mail.save("a1b2", Tokens("acc", "ref", "600", "s"))
+        mail.forget("a1b2")
+        assertEquals(Accounts.Stored.Missing, mail.read("a1b2"))
+        assertFalse(mail.holds("a1b2", "pro.aduki.mail"))
+        assertEquals("a1b2", mail.find("a1b2")?.hex)
 
-        // An untrusted app with no grant cannot read tokens
-        val driveContext = AppContext(context, "pro.aduki.drive")
-        val driveAccounts = Accounts(driveContext, vault = softVault(), manager = manager)
-        assertNull(driveAccounts.tokens("a1b2"))
+        val shared = Accounts(context, Accounts.Mode.Shared, manager)
+        shared.save("a1b2", Tokens("acc", "ref", "600", "s"))
+        shared.forget("a1b2")
+        assertEquals(Accounts.Stored.Missing, shared.read("a1b2"))
     }
 
     @Test fun customVisibilityProviderTestSeam() {
@@ -276,7 +328,7 @@ class AccountsTest {
                 AccountManager.VISIBILITY_VISIBLE
         }
 
-        val testAccounts = Accounts(context, vault = vault, manager = manager, visibility = customVisibility)
+        val testAccounts = Accounts(context, Accounts.Mode.Own(vault), manager, visibility = customVisibility)
         testAccounts.reconcile(center(ada))
         testAccounts.share("a1b2", listOf("pro.aduki.calendar"))
 
@@ -287,47 +339,16 @@ class AccountsTest {
         assertEquals(AccountManager.VISIBILITY_VISIBLE, testAccounts.visibility("a1b2", "pro.aduki.calendar"))
     }
 
-    @Test fun expiredGrantReturnsNull() {
-        val mailContext = AppContext(context, "pro.aduki.mail")
-        val calContext = AppContext(context, "pro.aduki.calendar")
-
-        val mailAccounts = Accounts(mailContext, vault = softVault(), manager = manager)
-        mailAccounts.reconcile(center(ada))
-        val entry = mailAccounts.find("a1b2")!!
-
-        // Deposit an expired grant (ttl = -1000L)
-        mailAccounts.grant(entry.account, "pro.aduki.calendar", Tokens("acc", "ref", "600", "s"), ttl = -1000L)
-
-        val calAccounts = Accounts(calContext, vault = softVault(), manager = manager)
-        assertNull(calAccounts.tokens("a1b2"))
-    }
-
-    @Test fun revokeRemovesPendingGrant() {
-        val mailContext = AppContext(context, "pro.aduki.mail")
-        val calContext = AppContext(context, "pro.aduki.calendar")
-
-        val mailAccounts = Accounts(mailContext, vault = softVault(), manager = manager)
-        mailAccounts.reconcile(center(ada))
-        mailAccounts.save("a1b2", Tokens("acc", "ref", "600", "s"))
-        mailAccounts.grant("a1b2", "pro.aduki.calendar")
-
-        // Mail revokes the grant before Calendar redeems it
-        assertTrue(mailAccounts.revoke("a1b2", "pro.aduki.calendar"))
-
-        val calAccounts = Accounts(calContext, vault = softVault(), manager = manager)
-        assertNull(calAccounts.tokens("a1b2"))
-    }
-
     @Test fun signingOutFromAnyAppDropsAccountForPeerApps() {
         val mailContext = AppContext(context, "pro.aduki.mail")
         val calContext = AppContext(context, "pro.aduki.calendar")
 
-        val mailAccounts = Accounts(mailContext, vault = softVault(), manager = manager)
+        val mailAccounts = Accounts(mailContext, Accounts.Mode.Shared, manager)
         mailAccounts.reconcile(center(ada))
         mailAccounts.save("a1b2", Tokens("acc", "ref", "600", "s"))
         mailAccounts.share(listOf("pro.aduki.calendar"))
 
-        val calAccounts = Accounts(calContext, vault = softVault(), manager = manager)
+        val calAccounts = Accounts(calContext, Accounts.Mode.Shared, manager)
         assertEquals("acc", calAccounts.tokens("a1b2")?.token)
 
         // Sign out from Calendar app

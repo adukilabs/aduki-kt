@@ -341,7 +341,10 @@ class Mail internal constructor(
 
     /**
      * Saves a draft message in the Drafts mailbox and journals outbox sync.
-     * When [replace] is given, marks the replaced draft deleted.
+     * When [replace] is given, marks the replaced draft deleted. Once the
+     * draft reached the server the returned message has the server's id;
+     * offline it keeps its `msg_` placeholder, which [openDraft] and a later
+     * [replace] still accept.
      */
     suspend fun saveDraft(draft: Draft, replace: String? = null): Message {
         val queue = outbox()
@@ -360,14 +363,20 @@ class Mail internal constructor(
         )
         content?.put(msg.hex, draft.text, draft.html.orEmpty())
         worker?.drain()
-        return msg
+        // Sent: the draft now has the server's id.
+        val hex = queue.latest(msg.hex)
+        if (hex == msg.hex) return msg
+        content?.put(hex, draft.text, draft.html.orEmpty())
+        return repo?.get(hex) ?: queue.message(hex) ?: msg
     }
 
     /**
      * Reads a draft message and its body content as a [Draft].
      */
     suspend fun openDraft(hex: String): Draft {
-        val msg = repo?.get(hex) ?: outbox().message(hex) ?: throw IllegalArgumentException("Draft not found: $hex")
+        val queue = outbox()
+        @Suppress("NAME_SHADOWING") val hex = queue.latest(hex)
+        val msg = repo?.get(hex) ?: queue.message(hex) ?: throw IllegalArgumentException("Draft not found: $hex")
         val b = try { body(hex) } catch (_: Exception) { Body() }
         return Draft(
             to = msg.recipients(),

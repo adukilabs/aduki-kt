@@ -24,7 +24,7 @@ import pro.aduki.core.models.Tokens
 @Config(sdk = [34])
 class AuthenticatorTest {
     private val context = ApplicationProvider.getApplicationContext<android.app.Application>()
-    private val accounts = Accounts(context, softVault())
+    private val accounts = Accounts(context, Accounts.Mode.Own(softVault()))
     private val authenticator = AdukiAuthenticator(context, accounts)
 
     @Before fun seed() {

@@ -40,6 +40,7 @@ class MailTest {
 
     /** Each JMAP method call: name to arguments. */
     private val calls = CopyOnWriteArrayList<Pair<String, JSONObject>>()
+    private val drafts = java.util.concurrent.atomic.AtomicInteger()
 
     @Volatile private var boxes = listOf(box("b-inbox", "INBOX", "inbox"), box("b-sent", "Sent", "sent"), box("b-drafts", "Drafts", "drafts"))
 
@@ -150,7 +151,8 @@ class MailTest {
             if (args.has("create")) {
                 val cr = args.getJSONObject("create")
                 for (k in cr.keySet()) {
-                    created.put(k, JSONObject().put("id", "srv-$k"))
+                    // drafts get a new id each time, as the server gives them
+                    created.put(k, JSONObject().put("id", if (k == "draft") "srv-draft-${drafts.incrementAndGet()}" else "srv-$k"))
                 }
             }
             JSONObject().put("created", created).put("updated", JSONObject())
@@ -457,7 +459,10 @@ class MailTest {
 
         val saved = client.mail.saveDraft(draft)
         assertNotNull(saved)
-        assertTrue(saved.pending())
+        assertFalse("sent: it has the server's id", saved.pending())
+        assertEquals("srv-draft-1", saved.hex)
+        val create = calls.last { it.first == "Email/set" }.second.getJSONObject("create").getJSONObject("draft")
+        assertTrue(create.getJSONObject("mailboxIds").getBoolean("b-drafts"))
         assertEquals("Q4 Proposal", saved.subject)
         assertEquals("partner@example.com", saved.to)
         assertTrue((saved.flags and Message.DRAFT) != 0)

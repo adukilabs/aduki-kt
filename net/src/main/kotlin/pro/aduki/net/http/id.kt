@@ -1,5 +1,9 @@
 package pro.aduki.net.http
 
+import okhttp3.RequestBody.Companion.toRequestBody
+
+import okhttp3.MediaType.Companion.toMediaType
+
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -221,5 +225,44 @@ class Id(
         }
     }
 
+    /**
+     * Asks Aduki ID for a single-use [Handoff] that lets the app [target] (a
+     * package name) open its own session of this account without a password
+     * or second factor: `POST /v1/handoffs`. [ttl] is in seconds, 60 to
+     * 86400. A new handoff for the same target replaces an unredeemed one;
+     * all of them end with this session.
+     */
+    fun handoff(target: String, ttl: Long = Handoff.TTL): Handoff {
+        require(target.isNotBlank()) { "target is required" }
+        require(ttl in 60..86_400) { "ttl: 60 seconds to 24 hours" }
+        val body = JSONObject().put("target", target.trim()).put("ttl", ttl).toString()
+        val response = call("id") { token ->
+            Request.Builder()
+                .url(url("handoffs"))
+                .header("Authorization", "Bearer $token")
+                .post(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .build()
+        }
+        return response.use { resp ->
+            val data = Login.data(resp, "Handoff")
+            Handoff(Login.required(data, "handoff", "handoff"), data.optLong("expires", 0))
+        }
+    }
+
     private fun url(path: String) = "${base.trimEnd('/')}/$path"
+}
+
+/**
+ * A single-use code from Aduki ID ([Id.handoff]) with which another app of the
+ * same publisher opens its own session ([Login.redeem]). [expires] is in Unix
+ * seconds. It is a bearer secret until redeemed: hand it only to [Id.handoff]'s target.
+ */
+data class Handoff(val code: String, val expires: Long) {
+    /** True once [expires] has passed. */
+    fun expired(now: Long = System.currentTimeMillis() / 1000): Boolean = expires in 1..now
+
+    companion object {
+        /** The default lifetime, seconds. */
+        const val TTL = 3_600L
+    }
 }

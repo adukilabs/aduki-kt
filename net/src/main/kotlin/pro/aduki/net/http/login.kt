@@ -194,7 +194,44 @@ object Login {
     private fun url(identity: String, path: String) = "${identity.trimEnd('/')}/$path"
 
     /** The `data` object of an Aduki ID envelope, or the matching exception. */
-    private fun data(response: Response, what: String): JSONObject {
+    /**
+     * Opens this app's own session from a [Handoff] another app of the same
+     * publisher obtained ([Id.handoff]) and left for it: `POST /v1/handoffs/redeem`.
+     * The session is new, of the same account, bound to this app's DPoP key
+     * when [client] carries one; no password or second factor is asked. A
+     * handoff works once.
+     *
+     * @throws AdukiException.Unauthorized when the handoff is unknown, used,
+     * expired or the session that issued it has ended.
+     */
+    fun redeem(
+        client: OkHttpClient,
+        identity: String,
+        handoff: String,
+        audience: String = Endpoints.AUDIENCE,
+        device: String? = null
+    ): Tokens {
+        val root = JSONObject().apply {
+            put("handoff", handoff.trim())
+            put("audience", audience)
+            device?.trim()?.take(DEVICE)?.ifBlank { null }?.let { put("device", it) }
+        }
+        val request = Request.Builder()
+            .url(url(identity, "handoffs/redeem"))
+            .post(root.toString().toRequestBody(JSON))
+            .build()
+        client.newCall(request).execute().use { response ->
+            val data = data(response, "Handoff")
+            return Tokens(
+                token = access(data, "handoff"),
+                refresh = required(data, "refresh", "handoff"),
+                expires = data.optLong("expires", 0).toString(),
+                session = required(data, "session", "handoff")
+            )
+        }
+    }
+
+    internal fun data(response: Response, what: String): JSONObject {
         val body = response.body?.string().orEmpty()
         val json = runCatching { JSONObject(body) }.getOrNull()
         if (!response.isSuccessful) {
@@ -209,13 +246,13 @@ object Login {
         return json?.optJSONObject("data") ?: throw AdukiException.Network("Empty response from $what")
     }
 
-    private fun required(data: JSONObject, field: String, what: String): String {
+    internal fun required(data: JSONObject, field: String, what: String): String {
         val value = data.optString(field, "")
         if (value.isBlank()) throw AdukiException.Auth("Missing $field in $what response")
         return value
     }
 
-    private fun access(data: JSONObject, what: String): String {
+    internal fun access(data: JSONObject, what: String): String {
         val token = data.optString("access", "")
         if (token.isBlank()) throw AdukiException.Auth("Missing access token in $what response")
         return token

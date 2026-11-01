@@ -26,6 +26,7 @@ import pro.aduki.net.http.Scheme
 import pro.aduki.net.http.Whoami
 import pro.aduki.core.models.Identity
 import pro.aduki.core.models.TokenStore
+import pro.aduki.net.http.Handoff
 import pro.aduki.core.models.Tokens
 import pro.aduki.state.repository.Session
 
@@ -479,39 +480,53 @@ class Aduki internal constructor(
     /**
      * Lists active sessions for the signed-in account from Aduki ID.
      */
-    suspend fun sessions(): List<AccountSession> = withContext(Dispatchers.IO) {
-        val current = session.tokens.value
-        if (current != null) align(current)
-        val list = id.sessions()
-        if (current != null && id.refreshToken().isNotBlank() && id.refreshToken() != current.refresh) {
-            val updated = current.copy(refresh = id.refreshToken())
-            session.update(updated)
-            try { tokenStore?.save(updated) } catch (_: Exception) {}
-        }
-        list
-    }
+    suspend fun sessions(): List<AccountSession> = withContext(Dispatchers.IO) { identity { it.sessions() } }
 
     /**
      * Revokes the active session with [hex].
      * If the revoked session is this client's current session, clears local authentication as well.
      */
     suspend fun revoke(hex: String): Boolean = withContext(Dispatchers.IO) {
-        val current = session.tokens.value
-        if (current != null) align(current)
-        val revoked = id.revoke(hex)
-        if (current != null && id.refreshToken().isNotBlank() && id.refreshToken() != current.refresh) {
-            val updated = current.copy(refresh = id.refreshToken())
-            session.update(updated)
-            try { tokenStore?.save(updated) } catch (_: Exception) {}
-        }
-        if (revoked && current?.session == hex) {
-            watcher?.stop()
-            watcher = null
-            id.clear()
-            session.clear()
-            try { tokenStore?.clear() } catch (_: Exception) {}
+        val revoked = identity { it.revoke(hex) }
+        if (revoked && session.tokens.value?.session == hex) {
+            synchronized(renewal) {
+                watcher?.stop()
+                watcher = null
+                id.clear()
+                session.clear()
+                try { tokenStore?.clear() } catch (_: Exception) {}
+            }
         }
         revoked
+    }
+
+    /**
+     * A single-use [Handoff] with which the app [target] (its package name)
+     * opens its own session of this account, bound to its own key, without a
+     * password or second factor ([Aduki.redeem]). Leave it for that app with
+     * `Accounts.offer` on Android. [ttl] is in seconds, 60 to 86400.
+     */
+    suspend fun handoff(target: String, ttl: Long = Handoff.TTL): Handoff =
+        withContext(Dispatchers.IO) { identity { it.handoff(target, ttl) } }
+
+    // Runs [block] against Aduki ID with the `id` audience. Getting that token
+    // rotates the refresh token, so this holds [renewal] like [renew] does
+    // (a concurrent renew would otherwise present the spent token and Aduki
+    // ID would end the session) and saves the rotated token, even when
+    // [block] fails after the rotation.
+    private fun <T> identity(block: (Id) -> T): T = synchronized(renewal) {
+        val current = session.tokens.value ?: tokenStore?.load()?.also(session::update)
+        if (current != null) align(current)
+        try {
+            block(id)
+        } finally {
+            val now = id.refreshToken()
+            if (current != null && now.isNotBlank() && now != current.refresh) {
+                val updated = current.copy(refresh = now)
+                session.update(updated)
+                try { tokenStore?.save(updated) } catch (_: Exception) {}
+            }
+        }
     }
 
     /**
@@ -708,6 +723,30 @@ class Aduki internal constructor(
             device: String? = null
         ): Aduki {
             val tokens = Login.submit(signing(dpop, pins), identity, handle, password, code, backup, device = device)
+            return open(tokens, endpoint, identity, dpop, pins, tokenStore)
+        }
+
+        /**
+         * Opens this app's own session from a [Handoff] code another app of the
+         * same publisher left for it (`Accounts.claim` on Android), with no
+         * password or second factor. With [dpop] the session is bound to this
+         * app's key. [device] names the session.
+         *
+         * @throws AdukiException.Unauthorized when the code is unknown, used,
+         * expired or its issuing session has ended: sign in normally then.
+         */
+        suspend fun redeem(
+            handoff: String,
+            endpoint: String = Endpoints.REST,
+            identity: String = Endpoints.ID,
+            dpop: pro.aduki.crypto.dpop.Key? = null,
+            pins: List<Pin> = emptyList(),
+            tokenStore: TokenStore? = null,
+            device: String? = null
+        ): Aduki {
+            val tokens = withContext(Dispatchers.IO) {
+                Login.redeem(signing(dpop, pins), identity, handoff, Endpoints.AUDIENCE, device)
+            }
             return open(tokens, endpoint, identity, dpop, pins, tokenStore)
         }
 

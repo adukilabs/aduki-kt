@@ -12,6 +12,7 @@ import pro.aduki.core.models.Tokens
 import pro.aduki.core.errors.AdukiException
 import pro.aduki.crypto.cipher.Vault
 import pro.aduki.crypto.dpop.Key
+import pro.aduki.net.http.Handoff
 import pro.aduki.android.keystore.AndroidKey
 import pro.aduki.net.http.Center
 
@@ -59,42 +60,72 @@ interface Visibility {
  * account under the one [TYPE], the center id in each entry's user data so the
  * authenticator knows which entries belong together.
  *
- * Tokens are sealed with the [Vault] (Keystore-backed on a device) before they
- * reach AccountManager, which stores them in the system account database. The
- * center token (ADK-AUTH-002 section 7.2) is sent to Aduki ID only and is
+ * The center token (ADK-AUTH-002 section 7.2) is sent to Aduki ID only and is
  * kept in its own private file, never in an account entry and never next to an
- * access token: access tokens carry no center data, and neither does what this
- * class hands to app services.
+ * access token.
  *
- * ## Cross-App Account Sharing
- * On Android 8+ (API 26+), accounts added by one application are isolated and
- * invisible to other applications by default. Call [share] with target package names
- * to grant visibility via [AccountManager.setAccountVisibility].
+ * ## Where session tokens live
+ * The [mode] decides, and there is always exactly one copy:
+ * - [Mode.Own] (default): this app's own session, sealed with the mode's [Vault]
+ *   in this app's private storage. The account entry carries metadata only
+ *   (`hex`, `handle`, `center`, `tenant`, `personal`, `unlock`). Another app of
+ *   the same publisher opens its own session with a handoff: the signed-in app
+ *   gets one from Aduki ID (`Aduki.handoff(target)`) and leaves it with [offer];
+ *   the other app takes it with [claim] and redeems it with its own key
+ *   (`Aduki.redeem`). Only that single-use code crosses apps.
+ * - [Mode.Shared]: one session for every app the entry is visible to (apps that
+ *   share a `TokenStore`). The tokens live only in the account entry, unsealed,
+ *   because a Keystore key belongs to one app. Every read goes to the entry, so
+ *   a renewal by one app is what the next app reads.
  *
- * ### Safe vs. App-Bound Fields
- * - **Safe across apps:** `hex`, `handle`, `center`, `tenant`, `personal`, `unlock`.
- *   These metadata fields are unsealed [AccountManager] user data readable by any
- *   companion app granted visibility.
- * - **App-bound (with Vault):** Access and refresh tokens sealed with [Vault.platform()]
- *   use an Android Keystore key belonging exclusively to the creating application's UID.
+ * All apps of one publisher should use the same mode.
  *
- * ### Token Sharing Patterns
- * 1. **Per-App Sessions (Recommended):** Peer apps read `handle`, `hex`, and `center`
- *    metadata from [Accounts] and establish their own DPoP session with their own
- *    app-specific private key.
- * 2. **Unsealed Tokens (`vault = null`):** Using `Accounts(context, vault = null)` stores
- *    tokens unsealed in [AccountManager], allowing companion apps with visibility
- *    to read and share session tokens directly.
+ * ## Cross-app visibility
+ * On Android 8+ (API 26+) an account is invisible to other apps until [share]
+ * grants it to their packages ([Visibility] is the seam tests replace).
  */
 class Accounts(
     context: Context,
-    private val vault: Vault? = Vault.platform(),
+    /** Where session tokens are kept; see [Mode]. */
+    val mode: Mode = Mode.Own(),
     private val manager: AccountManager = AccountManager.get(context),
-    private val center: CenterStore = CenterStore(context, vault),
+    private val center: CenterStore = CenterStore(context, mode.vault),
     private val visibility: Visibility = Visibility.system(manager)
 ) {
     private val packageName: String = context.packageName
-    private val tokensPrefs = context.applicationContext.getSharedPreferences("pro.aduki.account.tokens", Context.MODE_PRIVATE)
+    private val tokensPrefs = context.applicationContext.getSharedPreferences(TOKENS, Context.MODE_PRIVATE)
+
+    /** Where an [Accounts] keeps session tokens. */
+    sealed class Mode(val vault: Vault?) {
+        /**
+         * One session shared by the apps the entry is visible to: the tokens
+         * are kept only in the AccountManager entry, unsealed (the system
+         * account database is readable only by apps it is made visible to).
+         */
+        object Shared : Mode(null)
+
+        /**
+         * This app's own session: the tokens are kept only in this app's
+         * private storage, sealed with [vault] (the Keystore on a device).
+         */
+        class Own(vault: Vault? = Vault.platform()) : Mode(vault)
+    }
+
+    /** What [read] found for an account. */
+    sealed interface Stored {
+        /** The tokens, and when they were saved (epoch milliseconds, 0 when unknown). */
+        data class Found(val tokens: Tokens, val saved: Long) : Stored
+
+        /** Nothing is stored: the account is signed out in this app. */
+        object Missing : Stored
+
+        /**
+         * Tokens are stored but are not this app's to use: sealed by another
+         * app or with a Keystore key that is gone, or (for [migrate]) left
+         * unsealed by an app in [Mode.Shared]. Sign in again.
+         */
+        object Sealed : Stored
+    }
 
     /** One entry, as read back. */
     data class Entry(
@@ -173,66 +204,119 @@ class Accounts(
         return ok
     }
 
-    /** Stores the session [tokens] of the account [hex]; false when no such entry exists. */
+    /** Stores the session [tokens] of the account [hex] where the [mode] keeps them; false when no such entry exists. */
     fun save(hex: String, tokens: Tokens, now: Long = System.currentTimeMillis()): Boolean {
         val entry = find(hex) ?: return false
-        val json = JSONObject().apply {
-            put("token", seal(tokens.token))
-            put("refresh", seal(tokens.refresh))
-            put("expires", tokens.expires)
-            put("session", tokens.session)
-            put("saved", now)
+        when (mode) {
+            is Mode.Shared -> {
+                tokensPrefs.edit().remove(hex).apply() // a 0.5.x private copy would go stale
+                manager.setUserData(entry.account, SAVED, now.toString())
+                manager.setUserData(entry.account, EXPIRES, tokens.expires)
+                manager.setUserData(entry.account, SESSION, tokens.session)
+                manager.setPassword(entry.account, tokens.refresh.ifEmpty { null })
+                manager.setAuthToken(entry.account, ACCESS, tokens.token.ifEmpty { null })
+            }
+            is Mode.Own -> {
+                val json = JSONObject().apply {
+                    put("token", seal(tokens.token))
+                    put("refresh", seal(tokens.refresh))
+                    put("expires", tokens.expires)
+                    put("session", tokens.session)
+                    put("saved", now)
+                }
+                tokensPrefs.edit().putString(hex, json.toString()).apply()
+                manager.setUserData(entry.account, own(packageName), now.toString())
+            }
         }
-        tokensPrefs.edit().putString(hex, json.toString()).apply()
-
-        manager.setUserData(entry.account, SAVED, now.toString())
-        manager.setUserData(entry.account, EXPIRES, tokens.expires)
-        manager.setUserData(entry.account, SESSION, tokens.session)
-        manager.setPassword(entry.account, seal(tokens.refresh))
-        manager.setAuthToken(entry.account, ACCESS, seal(tokens.token))
         return true
     }
 
-    /** The stored session of [hex] (access, refresh, expiry, session id), or null when none was saved. */
-    fun tokens(hex: String): Tokens? {
-        val entry = find(hex) ?: return null
-        val stored = tokensPrefs.getString(hex, null)
-        if (stored != null) {
-            val parsed = runCatching {
-                val json = JSONObject(stored)
-                val access = open(json.optString("token"))
-                val refresh = open(json.optString("refresh"))
-                if (access.isNotEmpty() || refresh.isNotEmpty()) {
-                    Tokens(
-                        token = access,
-                        refresh = refresh,
-                        expires = json.optString("expires"),
-                        session = json.optString("session")
+    /**
+     * The stored session of [hex]: [Stored.Found], [Stored.Missing] (signed
+     * out here) or [Stored.Sealed] (stored, but not openable by this app).
+     * Nothing is read from anywhere the [mode] does not keep tokens.
+     */
+    fun read(hex: String): Stored {
+        val entry = find(hex) ?: return Stored.Missing
+        return when (mode) {
+            is Mode.Shared -> {
+                tokensPrefs.edit().remove(hex).apply()
+                val access = manager.peekAuthToken(entry.account, ACCESS).orEmpty()
+                val refresh = manager.getPassword(entry.account).orEmpty()
+                when {
+                    access.startsWith(SEALED) || refresh.startsWith(SEALED) -> Stored.Sealed
+                    access.isEmpty() && refresh.isEmpty() -> Stored.Missing
+                    else -> Stored.Found(
+                        Tokens(
+                            token = access,
+                            refresh = refresh,
+                            expires = manager.getUserData(entry.account, EXPIRES).orEmpty(),
+                            session = manager.getUserData(entry.account, SESSION).orEmpty()
+                        ),
+                        manager.getUserData(entry.account, SAVED)?.toLongOrNull() ?: 0L
                     )
-                } else null
-            }.getOrNull()
-            if (parsed != null) return parsed
+                }
+            }
+            is Mode.Own -> {
+                val stored = tokensPrefs.getString(hex, null) ?: return Stored.Missing
+                val json = runCatching { JSONObject(stored) }.getOrNull() ?: return Stored.Sealed
+                val access = open(json.optString("token")) ?: return Stored.Sealed
+                val refresh = open(json.optString("refresh")) ?: return Stored.Sealed
+                if (access.isEmpty() && refresh.isEmpty()) return Stored.Missing
+                Stored.Found(
+                    Tokens(token = access, refresh = refresh, expires = json.optString("expires"), session = json.optString("session")),
+                    json.optLong("saved", 0L)
+                )
+            }
         }
+    }
 
-        val redeemed = redeem(entry.account)
-        if (redeemed != null) {
-            save(hex, redeemed)
-            return redeemed
-        }
+    /** The stored session of [hex], or null when it is [Stored.Missing] or [Stored.Sealed] (see [read]). */
+    fun tokens(hex: String): Tokens? = (read(hex) as? Stored.Found)?.tokens
 
-        val access = manager.peekAuthToken(entry.account, ACCESS)?.let(::open).orEmpty()
-        val refresh = manager.getPassword(entry.account)?.let(::open).orEmpty()
-        if (access.isNotEmpty() || refresh.isNotEmpty()) {
-            val fallback = Tokens(
-                token = access,
-                refresh = refresh,
-                expires = manager.getUserData(entry.account, EXPIRES).orEmpty(),
-                session = manager.getUserData(entry.account, SESSION).orEmpty()
-            )
-            save(hex, fallback)
-            return fallback
+    /**
+     * Moves tokens an older SDK left in the account entry (0.5.x wrote them
+     * there, sealed with this app's vault) into this app's private store, then
+     * removes them from the entry. Opt-in, [Mode.Own] only: nothing written by
+     * another app is adopted, because it cannot be opened here.
+     */
+    fun migrate(hex: String): Stored {
+        val current = read(hex)
+        if (mode !is Mode.Own || current !is Stored.Missing) return current
+        val entry = find(hex) ?: return Stored.Missing
+        val rawAccess = manager.peekAuthToken(entry.account, ACCESS).orEmpty()
+        val rawRefresh = manager.getPassword(entry.account).orEmpty()
+        if (rawAccess.isEmpty() && rawRefresh.isEmpty()) return Stored.Missing
+        if (mode.vault != null && !(rawRefresh.startsWith(SEALED) || rawAccess.startsWith(SEALED))) return Stored.Sealed
+        val access = open(rawAccess) ?: return Stored.Sealed
+        val refresh = open(rawRefresh) ?: return Stored.Sealed
+        val tokens = Tokens(
+            token = access,
+            refresh = refresh,
+            expires = manager.getUserData(entry.account, EXPIRES).orEmpty(),
+            session = manager.getUserData(entry.account, SESSION).orEmpty()
+        )
+        save(hex, tokens)
+        manager.setPassword(entry.account, null)
+        if (rawAccess.isNotEmpty()) manager.invalidateAuthToken(TYPE, rawAccess)
+        return read(hex)
+    }
+
+    /**
+     * Forgets this app's session of [hex] and keeps the account entry (the
+     * refresh token is spent, or the person signed out of this app only). In
+     * [Mode.Shared] that is every app's session.
+     */
+    fun forget(hex: String) {
+        val entry = find(hex) ?: return
+        tokensPrefs.edit().remove(hex).apply()
+        when (mode) {
+            is Mode.Shared -> {
+                manager.peekAuthToken(entry.account, ACCESS)?.let { manager.invalidateAuthToken(TYPE, it) }
+                manager.setPassword(entry.account, null)
+            }
+            is Mode.Own -> manager.setUserData(entry.account, own(packageName), null)
         }
-        return null
     }
 
     /**
@@ -241,10 +325,9 @@ class Accounts(
      * Switching to such an account needs no network (ADK-AUTH-002 section 5.5).
      */
     fun fresh(hex: String, now: Long = System.currentTimeMillis(), skew: Long = 30): Boolean {
-        val entry = find(hex) ?: return false
-        val saved = manager.getUserData(entry.account, SAVED)?.toLongOrNull() ?: return false
-        val lifetime = manager.getUserData(entry.account, EXPIRES)?.toLongOrNull() ?: return false
-        return tokens(hex)?.token.isNullOrEmpty().not() && saved + (lifetime - skew) * 1000 > now
+        val found = read(hex) as? Stored.Found ?: return false
+        val lifetime = found.tokens.expires.toLongOrNull() ?: return false
+        return found.tokens.token.isNotEmpty() && found.saved > 0 && found.saved + (lifetime - skew) * 1000 > now
     }
 
     /** True for an account whose refresh token is gone: the switcher shows "sign in again" and only that account is asked. */
@@ -253,69 +336,57 @@ class Accounts(
     /** Forgets the access token of [hex] (after a 401); the refresh token stays. */
     fun invalidate(hex: String) {
         val entry = find(hex) ?: return
-        tokensPrefs.getString(hex, null)?.let { stored ->
-            runCatching {
-                val json = JSONObject(stored)
-                json.put("token", "")
-                tokensPrefs.edit().putString(hex, json.toString()).apply()
+        when (mode) {
+            is Mode.Shared -> manager.peekAuthToken(entry.account, ACCESS)?.let { manager.invalidateAuthToken(TYPE, it) }
+            is Mode.Own -> tokensPrefs.getString(hex, null)?.let { stored ->
+                runCatching {
+                    val json = JSONObject(stored)
+                    json.put("token", "")
+                    tokensPrefs.edit().putString(hex, json.toString()).apply()
+                }
             }
         }
-        manager.peekAuthToken(entry.account, ACCESS)?.let { manager.invalidateAuthToken(TYPE, it) }
     }
 
-    /** Deposits a single-use peer session grant for [target] companion app package. */
-    fun grant(hex: String, target: String): Boolean {
+    /**
+     * Whether the app [target] holds its own session of [hex] ([Mode.Own]
+     * apps mark the entry when they save one); a signed-in app offers
+     * handoffs only to apps that do not.
+     */
+    fun holds(hex: String, target: String): Boolean {
         val entry = find(hex) ?: return false
-        val current = tokens(hex) ?: return false
-        return grant(entry.account, target, current)
+        return manager.getUserData(entry.account, own(target)) != null
     }
 
-    /** Deposits a single-use peer session grant for [target] on [account]. */
-    fun grant(account: Account, target: String, tokens: Tokens, ttl: Long = TTL): Boolean {
-        val json = JSONObject().apply {
-            put("token", tokens.token)
-            put("refresh", tokens.refresh)
-            put("expires", tokens.expires)
-            put("session", tokens.session)
-            put("created", System.currentTimeMillis())
-            put("ttl", ttl)
-        }
-        manager.setUserData(account, slot(target), json.toString())
+    /**
+     * Leaves [handoff] (from `Aduki.handoff(target)`) in the entry of [hex]
+     * for the app [target], replacing one left before. False when there is no
+     * such entry, the target is this app or the handoff has expired. The entry
+     * is visible only to the apps [share] named; the code works once.
+     */
+    fun offer(hex: String, target: String, handoff: Handoff): Boolean {
+        val entry = find(hex) ?: return false
+        if (target == packageName || handoff.expired()) return false
+        val json = JSONObject().put("code", handoff.code).put("expires", handoff.expires)
+        manager.setUserData(entry.account, slot(target), json.toString())
         return true
     }
 
-    /** Redeems a single-use peer session grant for this app, or null when none exists or expired. */
-    fun redeem(hex: String): Tokens? {
+    /**
+     * Takes the handoff another app left for this app on [hex] and removes it
+     * from the entry: redeem it with `Aduki.redeem(code, dpop = ...)`. Null
+     * when none was left or it has expired.
+     */
+    fun claim(hex: String, now: Long = System.currentTimeMillis() / 1000): String? {
         val entry = find(hex) ?: return null
-        return redeem(entry.account)
+        val raw = manager.getUserData(entry.account, slot(packageName)) ?: return null
+        manager.setUserData(entry.account, slot(packageName), null)
+        val handoff = runCatching { JSONObject(raw).let { Handoff(it.getString("code"), it.optLong("expires")) } }.getOrNull()
+        return handoff?.takeUnless { it.expired(now) }?.code
     }
 
-    /** Redeems a single-use peer session grant on [account] for this app package. */
-    fun redeem(account: Account): Tokens? {
-        val key = slot(packageName)
-        val raw = manager.getUserData(account, key) ?: return null
-        manager.setUserData(account, key, null)
-        return runCatching {
-            val json = JSONObject(raw)
-            val created = json.optLong("created", 0L)
-            val ttl = json.optLong("ttl", TTL)
-            if (created > 0 && System.currentTimeMillis() - created > ttl) {
-                return null
-            }
-            val token = json.optString("token")
-            val refresh = json.optString("refresh")
-            if (token.isEmpty() && refresh.isEmpty()) return null
-            Tokens(
-                token = token,
-                refresh = refresh,
-                expires = json.optString("expires"),
-                session = json.optString("session")
-            )
-        }.getOrNull()
-    }
-
-    /** Revokes an unredeemed peer grant for [target]. */
-    fun revoke(hex: String, target: String): Boolean {
+    /** Removes a handoff left for [target] on [hex] that was not claimed. */
+    fun withdraw(hex: String, target: String): Boolean {
         val entry = find(hex) ?: return false
         manager.setUserData(entry.account, slot(target), null)
         return true
@@ -336,35 +407,17 @@ class Accounts(
         return count
     }
 
-    /**
-     * Grants account visibility for the account with [hex] to companion [packages].
-     */
+    /** Grants visibility of the account [hex] to companion [packages]. */
     fun share(hex: String, packages: List<String>): Boolean {
         val entry = find(hex) ?: return false
         return share(entry.account, packages)
     }
 
-    /**
-     * Grants visibility for [account] to companion [packages] and deposits peer grants.
-     */
+    /** Grants visibility of [account] to companion [packages]. No tokens are handed over. */
     fun share(account: Account, packages: List<String>): Boolean {
-        if (packages.isEmpty()) return true
         var ok = true
         for (pkg in packages) {
-            if (!visibility.set(account, pkg, AccountManager.VISIBILITY_VISIBLE)) {
-                ok = false
-            }
-        }
-        val hex = manager.getUserData(account, HEX)
-        if (hex != null) {
-            val current = tokens(hex)
-            if (current != null) {
-                for (pkg in packages) {
-                    if (pkg != packageName) {
-                        grant(account, pkg, current)
-                    }
-                }
-            }
+            if (!visibility.set(account, pkg, AccountManager.VISIBILITY_VISIBLE)) ok = false
         }
         return ok
     }
@@ -383,7 +436,8 @@ class Accounts(
     fun visibility(account: Account, target: String): Int =
         visibility.get(account, target)
 
-    private fun slot(target: String): String = "grant.$target"
+    private fun slot(target: String): String = "handoff.$target"
+    private fun own(target: String): String = "own.$target"
 
     /**
      * Registers this device's Keystore key as a device credential at Aduki ID (`ES256`, 65-byte
@@ -500,11 +554,13 @@ class Accounts(
         manager.removeAccountExplicitly(entry.account)
     }
 
-    private fun seal(text: String): String = vault?.sealText(text) ?: text
-    private fun open(stored: String): String = try {
-        vault?.openText(stored) ?: stored
+    private fun seal(text: String): String = mode.vault?.sealText(text) ?: text
+
+    // Null when [stored] is sealed and this app cannot open it.
+    private fun open(stored: String): String? = try {
+        if (stored.startsWith(SEALED) && mode.vault == null) null else mode.vault?.openText(stored) ?: stored
     } catch (_: Exception) {
-        ""
+        null
     }
 
     companion object {
@@ -514,7 +570,11 @@ class Accounts(
         /** The auth token type of the cached access token. */
         const val ACCESS = "access"
 
-        private const val TTL = 86_400_000L
+        /** This app's private file of [Mode.Own] tokens. */
+        private const val TOKENS = "pro.aduki.account.tokens"
+
+        /** The prefix of text sealed by a [Vault]. */
+        private const val SEALED = "aduki:1:"
         private const val HEX = "hex"
         private const val CENTER = "center"
         private const val PERSONAL = "personal"

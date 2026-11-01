@@ -122,6 +122,9 @@ class Manager(private val storage: Storage) {
 
     fun box(hex: String): String = adopted[hex] ?: hex
 
+    /** The server id a placeholder (mailbox or draft) was given in this process, else [hex]. */
+    fun latest(hex: String): String = adopted[hex] ?: hex
+
     /** The local message with [hex], or null. */
     fun message(hex: String): Message? = storage.getMessage(hex)
 
@@ -365,6 +368,7 @@ class Manager(private val storage: Storage) {
         replace: String? = null
     ): Message {
         val hex = Message.PENDING + java.util.UUID.randomUUID().toString()
+        val replace = replace?.let(::latest)
         return storage.tx {
             if (!replace.isNullOrBlank()) {
                 val old = storage.getMessage(replace)
