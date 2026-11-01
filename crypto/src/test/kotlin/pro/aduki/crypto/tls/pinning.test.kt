@@ -12,6 +12,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import pro.aduki.core.config.Pin
@@ -46,6 +47,9 @@ class PinningTest {
     private fun get(client: OkHttpClient) =
         client.newCall(Request.Builder().url(server.url("/ping")).build()).execute().use { it.code }
 
+    private fun pinFailure(e: Throwable?): Boolean =
+        e != null && (e is SSLPeerUnverifiedException || pinFailure(e.cause) || e.suppressed.any(::pinFailure))
+
     private fun hash(cert: HeldCertificate) = CertificatePinner.pin(cert.certificate)
 
     @Test
@@ -67,7 +71,10 @@ class PinningTest {
         server.enqueue(MockResponse().setBody("ok"))
         val other = HeldCertificate.Builder().build()
         val pinner = Pinning.pinner(listOf(Pin("localhost", hash(other))))
-        assertThrows(SSLPeerUnverifiedException::class.java) { get(client(pinner)) }
+        // OkHttp 5 races IPv6 and IPv4 (fast fallback): the pin failure can come
+        // back as the cause or a suppressed exception of a ConnectException.
+        val thrown = assertThrows(java.io.IOException::class.java) { get(client(pinner)) }
+        assertTrue("no pin failure in $thrown", pinFailure(thrown))
         assertEquals(0, server.requestCount)
     }
 

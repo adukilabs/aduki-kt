@@ -17,14 +17,14 @@ buildscript {
             }
         }
         dependencies {
-            classpath("com.android.tools.build:gradle:8.13.2")
+            classpath("com.android.tools.build:gradle:9.5.0")
         }
     }
 }
 
 plugins {
     alias(libs.plugins.kotlin.jvm) apply false
-    id("io.objectbox") version "4.0.3" apply false
+    id("io.objectbox") version "5.4.2" apply false
     `maven-publish`
     signing
 }

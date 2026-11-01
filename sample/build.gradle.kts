@@ -1,6 +1,5 @@
 plugins {
     id("com.android.application")
-    kotlin("android")
 }
 
 // The sample is the manual-test app (see CONTRIBUTING.md). Configure it with Gradle properties:
@@ -12,12 +11,12 @@ val scheme = providers.gradleProperty("adukiScheme").orElse("pro.aduki.sample")
 
 android {
     namespace = "pro.aduki.sample"
-    compileSdk = 34
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "pro.aduki.sample"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 37
         versionCode = 1
         versionName = "0.4.0"
         manifestPlaceholders["adukiRedirectScheme"] = scheme.get()
