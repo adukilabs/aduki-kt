@@ -5,9 +5,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
@@ -482,5 +484,101 @@ class LiveTest {
         assertTrue("the client still renews after the id-audience rotations", new.refresh())
         new.logout()
         old.close()
+    }
+
+    private fun signIn(device: String, dpop: pro.aduki.crypto.dpop.Key? = null, store: Boolean = false): Aduki {
+        val handle = System.getenv("ADUKI_LOGIN_HANDLE")
+        val password = System.getenv("ADUKI_LOGIN_PASSWORD")
+        val secret = System.getenv("ADUKI_LOGIN_TOTP")
+        assumeTrue("Skipping: set ADUKI_LOGIN_HANDLE, ADUKI_LOGIN_PASSWORD and ADUKI_LOGIN_TOTP",
+            !handle.isNullOrBlank() && !password.isNullOrBlank() && !secret.isNullOrBlank())
+        // An authenticator code is single use: each sign-in starts in a fresh 30-second window.
+        Thread.sleep(30_000 - System.currentTimeMillis() % 30_000 + 1_000)
+        return kotlinx.coroutines.runBlocking {
+            Aduki.login(handle!!, password!!, code = totp(secret!!), endpoint = liveEndpoint(), dpop = dpop, device = device)
+        }
+    }
+
+    /**
+     * T5-LIVE-20: A handoff opens a peer app's own DPoP-bound session; it
+     * works once (aduki-kt#112). A spent refresh token presented again within
+     * the replay window returns the same successor (aduki-kt#117).
+     */
+    @Test
+    fun handoffAndReplay() = runBlocking<Unit> {
+        val tag = "live-${System.currentTimeMillis()}"
+        val signer = signIn("$tag signer")
+        val handoff = signer.handoff("pro.aduki.live.peer", ttl = 120)
+        assertTrue(handoff.code.startsWith("adkh_"))
+        val peer = Aduki.redeem(handoff.code, endpoint = liveEndpoint(), dpop = pro.aduki.crypto.dpop.Software.p256(), device = "$tag peer")
+        val peerTokens = peer.session.tokens.value!!
+        assertNotEquals("its own session", signer.session.tokens.value!!.session, peerTokens.session)
+        assertTrue("the bound peer session reads mail", peer.mailApi.mailboxes().items.isNotEmpty())
+        try {
+            Aduki.redeem(handoff.code, endpoint = liveEndpoint())
+            fail("a handoff works once")
+        } catch (_: pro.aduki.core.errors.AdukiException.Unauthorized) {
+        }
+        assertEquals("$tag peer", signer.sessions().single { it.id == peerTokens.session }.device)
+
+        // replay: rotate, then present the spent token again
+        val plain = pro.aduki.net.http.Client.create("")
+        val spent = signer.session.tokens.value!!.refresh
+        val first = pro.aduki.net.http.Login.refresh(plain, pro.aduki.core.config.Endpoints.ID, spent)
+        val again = pro.aduki.net.http.Login.refresh(plain, pro.aduki.core.config.Endpoints.ID, spent)
+        assertEquals("the same successor, not a revoked session", first.refresh, again.refresh)
+        signer.session.update(signer.session.tokens.value!!.copy(token = again.token, refresh = again.refresh))
+        assertTrue("the session lives on", signer.refresh())
+
+        peer.logout()
+        signer.logout()
+    }
+
+    /**
+     * T5-LIVE-21: Scheduling additions on the live server: service colour,
+     * revenue in stats, moving an event between calendars (aduki-kt#105, #106, #109).
+     */
+    @Test
+    fun schedulingAdditions() = runBlocking<Unit> {
+        val client = live(store = true)
+        val tag = System.currentTimeMillis().toString(36)
+        // Booking pages need a plan; the test account may not have one yet.
+        val service = try {
+            client.scheduling.createService(
+                pro.aduki.core.models.ServiceRequest(name = "Live $tag", slug = "live-$tag", colour = "#1A73E8")
+            )
+        } catch (e: pro.aduki.core.errors.AdukiException.Auth) {
+            if ("plan.limit" !in e.message.orEmpty()) throw e
+            null
+        }
+        if (service != null) {
+            try {
+                assertEquals("#1a73e8", service.colour)
+                assertNull(client.scheduling.updateService(service.hex, pro.aduki.core.models.ServiceRequest(colour = "")).colour)
+                val now = java.time.Instant.now()
+                assertTrue("no paid bookings", client.scheduling.stats(service.hex, now.minusSeconds(86_400), now).revenue.isEmpty())
+            } finally {
+                client.scheduling.removeService(service.hex)
+            }
+        }
+
+        val other = client.scheduling.createCalendar("Live $tag")
+        try {
+            val start = java.time.Instant.now().plusSeconds(86_400).truncatedTo(java.time.temporal.ChronoUnit.HOURS)
+            val event = client.scheduling.create(pro.aduki.core.models.EventRequest(title = "Move $tag", start = start, end = start.plusSeconds(1800)))
+            client.sync.flush()
+            val hex = client.scheduling.expand(start, start.plusSeconds(1800)).first { it.appointment.title == "Move $tag" }.appointment.hex
+            client.scheduling.update(hex, pro.aduki.core.models.EventChanges(calendar = other.hex))
+            client.sync.flush()
+            assertEquals(0, client.sync.pending())
+            assertTrue("the server holds it in the other calendar",
+                client.schedulingApi.events().any { it.hex == hex && it.calendar == other.hex })
+            client.scheduling.remove(hex)
+            client.sync.flush()
+            assertNotNull(event)
+        } finally {
+            client.scheduling.removeCalendar(other.hex)
+        }
+        client.close()
     }
 }
