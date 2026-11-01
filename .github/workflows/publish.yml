@@ -30,10 +30,6 @@ jobs:
       - name: gradle
         uses: gradle/actions/setup-gradle@v3
 
-      - name: android
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'platforms;android-37 build-tools;36.0.0'
 
       - name: test
         run: ./gradlew --no-daemon -Paduki.android=true test
