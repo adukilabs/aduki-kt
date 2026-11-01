@@ -4,6 +4,7 @@ import io.objectbox.BoxStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Authenticator
@@ -361,7 +362,7 @@ class Aduki internal constructor(
         lifecycle.listen { active ->
             if (active) {
                 scope.launch {
-                    sync.flush()
+                    try { sync.flush() } finally { release() }
                 }
             }
         }
@@ -535,11 +536,25 @@ class Aduki internal constructor(
     suspend fun revoke(target: AccountSession): Boolean = revoke(target.id)
 
     /**
-     * Closes the local database if this client opened it (`Builder.store(dir)`).
-     * A store passed in as a `BoxStore` belongs to the caller and stays open.
+     * Stops the client's background work (store observers, the rights
+     * watcher) and closes the local database if this client opened it
+     * (`Builder.store(dir)`). A store passed in as a `BoxStore` belongs to the
+     * caller and stays open. The client is not usable afterwards.
      */
+    /** Frees the local database's cached resources of the calling thread. */
+    internal fun release() {
+        try { store?.closeThreadResources() } catch (_: Exception) {}
+    }
+
     fun close() {
         unwatchRights()
+        // Stop the repositories' store observers before the store goes away:
+        // ObjectBox 5 treats closing it under live readers of other threads
+        // as a usage error.
+        val job = scope.coroutineContext[kotlinx.coroutines.Job]
+        if (job != null) {
+            kotlinx.coroutines.runBlocking { kotlinx.coroutines.withTimeoutOrNull(CLOSE_WAIT) { job.cancelAndJoin() } }
+        }
         if (owned) store?.close()
     }
 
@@ -702,6 +717,8 @@ class Aduki internal constructor(
     }
 
     companion object {
+        // How long close() waits for the background work to stop, ms.
+        private const val CLOSE_WAIT = 2_000L
         fun builder() = Builder()
 
         /**

@@ -188,7 +188,7 @@ class Contacts internal constructor(
         vcf: InputStream,
         cancel: (() -> Boolean)? = null,
         onProgress: ((Progress) -> Unit)? = null
-    ): Imported = withContext(Dispatchers.IO) {
+    ): Imported = client.io {
         val text = vcf.bufferedReader(Charsets.UTF_8).use { it.readText() }
         if (book == null) {
             val report = client.contactsApi.import(text)
@@ -203,7 +203,7 @@ class Contacts internal constructor(
                 errors = errors
             )
             onProgress?.invoke(progress)
-            return@withContext progress.report()
+            return@io progress.report()
         }
         val book = book()
         val stored = repo?.all().orEmpty()
