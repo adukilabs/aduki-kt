@@ -103,6 +103,8 @@ data class ServiceRecord(
     /** Reminder offsets, minutes before the start; null is the server default (24 h and 1 h). */
     val reminders: List<Int>? = null,
     val active: Boolean = true,
+    /** The service's colour, `#rrggbb` (lowercase), or null when none was set. */
+    val colour: String? = null,
     /** The hex of the schedule whose windows it offers (`schedule` of a page view). */
     val schedule: String = "",
     val created: String = "",
@@ -200,8 +202,10 @@ data class BookingRecord(
     val sequence: Int = 0,
     val notes: String = "",
     val cancelled: String = "",
-    /** Why it was cancelled: `guest`, `host`, `unpaid` or `moved`. */
+    /** Why it was cancelled: `guest`, `host`, `unpaid` or `moved` (set by the server). */
     val reason: String = "",
+    /** What the host wrote when cancelling ([note] of a cancel), sent to the guests; blank when none. */
+    val note: String = "",
     val created: String = "",
     /** The guest's manage token (`/book/manage/{token}`), only in the reply to a guest booking. */
     val token: String = "",
@@ -223,7 +227,23 @@ data class Stats(
     val pending: Int = 0,
     val cancelled: Int = 0,
     val done: Int = 0,
-    val noshow: Int = 0
+    val noshow: Int = 0,
+    /** Money taken for the bookings in the range, one entry per currency; empty for a free service. */
+    val revenue: List<Revenue> = emptyList()
+)
+
+/**
+ * Revenue of a service in one currency over a range ([Stats.revenue]).
+ * Amounts are in minor units (cents): [paid] taken, [refunded] given back,
+ * [net] = paid - refunded, from [count] charges.
+ */
+data class Revenue(
+    /** ISO 4217 code, e.g. `KES`. */
+    val currency: String,
+    val paid: Long = 0,
+    val refunded: Long = 0,
+    val net: Long = 0,
+    val count: Int = 0
 )
 
 /**
@@ -312,10 +332,13 @@ data class EventChanges(
     val notes: String? = null,
     val attendees: List<String>? = null,
     val rrule: String? = null,
-    val reminders: List<Int>? = null
+    val reminders: List<Int>? = null,
+    /** Moves the event into this calendar (a hex) of the same account. */
+    val calendar: String? = null
 ) {
     fun validate() {
         title?.let { require(it.isNotBlank()) { "title cannot be cleared" } }
+        calendar?.let { require(it.isNotBlank()) { "calendar: a calendar hex" } }
         if (start != null && end != null) require(!end.isBefore(start)) { "end must follow start" }
         timezone?.let(::zone)
         attendees?.let { list -> require(list.all { '@' in it }) { "attendees: e-mail addresses" } }
@@ -381,7 +404,9 @@ data class ServiceRequest(
     val reminders: List<Int>? = null,
     val visibility: String? = null,
     val confirm: String? = null,
-    val paused: Boolean? = null
+    val paused: Boolean? = null,
+    /** `#rrggbb` (any case); an empty string clears the colour. */
+    val colour: String? = null
 ) {
     fun validate() {
         name?.let { require(it.isNotBlank()) { "name is required" } }
@@ -403,8 +428,11 @@ data class ServiceRequest(
         }
         visibility?.let { require(it in setOf("public", "link", "internal")) { "visibility: public, link or internal" } }
         confirm?.let { require(it in setOf("auto", "manual")) { "confirm: auto or manual" } }
+        colour?.let { require(it.isEmpty() || COLOUR.matches(it)) { "colour: #rrggbb" } }
     }
 }
+
+private val COLOUR = Regex("^#[0-9a-fA-F]{6}$")
 
 /**
  * BookRequest books a slot of a service: as a guest ([name] and [email]

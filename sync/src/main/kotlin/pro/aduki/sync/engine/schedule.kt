@@ -83,7 +83,11 @@ class Schedule(
         val row = find(hex)
         val ical = Events.change(source(row), changes)
         val moved = if (changes.start != null && changes.start!!.toEpochMilli() != row.start) row.start else row.moved
-        return write(row, ical, UPDATE, Extra(notify = notify)) { it.moved = moved }
+        val target = changes.calendar?.takeIf { it != row.calendar }
+        return write(row, ical, UPDATE, Extra(notify = notify, calendar = target.orEmpty())) {
+            it.moved = moved
+            if (target != null) it.calendar = target
+        }
     }
 
     /** Moves an event to [start] .. [end]. */
@@ -194,7 +198,13 @@ class Schedule(
     // ── Internals ────────────────────────────────────────────────────
 
     // What an action carries besides the object.
-    private data class Extra(val partstat: String = "", val comment: String = "", val notify: Boolean = false)
+    private data class Extra(
+        val partstat: String = "",
+        val comment: String = "",
+        val notify: Boolean = false,
+        /** The calendar an update moves the event into. */
+        val calendar: String = ""
+    )
 
     private fun insert(ical: String, calendar: String, notify: Boolean = false): Appointment {
         val event = Events.read(ical) ?: throw IllegalArgumentException("no VEVENT in the object")
@@ -214,7 +224,7 @@ class Schedule(
         edit(row)
         store.runInTx {
             box.put(row)
-            manager.enqueue(action, body(row.hex, row.uid, ical, extra = extra), row.hex)
+            manager.enqueue(action, body(row.hex, row.uid, ical, extra.calendar, extra), row.hex)
         }
         return row
     }

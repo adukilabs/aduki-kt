@@ -354,6 +354,29 @@ class Scheduling internal constructor(
         api().updateBooking(hex, state)
     }
 
+    /**
+     * Cancels a booking as the host. [note] (up to 500 characters) is what
+     * the host typed: kept as [BookingRecord.note] and sent to the guests
+     * with the cancellation. Paid bookings are refunded by the page's policy.
+     */
+    suspend fun cancelBooking(hex: String, note: String = ""): BookingRecord = withContext(Dispatchers.IO) {
+        require(note.trim().length <= 500) { "note: up to 500 characters" }
+        api().updateBooking(hex, "cancelled", note)
+    }
+
+    /**
+     * Moves a booking to a new slot at [start], keeping its guests, notes and
+     * answers; [length] in minutes, the booking's own length when null. The
+     * slot is checked as for a new booking (`AdukiException.Network` 409 when
+     * taken). The guests are told; the old booking ends as cancelled with
+     * reason `moved`. Returns the new booking.
+     */
+    suspend fun rescheduleBooking(hex: String, start: Instant, length: Int? = null): BookingRecord =
+        withContext(Dispatchers.IO) {
+            length?.let { require(it in 5..1440) { "length: 5 minutes to 24 hours" } }
+            api().rescheduleBooking(hex, start, length)
+        }
+
     /** The offers (priced or free sub-services) of the account's services, of one when [service] is set. */
     suspend fun offers(service: String = ""): List<OfferRecord> = withContext(Dispatchers.IO) { api().offers(service) }
 
@@ -388,8 +411,9 @@ class Scheduling internal constructor(
 
     /**
      * Booking counts of [service] by state for bookings starting in
-     * `[start, end)` (at most a year), and its page views on the days the
-     * range touches (`GET /user/pages/{hex}/stats`).
+     * `[start, end)` (at most a year), its page views on the days the range
+     * touches, and the money taken for those bookings per currency
+     * ([Stats.revenue], minor units) (`GET /user/pages/{hex}/stats`).
      */
     suspend fun stats(service: String, start: Instant, end: Instant): Stats =
         withContext(Dispatchers.IO) { api().stats(service, start, end) }
