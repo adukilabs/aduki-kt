@@ -6,7 +6,7 @@
 [![Publish](https://github.com/adukilabs/aduki-kt/actions/workflows/publish.yml/badge.svg)](https://github.com/adukilabs/aduki-kt/actions/workflows/publish.yml)
 [![Docs](https://img.shields.io/badge/docs-docs.aduki.pro%2Fkt-blue.svg)](https://docs.aduki.pro/kt)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-purple.svg?logo=kotlin)](https://kotlinlang.org)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.4.21-purple.svg?logo=kotlin)](https://kotlinlang.org)
 [![Android](https://img.shields.io/badge/Android-26%2B-green.svg?logo=android)](https://developer.android.com)
 
 Kotlin client library for the [Aduki](https://aduki.pro) platform: sign-in at
@@ -50,13 +50,13 @@ dependencyResolutionManagement {
 ```kotlin
 // build.gradle.kts
 // Maven Central / GitHub Packages:
-implementation("pro.aduki:sdk:0.5.4")
-implementation("pro.aduki:android:0.5.4") // Android-specific features
+implementation("pro.aduki:sdk:0.6.0")
+implementation("pro.aduki:android:0.6.0") // Android-specific features
 implementation("io.objectbox:objectbox-android:4.0.3")
 
 // Or JitPack:
-// implementation("com.github.adukilabs.aduki-kt:sdk:0.5.4")
-// implementation("com.github.adukilabs.aduki-kt:android:0.5.4")
+// implementation("com.github.adukilabs.aduki-kt:sdk:0.6.0")
+// implementation("com.github.adukilabs.aduki-kt:android:0.6.0")
 
 // Sign in at Aduki ID; the 10-minute token is renewed automatically
 val client = Aduki.login(handle = "ada@aduki.me", password = password, code = code)

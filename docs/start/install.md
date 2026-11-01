@@ -6,9 +6,11 @@ This guide walks you through integrating the Aduki Android Kotlin SDK into your 
 
 ## 1. Prerequisites
 
-- **JDK**: 17 (the build and the CI use Java 17).
-- **Kotlin**: 2.0.21.
-- **ObjectBox**: 4.0.3, with its Gradle plugin in the app that stores data.
+- **JDK**: 17 or later (the SDK is Java 17 bytecode; it is built with JDK 21).
+- **Kotlin**: 2.3 or later in the app (the SDK is compiled with Kotlin 2.4.21; a Kotlin compiler reads metadata up to one version ahead).
+- **ObjectBox**: 5.4.2, with its Gradle plugin in the app that stores data (5.x is needed for 16 KB page-size devices).
+- **OkHttp**: 5.5.1 (the SDK's `api` dependency).
+- **Android**: `compileSdk` 37 (OkHttp 5's Android artifact requires it) and AGP 9.
 - **Android**: the shared modules are plain JVM libraries (the Keystore `Provider` reaches Android classes by reflection and falls back to software keys elsewhere). The Android parts (Keystore DPoP key, account authenticator, Custom Tabs sign-in, Credential Manager) are in the `android` module, `minSdk` 26: see [Android module](android.md).
 
 ---
@@ -59,7 +61,7 @@ In your project-level `build.gradle.kts`:
 
 ```kotlin
 plugins {
-    id("io.objectbox") version "4.0.3" apply false
+    id("io.objectbox") version "5.4.2" apply false
 }
 ```
 
@@ -67,8 +69,7 @@ In your application module `app/build.gradle.kts`:
 
 ```kotlin
 plugins {
-    alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.android.application) // AGP 9 compiles Kotlin itself
     id("io.objectbox") // Generates the entity bindings at compile time
 }
 ```
@@ -82,12 +83,12 @@ Add the Aduki SDK to `app/build.gradle.kts`:
 ```kotlin
 dependencies {
     // Aduki SDK facade (Maven Central & GitHub Packages)
-    implementation("pro.aduki:sdk:0.5.4")
-    implementation("pro.aduki:android:0.5.4") // Android-specific features (optional)
+    implementation("pro.aduki:sdk:0.6.0")
+    implementation("pro.aduki:android:0.6.0") // Android-specific features (optional)
 
     // Or via JitPack:
-    // implementation("com.github.adukilabs.aduki-kt:sdk:0.5.4")
-    // implementation("com.github.adukilabs.aduki-kt:android:0.5.4")
+    // implementation("com.github.adukilabs.aduki-kt:sdk:0.6.0")
+    // implementation("com.github.adukilabs.aduki-kt:android:0.6.0")
 
     // ObjectBox persistence
     implementation("io.objectbox:objectbox-kotlin:4.0.3")
@@ -107,14 +108,14 @@ If your application only needs specific subsystems, you can import individual mo
 
 | Module | Maven Central / GitHub Packages | JitPack | Purpose |
 | :--- | :--- | :--- | :--- |
-| **SDK Facade** | `pro.aduki:sdk:0.5.4` | `com.github.adukilabs.aduki-kt:sdk:0.5.4` | The `Aduki` entry point |
-| **Android** | `pro.aduki:android:0.5.4` | `com.github.adukilabs.aduki-kt:android:0.5.4` | Keystore DPoP key, account authenticator, Custom Tabs sign-in, passkeys (Android library, `minSdk` 26) |
-| **State** | `pro.aduki:state:0.5.4` | `com.github.adukilabs.aduki-kt:state:0.5.4` | Repositories exposing `StateFlow` |
-| **Sync** | `pro.aduki:sync:0.5.4` | `com.github.adukilabs.aduki-kt:sync:0.5.4` | RFC 7162 CONDSTORE synchronizer & Outbox |
-| **Store** | `pro.aduki:store:0.5.4` | `com.github.adukilabs.aduki-kt:store:0.5.4` | ObjectBox entities |
-| **Net** | `pro.aduki:net:0.5.4` | `com.github.adukilabs.aduki-kt:net:0.5.4` | HTTP clients (Aduki ID, mail, scheduling) |
-| **Crypto** | `pro.aduki:crypto:0.5.4` | `com.github.adukilabs.aduki-kt:crypto:0.5.4` | Keystore provider, AES-256-GCM cipher, TLS pinning, DPoP keys |
-| **Core** | `pro.aduki:core:0.5.4` | `com.github.adukilabs.aduki-kt:core:0.5.4` | models, errors, Jitter, Circuit, memory helpers |
+| **SDK Facade** | `pro.aduki:sdk:0.6.0` | `com.github.adukilabs.aduki-kt:sdk:0.6.0` | The `Aduki` entry point |
+| **Android** | `pro.aduki:android:0.6.0` | `com.github.adukilabs.aduki-kt:android:0.6.0` | Keystore DPoP key, account authenticator, Custom Tabs sign-in, passkeys (Android library, `minSdk` 26) |
+| **State** | `pro.aduki:state:0.6.0` | `com.github.adukilabs.aduki-kt:state:0.6.0` | Repositories exposing `StateFlow` |
+| **Sync** | `pro.aduki:sync:0.6.0` | `com.github.adukilabs.aduki-kt:sync:0.6.0` | RFC 7162 CONDSTORE synchronizer & Outbox |
+| **Store** | `pro.aduki:store:0.6.0` | `com.github.adukilabs.aduki-kt:store:0.6.0` | ObjectBox entities |
+| **Net** | `pro.aduki:net:0.6.0` | `com.github.adukilabs.aduki-kt:net:0.6.0` | HTTP clients (Aduki ID, mail, scheduling) |
+| **Crypto** | `pro.aduki:crypto:0.6.0` | `com.github.adukilabs.aduki-kt:crypto:0.6.0` | Keystore provider, AES-256-GCM cipher, TLS pinning, DPoP keys |
+| **Core** | `pro.aduki:core:0.6.0` | `com.github.adukilabs.aduki-kt:core:0.6.0` | models, errors, Jitter, Circuit, memory helpers |
 
 ---
 
@@ -162,7 +163,7 @@ ObjectBox and OkHttp need minimal ProGuard configuration. Add the following to `
 -keep class io.objectbox.** { *; }
 -dontwarn io.objectbox.**
 
-# OkHttp 4 Rules
+# OkHttp 5 ships its own R8 rules; these only silence optional platforms
 -dontwarn okhttp3.**
 -dontwarn okio.**
 ```

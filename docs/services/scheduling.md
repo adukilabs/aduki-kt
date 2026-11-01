@@ -68,6 +68,8 @@ class Scheduling internal constructor(...) {
     suspend fun bookings(upcoming: Boolean = false): List<BookingRecord>
     suspend fun booking(hex: String): BookingRecord
     suspend fun updateBooking(hex: String, state: String): BookingRecord
+    suspend fun cancelBooking(hex: String, note: String = ""): BookingRecord
+    suspend fun rescheduleBooking(hex: String, start: Instant, length: Int? = null): BookingRecord
     suspend fun stats(service: String, start: Instant, end: Instant): Stats
 }
 ```
@@ -108,6 +110,7 @@ of `start` and `end` in `timezone`, `end` exclusive.
 
 ```kotlin
 client.scheduling.update(hex, EventChanges(location = "Room 4", reminders = emptyList()))
+client.scheduling.update(hex, EventChanges(calendar = work.hex)) // move it into another calendar
 client.scheduling.reschedule(hex, newStart, newEnd)
 client.scheduling.respond(hex, Response.Accepted, comment = "See you")  // the account's own address
 client.scheduling.cancel(hex, reason = "Off sick")  // STATUS:CANCELLED, kept
@@ -232,16 +235,36 @@ val booking = client.scheduling.book(
     consult.hex,
     BookRequest(start = Instant.parse(slots.first().start), name = "Jane Doe", email = "jane@example.com")
 )
-client.scheduling.updateBooking(booking.hex, "cancelled")
+client.scheduling.rescheduleBooking(booking.hex, Instant.parse(slots[1].start))
+client.scheduling.cancelBooking(booking.hex, note = "Sorry, I am ill today")
 val month = client.scheduling.stats(consult.hex, from, to)
 ```
 
 A taken slot answers `409` (`slot.taken`): read the slots again.
 
+`cancelBooking(hex, note)` cancels as the host: the `note` (up to 500
+characters) is kept as `BookingRecord.note` and sent to the guests with the
+cancellation; `reason` stays the server's code (`host`). A paid booking is
+refunded by the page's policy. `rescheduleBooking(hex, start, length?)` moves a
+`pending` or `confirmed` booking to a new slot as the host: the slot is checked
+like a new booking (`409 slot.taken`), the guests, notes and answers are kept,
+the old booking ends `cancelled` with reason `moved`, the guests are told, and
+the new booking is returned.
+
+`ServiceRequest.colour` (`#rrggbb`, any case; `""` clears it) is shown as
+`ServiceRecord.colour` (lowercase, `null` when unset).
+
+`EventChanges.calendar` moves an event into another calendar of the account,
+in the local store at once and on the server with the queued update (`404`
+when the account has no such calendar: the next sync puts it back).
+
 `stats` reads `GET /user/pages/{hex}/stats?from&to` (at most a year apart):
 the page's bookings that start in the range by state (`bookings`,
 `confirmed`, `pending`, `cancelled`, `done`, `noshow`) and `views`, the views
-of its public page on the days the range touches. Bookings carry the `page`
+of its public page on the days the range touches, and `revenue`: one
+`Revenue(currency, paid, refunded, net, count)` per currency, in minor units
+(cents), over the charges of those bookings (`net = paid - refunded`; empty
+for a free service). Bookings carry the `page`
 they were made on, and pages their `schedule` (a hex), which `updateService`
 uses to change a service's windows.
 
@@ -263,6 +286,8 @@ uses to change a service's windows.
 | `book` | `POST /book/pages/{hex}/bookings` (public) |
 | `reserve` | `POST /user/book/pages/{hex}/bookings` |
 | `bookings`, `booking`, `updateBooking` | `GET /user/bookings?upcoming`, `GET /user/bookings/{hex}`, `PATCH /user/bookings/{hex}` `{state}` |
+| `cancelBooking` | `PATCH /user/bookings/{hex}` `{state: "cancelled", note}` |
+| `rescheduleBooking` | `PATCH /user/bookings/{hex}` `{start, length?}` |
 | `stats` | `GET /user/pages/{hex}/stats?from&to` |
 
 ---

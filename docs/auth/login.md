@@ -14,7 +14,10 @@ suspend fun Aduki.Companion.login(
     endpoint: String = Endpoints.REST,
     identity: String = Endpoints.ID,
     backup: String? = null,
-    dpop: pro.aduki.crypto.dpop.Key? = null
+    dpop: pro.aduki.crypto.dpop.Key? = null,
+    pins: List<Pin> = emptyList(),
+    tokenStore: TokenStore? = null,
+    device: String? = null
 ): Aduki
 ```
 
@@ -27,6 +30,15 @@ suspend fun Aduki.Companion.login(
 | `identity` | `String` | `Endpoints.ID` | Aduki ID base, `https://id.aduki.pro/v1`. |
 | `backup` | `String?` | `null` | A backup code, instead of `code`. |
 | `dpop` | `Key?` | `null` | A device key: the session is bound to it ([DPoP](dpop.md)). |
+| `pins` | `List<Pin>` | empty | Certificate pins ([TLS](../security/tls.md)). |
+| `tokenStore` | `TokenStore?` | `null` | Where the session is kept and reloaded ([tokens](tokens.md#the-tokenstore-contract)). |
+| `device` | `String?` | `null` | Names the session in `Aduki.sessions()` (e.g. `"Mail on Pixel 9"`); trimmed, at most 128 characters. Aduki ID stores it with the session and uses it for its new-device alert. Without it the session has no name. |
+
+`Aduki.register(hex, password, code, …, device)` finishes a staged signup: the
+verification activates the account and opens its first session in the same
+call (Aduki ID accepts each authenticator step once, so the code cannot be used
+again for a separate sign-in). It returns the client and the backup codes; an
+Aduki ID that does not open the session throws `AdukiException.Protocol`.
 
 Returns a client holding the access token, the refresh token and the session,
 with the account (`me()`) already resolved.

@@ -305,6 +305,12 @@ client.mail.send(draft)
 
 `createMailbox` shows the mailbox at once under a placeholder hex (`Mailbox.pending()`, prefix `local-`). When the queued create is sent, the row, its messages and every queued action that names it switch to the server's hex. `renameMailbox` and `deleteMailbox` are queued like moves. Deleting a mailbox also drops its messages.
 
+`moveMailbox(hex, parent)` puts a mailbox under `parent` (null: top level) at once and queues `mailbox_move`, sent as JMAP `Mailbox/set` (`parentId`), which also checks for cycles and renames the path; a refusal is reported through `Builder.rejected` and the next sync restores the server's tree.
+
+## Drafts
+
+`saveDraft(draft, replace?)` writes the draft into the Drafts mailbox at once (placeholder hex `msg_…`, `Message.DRAFT`) and queues `draft_save`, sent as one JMAP `Email/set`: the new draft is created in the account's Drafts mailbox (the role `drafts` is looked up when the store has none) with `$draft` and `$seen`, recipients, subject, text and HTML, and the draft it `replace`s is destroyed in the same call once the server knows it. When the outbox could send it right away the returned message already has the server's id; `openDraft` and a later `replace` accept the old placeholder too. Saving drafts needs JMAP, which a client with a store has. Before 0.6.0, `draft_save` and `mailbox_move` were never sent (aduki-kt#115).
+
 ## 9. Snooze
 
 The server has no snooze, so the SDK keeps it in data that syncs:
