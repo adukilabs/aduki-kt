@@ -265,7 +265,7 @@ class Mail internal constructor(
         client.jmap.download(attachment.blob, attachment.name, attachment.type.ifBlank { "application/octet-stream" })
 
     /** Downloads [attachment] into [file] and returns it. */
-    suspend fun save(attachment: Attachment, file: File): File = withContext(Dispatchers.IO) {
+    suspend fun save(attachment: Attachment, file: File): File = client.io {
         open(attachment).use { input -> file.outputStream().use { input.copyTo(it) } }
         file
     }
@@ -273,17 +273,17 @@ class Mail internal constructor(
     /**
      * Resolves RFC 5322 headers for message [hex].
      */
-    suspend fun headers(hex: String): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+    suspend fun headers(hex: String): List<Pair<String, String>> = client.io {
         val reply = client.jmap.call(
             "Email/get",
             JSONObject()
                 .put("ids", JSONArray(listOf(hex)))
                 .put("properties", JSONArray(listOf("headers")))
         )
-        val list = reply.optJSONArray("list") ?: return@withContext emptyList()
-        if (list.length() == 0) return@withContext emptyList()
+        val list = reply.optJSONArray("list") ?: return@io emptyList()
+        if (list.length() == 0) return@io emptyList()
         val item = list.getJSONObject(0)
-        val arr = item.optJSONArray("headers") ?: return@withContext emptyList()
+        val arr = item.optJSONArray("headers") ?: return@io emptyList()
         val out = mutableListOf<Pair<String, String>>()
         for (i in 0 until arr.length()) {
             val obj = arr.getJSONObject(i)
@@ -295,16 +295,16 @@ class Mail internal constructor(
     /**
      * Resolves the full RFC 5322 raw message source for message [hex].
      */
-    suspend fun source(hex: String): String = withContext(Dispatchers.IO) {
+    suspend fun source(hex: String): String = client.io {
         val reply = client.jmap.call(
             "Email/get",
             JSONObject()
                 .put("ids", JSONArray(listOf(hex)))
                 .put("properties", JSONArray(listOf("blobId")))
         )
-        val list = reply.optJSONArray("list") ?: return@withContext ""
-        if (list.length() == 0) return@withContext ""
-        val blobId = list.getJSONObject(0).optString("blobId").ifBlank { return@withContext "" }
+        val list = reply.optJSONArray("list") ?: return@io ""
+        if (list.length() == 0) return@io ""
+        val blobId = list.getJSONObject(0).optString("blobId").ifBlank { return@io "" }
         client.jmap.download(blobId).use { stream ->
             stream.bufferedReader(Charsets.UTF_8).readText()
         }
@@ -341,7 +341,10 @@ class Mail internal constructor(
 
     /**
      * Saves a draft message in the Drafts mailbox and journals outbox sync.
-     * When [replace] is given, marks the replaced draft deleted.
+     * When [replace] is given, marks the replaced draft deleted. Once the
+     * draft reached the server the returned message has the server's id;
+     * offline it keeps its `msg_` placeholder, which [openDraft] and a later
+     * [replace] still accept.
      */
     suspend fun saveDraft(draft: Draft, replace: String? = null): Message {
         val queue = outbox()
@@ -360,14 +363,20 @@ class Mail internal constructor(
         )
         content?.put(msg.hex, draft.text, draft.html.orEmpty())
         worker?.drain()
-        return msg
+        // Sent: the draft now has the server's id.
+        val hex = queue.latest(msg.hex)
+        if (hex == msg.hex) return msg
+        content?.put(hex, draft.text, draft.html.orEmpty())
+        return repo?.get(hex) ?: queue.message(hex) ?: msg
     }
 
     /**
      * Reads a draft message and its body content as a [Draft].
      */
     suspend fun openDraft(hex: String): Draft {
-        val msg = repo?.get(hex) ?: outbox().message(hex) ?: throw IllegalArgumentException("Draft not found: $hex")
+        val queue = outbox()
+        @Suppress("NAME_SHADOWING") val hex = queue.latest(hex)
+        val msg = repo?.get(hex) ?: queue.message(hex) ?: throw IllegalArgumentException("Draft not found: $hex")
         val b = try { body(hex) } catch (_: Exception) { Body() }
         return Draft(
             to = msg.recipients(),
@@ -400,7 +409,7 @@ class Mail internal constructor(
         page: Int = 1,
         limit: Int = 50,
         store: Boolean = false
-    ): List<Message> = withContext(Dispatchers.IO) {
+    ): List<Message> = client.io {
         val items = client.mailApi.search(query, mailbox, page, limit).items.map { HttpMailboxTransport.message(it) }
         if (store) {
             items.forEach { persist(it) }
@@ -413,11 +422,11 @@ class Mail internal constructor(
      * If already stored, returns the local message. The fetched message syncs
      * like any other afterwards.
      */
-    suspend fun fetch(hex: String): Message = withContext(Dispatchers.IO) {
+    suspend fun fetch(hex: String): Message = client.io {
         val target = hex.trim()
         require(target.isNotEmpty()) { "message hex is required" }
         val existing = repo?.get(target) ?: manager?.message(target)
-        if (existing != null) return@withContext existing
+        if (existing != null) return@io existing
 
         // Try JMAP Email/get first
         val fromJmap = runCatching {

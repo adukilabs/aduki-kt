@@ -18,6 +18,7 @@ import pro.aduki.core.models.CalendarRecord
 import pro.aduki.core.models.OfferRecord
 import pro.aduki.core.models.OfferRequest
 import pro.aduki.core.models.Place
+import pro.aduki.core.models.Revenue
 import pro.aduki.core.models.ServiceRequest
 import pro.aduki.core.models.ServiceRecord
 import pro.aduki.core.models.Slot
@@ -86,11 +87,13 @@ class Scheduling(
     /**
      * Replaces an event's iCalendar object (the server bumps the sequence).
      * With [notify], an event the account organizes is sent to its
-     * attendees again (iTIP REQUEST).
+     * attendees again (iTIP REQUEST). A [calendar] hex moves the event into
+     * that calendar of the account (404 when the account has no such calendar).
      */
-    fun replaceEvent(hex: String, ical: String, notify: Boolean = false): AppointmentRecord {
+    fun replaceEvent(hex: String, ical: String, notify: Boolean = false, calendar: String = ""): AppointmentRecord {
         val payload = JSONObject().put("ical", ical)
         if (notify) payload.put("notify", true)
+        if (calendar.isNotBlank()) payload.put("calendar", calendar)
         val request = Request.Builder()
             .url(url("user/events").newBuilder().addPathSegment(hex).build())
             .patch(json(payload))
@@ -317,7 +320,9 @@ class Scheduling(
     /**
      * Booking counts of one page for bookings starting in `[from, to)`:
      * `GET /user/pages/{hex}/stats?from&to` answers
-     * `{views, bookings, confirmed, pending, cancelled, done, noshow}`;
+     * `{views, bookings, confirmed, pending, cancelled, done, noshow, revenue}`;
+     * `revenue` is one `{currency, paid, refunded, net, count}` per currency
+     * (minor units) of the charges for those bookings;
      * `views` counts the page's public views on the days the range
      * touches. The range is at most a year.
      */
@@ -339,7 +344,16 @@ class Scheduling(
                 pending = obj.optInt("pending"),
                 cancelled = obj.optInt("cancelled"),
                 done = obj.optInt("done"),
-                noshow = obj.optInt("noshow")
+                noshow = obj.optInt("noshow"),
+                revenue = objects(obj.optJSONArray("revenue") ?: JSONArray()).map {
+                    Revenue(
+                        currency = text(it, "currency"),
+                        paid = it.optLong("paid"),
+                        refunded = it.optLong("refunded"),
+                        net = it.optLong("net"),
+                        count = it.optInt("count")
+                    )
+                }
             )
         }
     }
@@ -371,13 +385,33 @@ class Scheduling(
     }
 
     /**
-     * Sets a booking's state (`PATCH /user/bookings/{hex}` `{state}`):
-     * `confirmed`, `cancelled`, `done` or `noshow`. The server takes no reason.
+     * Sets a booking's state (`PATCH /user/bookings/{hex}` `{state, note?}`):
+     * `confirmed`, `cancelled`, `done` or `noshow`. A [note] (only with
+     * `cancelled`, up to 500 characters) is kept on the booking and sent to
+     * the guests with the cancellation.
      */
-    fun updateBooking(hex: String, state: String): BookingRecord {
+    fun updateBooking(hex: String, state: String, note: String? = null): BookingRecord {
+        val payload = JSONObject().put("state", state)
+        note?.trim()?.ifEmpty { null }?.let { payload.put("note", it) }
         val request = Request.Builder()
             .url(url("user/bookings").newBuilder().addPathSegment(hex).build())
-            .patch(json(JSONObject().put("state", state)))
+            .patch(json(payload))
+            .build()
+        return execute(request) { parseBooking(JSONObject(it)) }
+    }
+
+    /**
+     * Moves a booking to [start] as the host (`PATCH /user/bookings/{hex}`
+     * `{start, length?}`): the slot is checked like a new booking (409
+     * `slot.taken`), the old booking is cancelled as `moved`, and the guests
+     * get the change. Returns the new booking.
+     */
+    fun rescheduleBooking(hex: String, start: Instant, length: Int? = null): BookingRecord {
+        val payload = JSONObject().put("start", start.toString())
+        length?.let { payload.put("length", it) }
+        val request = Request.Builder()
+            .url(url("user/bookings").newBuilder().addPathSegment(hex).build())
+            .patch(json(payload))
             .build()
         return execute(request) { parseBooking(JSONObject(it)) }
     }
@@ -484,6 +518,7 @@ class Scheduling(
         s.questions?.let { put("questions", JSONArray(it)) }
         s.reminders?.let { put("remind", JSONArray(it)) }
         s.paused?.let { put("paused", it) }
+        s.colour?.let { put("colour", if (it.isEmpty()) JSONObject.NULL else it.lowercase()) }
     }
 
     // Reads `{items, total}` pages until `total` items came.
@@ -586,6 +621,7 @@ class Scheduling(
             questions = obj.optJSONArray("questions")?.toString() ?: "[]",
             reminders = remind?.let { a -> (0 until a.length()).map { a.optInt(it) } },
             active = obj.isNull("paused") || !obj.has("paused"),
+            colour = optional(obj, "colour"),
             schedule = text(obj, "schedule"),
             created = text(obj, "created"),
             updated = text(obj, "updated")
@@ -622,6 +658,7 @@ class Scheduling(
             notes = text(obj, "notes"),
             cancelled = text(obj, "cancelled"),
             reason = text(obj, "reason"),
+            note = text(obj, "note"),
             created = text(obj, "created"),
             place = place?.let { Place(text(it, "kind"), text(it, "value")) },
             guests = objects(obj.optJSONArray("guests") ?: JSONArray()).map {

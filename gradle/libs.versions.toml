@@ -1,10 +1,10 @@
 [versions]
-kotlin = "2.0.21"
-objectbox = "4.0.3"
-okhttp = "4.12.0"
-coroutines = "1.10.1"
+kotlin = "2.4.21"
+objectbox = "5.4.2"
+okhttp = "5.5.1"
+coroutines = "1.11.0"
 androidxCore = "1.13.1"
-robolectric = "4.12.2"
+robolectric = "4.16"
 junit = "4.13.2"
 json = "20240303"
 androidxBrowser = "1.8.0"
@@ -22,6 +22,7 @@ kotlin-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-co
 kotlin-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlin-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 
+objectbox-java = { module = "io.objectbox:objectbox-java", version.ref = "objectbox" }
 objectbox-kotlin = { module = "io.objectbox:objectbox-kotlin", version.ref = "objectbox" }
 objectbox-android = { module = "io.objectbox:objectbox-android", version.ref = "objectbox" }
 
@@ -43,5 +44,5 @@ robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectr
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
-android-library = { id = "com.android.library", version = "8.13.2" }
+android-library = { id = "com.android.library", version = "9.5.0" }
 

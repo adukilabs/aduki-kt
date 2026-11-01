@@ -257,4 +257,31 @@ class VcardTest {
         assertFalse(roundtripUncollected.collected)
         assertFalse(outUncollected.contains("COLLECTED"))
     }
+
+    @Test
+    fun theRfc6350FieldsRoundTripThroughThreeZeroAndAreReadFromTwoOne() {
+        val card = Vcard.parse(listOf(
+            "BEGIN:VCARD", "VERSION:4.0", "FN:Alice Developer", "TITLE:Staff Engineer", "BDAY:--05-15", "NICKNAME:Ali",
+            "ADR;TYPE=HOME:;;123 Main St\\, Apt 4;Nairobi;;00100;Kenya", "URL;TYPE=WORK:https://example.com/a?x=1;y=2",
+            "X-ADUKI-COLLECTED:TRUE", "END:VCARD"
+        ).joinToString("\r\n"))
+        assertEquals("123 Main St, Apt 4", card.addresses.single().street)
+
+        val v3 = Vcard.write(card, Vcard.V3)
+        assertTrue(v3.startsWith("BEGIN:VCARD\r\nVERSION:3.0"))
+        assertTrue("3.0 keeps every field", Vcard.parse(v3).same(card))
+        assertTrue("and 4.0 again", Vcard.parse(Vcard.write(Vcard.parse(v3), Vcard.V4)).same(card))
+
+        // 2.1 is read (bare type parameters), and written back as 3.0 or 4.0
+        val old = Vcard.parse(listOf(
+            "BEGIN:VCARD", "VERSION:2.1", "N:Developer;Alice", "TITLE:Staff Engineer", "BDAY:19950515",
+            "ADR;WORK:;;Tech Park;Westlands;Nairobi;00800;Kenya", "URL:https://example.com", "END:VCARD"
+        ).joinToString("\r\n"))
+        assertEquals("Staff Engineer", old.title)
+        assertEquals("19950515", old.birthday)
+        assertEquals("work", old.addresses.single().type)
+        assertEquals("Westlands", old.addresses.single().locality)
+        assertEquals("https://example.com", old.urls.single().url)
+        assertTrue(Vcard.parse(Vcard.write(old, Vcard.V4)).same(old))
+    }
 }

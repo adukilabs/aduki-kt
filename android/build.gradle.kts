@@ -1,12 +1,11 @@
 plugins {
     id("com.android.library")
-    kotlin("android")
     `maven-publish`
 }
 
 android {
     namespace = "pro.aduki.android"
-    compileSdk = 34
+    compileSdk = 37
 
     defaultConfig {
         // 26: java.time and java.util.Base64 (used by the shared modules) without desugaring.

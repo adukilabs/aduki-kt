@@ -25,3 +25,6 @@ site/
 # ObjectBox native library extracted next to the module by the JVM tests
 */libobjectbox-jni-*
 local.properties
+
+# ObjectBox native library the JVM tests download into each module
+libobjectbox-jni-*.so

@@ -27,6 +27,45 @@ concurrent requests that fail together share one renewal, and a refresh token
 that Aduki ID refused is dropped and never presented again. API keys are never
 renewed.
 
+Every API client of `Aduki` (`mailApi`, `contactsApi`, `schedulingApi`,
+`jmap`, and the facades on top of them) shares that one authenticated
+connection, so each renews on a `401` and retries once. A stored session with
+a refresh token but no access token renews before its first request. Calls
+that need an `id` audience token (`sessions`, `revoke`, `handoff`) rotate the
+refresh token too; they take the same lock and save the rotated token, even
+when the call itself fails.
+
+### When the process dies during a renewal
+
+A renewal spends the refresh token at Aduki ID before the app has saved the
+new one. If the process is killed in between (Android does that under memory
+pressure, or the person swipes the app away), the stored token is the spent
+one. Aduki ID covers this: for 10 minutes after a refresh token was used, while
+the token it was exchanged for has not been used itself, presenting it again
+returns that same new refresh token (and a fresh access token) instead of
+ending the session. Two apps that share one session and renew at the same
+moment are covered the same way. Presenting a spent token after that window,
+or after its successor was used, still ends the session.
+
+## The `TokenStore` contract
+
+`Builder.tokens(store)` (and `tokenStore` on `login`, `register` and `redeem`)
+connects the client to where the app keeps the session, for example the
+`AccountManager` entry of [`Accounts`](../start/android.md#accounts) in
+`Mode.Shared`:
+
+- `load()` is called when the client is built and again under the renewal lock
+  before every renewal: if another process stored a newer refresh token, it is
+  adopted instead of spending the old one.
+- `save(tokens)` is called after every rotation, before the new access token is
+  used.
+- `clear()` is called only once Aduki ID refused the refresh token *and*
+  `load()` has nothing newer; then the session is over for every app sharing
+  the store.
+
+The store's methods may be called from any thread and must not call back into
+the client. Exceptions they throw are ignored (the in-memory session stays).
+
 ## `refresh`
 
 ```kotlin

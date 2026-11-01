@@ -34,48 +34,81 @@ key.extractable()                           // false
 
 ## Accounts
 
-`Accounts.reconcile(switcher)` makes the entries of a center match what Aduki ID lists: new accounts are added, accounts the center no longer lists (a tenant `links = deny`, a forced unlink, the person's own unlink) are removed together with their tokens. `Accounts.refresh(client, identity, bearer, current)` does `Center.fetch` and reconciles. Access and refresh tokens are sealed with the [Vault](../security/vault.md) before they reach `AccountManager`; the center token is kept in its own sealed file and is never put in an account entry. `SwitcherState.of(accounts, active)` gives the rows a switcher shows (lock for `unlock = self`, "sign in again", instant switch).
+`Accounts.reconcile(switcher)` makes the entries of a center match what Aduki ID lists: new accounts are added, accounts the center no longer lists (a tenant `links = deny`, a forced unlink, the person's own unlink) are removed together with their tokens. `Accounts.refresh(client, identity, bearer, current)` does `Center.fetch` and reconciles. The center token is kept in its own sealed file and is never put in an account entry. `SwitcherState.of(accounts, active)` gives the rows a switcher shows (lock for `unlock = self`, "sign in again", instant switch).
+
+### Where tokens live: `Accounts.Mode`
+
+```kotlin
+class Accounts(
+    context: Context,
+    val mode: Mode = Mode.Own(),                       // Mode.Own(Vault.platform())
+    manager: AccountManager = AccountManager.get(context),
+    center: CenterStore = CenterStore(context, mode.vault),
+    visibility: Visibility = Visibility.system(manager)
+)
+```
+
+There is always exactly one copy of a session's tokens:
+
+| Mode | Tokens are kept | The account entry holds | Use it when |
+| --- | --- | --- | --- |
+| `Mode.Own(vault)` (default) | In this app's private storage (`pro.aduki.account.tokens`), sealed with `vault` (the Keystore on a device). | Metadata only, plus an `own.<package>` marker. | Each app has its own session and DPoP key (recommended). |
+| `Mode.Shared` | In the `AccountManager` entry only (password = refresh token, auth token `access` = access token), unsealed. | Metadata and the tokens. | Several apps of one publisher share one session through a `TokenStore`. |
+
+A Keystore key belongs to one app, so tokens shared between apps cannot be sealed: in `Mode.Shared` they are protected by the system account database, which only apps the account is made visible to can read. Every read goes to the entry, so after one app renews the next app reads the rotated pair. A private copy that 0.5.x wrote is deleted on the first read or save. All apps of one publisher should use the same mode.
+
+| Call | Does |
+| --- | --- |
+| `save(hex, tokens)` | Stores the session where the mode keeps it. `false` when there is no entry for `hex`. |
+| `read(hex): Stored` | `Stored.Found(tokens, saved)`, `Stored.Missing` (signed out in this app) or `Stored.Sealed` (stored, but not this app's to use: sealed by another app, a Keystore key that is gone, or unsealed tokens another app left). Nothing is read from anywhere the mode does not keep tokens. |
+| `tokens(hex)` | The tokens of `Stored.Found`, else `null`. |
+| `migrate(hex)` | Opt-in, `Mode.Own` only: moves tokens this app wrote into the entry with 0.5.x (sealed with its own vault) into its private store and removes them from the entry. Another app's tokens are never adopted. |
+| `forget(hex)` | Ends this app's session and keeps the entry (in `Mode.Shared` that is every app's session). |
+| `fresh(hex)`, `needsSignIn(hex)`, `invalidate(hex)` | As before, against the mode's copy. |
 
 ### Sharing accounts across companion apps
 
-On Android 8+ (API 26+), accounts added by one app are isolated and invisible to other apps by default. Call `Accounts.share(packages)` to grant visibility:
+On Android 8+ (API 26+), accounts added by one app are invisible to other apps until `Accounts.share(packages)` grants visibility (`AccountManager.setAccountVisibility`). `share` hands over no tokens.
 
 ```kotlin
-accounts.share(listOf("pro.aduki.suite.mail", "pro.aduki.suite.calendar"))
+accounts.share(listOf("pro.aduki.calendar", "pro.aduki.contacts"))
 ```
 
-#### Safe vs. app-bound fields
-- **Safe across apps:** `hex`, `handle`, `center`, `tenant`, `personal`, `unlock`. Stored unsealed in `AccountManager` user data, any companion app granted visibility can read them via `accounts.list()`.
-- **App-bound (with Vault):** Tokens sealed with `Vault.platform()` use an Android Keystore key tied to the creating app's UID. Peer apps cannot decrypt tokens sealed by another app's Keystore.
+`Visibility` is the seam for tests (Robolectric cannot run `setAccountVisibility`): pass `Accounts(context, mode, visibility = object : Visibility { … })`. `Visibility.system(manager)` is the real one; it ignores a refused platform call and remembers what it set.
 
-#### Cross-app token options
-1. **Per-app sessions (recommended):** Companion apps read the account `handle`, `hex` and `center` ID, and run their own authentication flow to establish an independent DPoP session with their own Keystore key.
-2. **Unsealed tokens (`vault = null`):** Using `Accounts(context, vault = null)` stores tokens unsealed in `AccountManager`, allowing companion apps with visibility to read and share tokens directly.
+### Handoffs: a companion app opens its own session
 
-#### Recipe: Multi-App Session Sharing (Same Publisher)
+A signed-in app (A) lets a companion app (B) of the same publisher open **its own** session of the account, bound to B's own DPoP key, without a password or second factor. Only a single-use code crosses apps; no token does.
 
-When several apps from a publisher (e.g. Mail, Calendar, Contacts) share an account on a device, each app requires its own DPoP-bound session because Android Keystore keys are bound to each app's Linux UID:
-
-1. **Initial Sign-In:** The primary app (e.g. Mail) completes sign-in via Custom Tabs (`SignIn`) and saves the account:
+1. A asks Aduki ID for a handoff for B's package and leaves it in the account entry:
    ```kotlin
-   val accounts = Accounts(context)
-   accounts.reconcile(switcher) // or accounts.add(linked, tokens)
-   accounts.share(listOf("pro.aduki.suite.calendar", "pro.aduki.suite.contacts"))
+   // A, signed in, Mode.Own
+   for (peer in listOf("pro.aduki.calendar", "pro.aduki.contacts")) {
+       if (!accounts.holds(hex, peer)) accounts.offer(hex, peer, aduki.handoff(peer))
+   }
    ```
-2. **Account Discovery:** Companion apps (Calendar, Contacts) query `AccountManager` via `Accounts(context).list()`. They can immediately read the unsealed account metadata (`handle`, `hex`, `center`, `tenant`).
-3. **Session Establishment Without Passwords:**
-   - **Device Unlock:** Once an app registers a device credential (`accounts.registerDevice(...)`), it can unlock sessions silently or via biometric prompt:
-     ```kotlin
-     val unlockedHexes = accounts.unlockWithDevice(http, identity)
-     ```
-     This opens independent DPoP-bound tokens for every center account that permits center unlock.
-   - **Custom Tab SSO:** Alternatively, the companion app launches `SignIn`. Because the user is already authenticated in the browser/Custom Tab session, Aduki ID redirects immediately without prompting for credentials.
-4. **Credential Lifecycle & 404 Handling:**
-   - Device credentials are valid for **60 days**.
-   - If a credential lapses after 60 days or is revoked via `accounts.revokeDevice(...)` or remotely at Aduki ID, `accounts.unlockWithDevice(...)` encounters an HTTP `404 (entity.missing)`, automatically clears the local credential from storage, and throws `AdukiException.Network(code = 404)`. The app then directs the user to complete full sign-in.
-5. **Authenticator Ownership:**
-   - One designated app in the suite declares `AdukiAuthenticatorService` in its manifest to own `pro.aduki.account`.
-   - Companion apps interact with `AccountManager` to discover accounts and manage their own local DPoP sessions.
+   `Aduki.handoff(target, ttl = 3600)` is `POST /v1/handoffs {target, ttl}` with an `id` audience token (the SDK gets it by rotating the refresh token under its renewal lock and saves the rotated token). A handoff works once, lives `ttl` seconds (60 to 86400), is replaced by a newer one for the same target, and dies with A's session.
+2. B, finding the account in `accounts.list()` with nothing stored (`read(hex) == Stored.Missing`), claims and redeems it:
+   ```kotlin
+   // B, Mode.Own
+   val code = accounts.claim(hex)                 // removes it from the entry; null when none or expired
+   if (code != null) {
+       val aduki = Aduki.redeem(code, dpop = AndroidKey.open(), tokenStore = store, device = "Calendar on Pixel 9")
+       accounts.save(hex, aduki.session.tokens.value!!)
+   }
+   ```
+   `Aduki.redeem` is `POST /v1/handoffs/redeem {handoff, audience, device}` with B's DPoP proof: Aduki ID opens a new session of the same account at tier 1. A used, expired or orphaned code is `AdukiException.Unauthorized`; B then signs in normally.
+3. `accounts.withdraw(hex, target)` removes a handoff that was not claimed. `accounts.holds(hex, target)` tells whether `target` saved its own session (A offers only to apps that did not).
+
+The handoff sits in `AccountManager` user data, readable by the apps `share` named, until claimed; it is a bearer code for one new session, so keep `ttl` short when B is expected to open soon.
+
+### Device unlock
+
+Once an app registers a device credential (`accounts.registerDevice(client, identity, bearer, device, code, center = true, key = AndroidKey.open(AndroidKey.DEVICE))`, which needs an `id` audience `bearer` and a fresh authenticator `code`: Aduki ID accepts each code step once, so not the one used to sign in), it can reopen sessions with the device key and no password: `accounts.unlockWithDevice(http, identity)` returns the hexes whose sessions it stored. Unlocked sessions are not DPoP-bound. Credentials are trusted for 60 days; a lapsed or revoked one makes `unlockWithDevice` clear it locally and throw `AdukiException.Network(code = 404)`. `accounts.revokeDevice(http, identity, bearer)` revokes it (`false` when there was none or it was already gone).
+
+### Authenticator
+
+One app declares `AdukiAuthenticatorService` to own the account type `pro.aduki.account`. When another app asks `AccountManager` for the `access` auth token, `AdukiAuthenticator` returns the stored one while it is fresh, else calls `Authenticator.refresher(entry, refresh)` on a binder thread (not the main thread) and stores what it returns. `refresher` must make one renewal call to Aduki ID (with the app's DPoP key when the session is bound) and return the new `Tokens`, or `null` when the session ended; `null` makes the request fail with "sign in again".
 
 Register how the authenticator refreshes a stale access token, and which activity adds an account:
 

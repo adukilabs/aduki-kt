@@ -548,4 +548,68 @@ class SchedulingTest {
             assertTrue(e.message!!.contains("currency"))
         }
     }
+
+    @Test
+    fun anEventMovesToAnotherCalendar() {
+        reply(JSONObject(event("e1")).put("calendar", "c2").toString())
+        val moved = api.replaceEvent("e1", "BEGIN:VCALENDAR\r\nEND:VCALENDAR", calendar = "c2")
+        val body = JSONObject(server.takeRequest().body.readUtf8())
+        assertEquals("c2", body.getString("calendar"))
+        assertEquals("c2", moved.calendar)
+        reply(event("e1"))
+        api.replaceEvent("e1", "X")
+        assertFalse(JSONObject(server.takeRequest().body.readUtf8()).has("calendar"))
+    }
+
+    @Test
+    fun statsCarryRevenuePerCurrency() {
+        reply("""{"views":1,"bookings":2,"confirmed":2,"pending":0,"cancelled":0,"done":0,"noshow":0,
+            "revenue":[{"currency":"KES","paid":500000,"refunded":100000,"net":400000,"count":2}]}""")
+        val stats = api.stats("p1", Instant.parse("2026-11-01T00:00:00Z"), Instant.parse("2026-12-01T00:00:00Z"))
+        assertEquals(listOf(pro.aduki.core.models.Revenue("KES", 500_000, 100_000, 400_000, 2)), stats.revenue)
+        reply("""{"views":null,"bookings":0}""")
+        assertTrue("an older server sends none", api.stats("p1", Instant.EPOCH, Instant.EPOCH.plusSeconds(60)).revenue.isEmpty())
+    }
+
+    @Test
+    fun aCancelCarriesTheHostsNoteAndAMoveTheNewStart() {
+        reply("""{"hex":"b1","page":"p1","span":{"start":"2026-11-02T09:00:00Z","end":"2026-11-02T09:30:00Z"},
+            "state":"cancelled","reason":"host","note":"Sick today, sorry"}""")
+        val cancelled = api.updateBooking("b1", "cancelled", "  Sick today, sorry ")
+        assertEquals("Sick today, sorry", cancelled.note)
+        assertTrue(JSONObject("""{"state":"cancelled","note":"Sick today, sorry"}""").similar(JSONObject(server.takeRequest().body.readUtf8())))
+
+        reply("""{"hex":"b2","page":"p1","span":{"start":"2026-11-03T10:00:00Z","end":"2026-11-03T10:45:00Z"},"state":"confirmed"}""")
+        val moved = api.rescheduleBooking("b1", Instant.parse("2026-11-03T10:00:00Z"), 45)
+        val patch = server.takeRequest()
+        assertEquals("PATCH /v1/user/bookings/b1", "${patch.method} ${patch.path}")
+        assertTrue(JSONObject("""{"start":"2026-11-03T10:00:00Z","length":45}""").similar(JSONObject(patch.body.readUtf8())))
+        assertEquals("b2", moved.hex)
+        assertEquals("2026-11-03T10:45:00Z", moved.end)
+
+        failure(409, "slot.taken")
+        try {
+            api.rescheduleBooking("b1", Instant.parse("2026-11-03T10:00:00Z"))
+            fail("expected a conflict")
+        } catch (e: AdukiException.Network) {
+            assertEquals(409, e.code)
+        }
+    }
+
+    @Test
+    fun aServiceColourIsSentLowercaseAndClearedWithNull() {
+        reply(page.replace("\"team\":null", "\"team\":null,\"colour\":\"#1a73e8\""))
+        val record = api.editService("p1", ServiceRequest(colour = "#1A73E8"))
+        assertEquals("#1a73e8", record.colour)
+        val sent = server.takeRequest()
+        assertEquals("#1a73e8", JSONObject(sent.body.readUtf8()).getString("colour"))
+        reply(page)
+        assertNull(api.editService("p1", ServiceRequest(colour = "")).colour)
+        assertTrue(JSONObject(server.takeRequest().body.readUtf8()).isNull("colour"))
+        try {
+            ServiceRequest(colour = "blue").validate()
+            fail("expected IllegalArgumentException")
+        } catch (_: IllegalArgumentException) {
+        }
+    }
 }

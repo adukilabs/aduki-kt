@@ -17,22 +17,22 @@ buildscript {
             }
         }
         dependencies {
-            classpath("com.android.tools.build:gradle:8.13.2")
+            classpath("com.android.tools.build:gradle:9.5.0")
         }
     }
 }
 
 plugins {
     alias(libs.plugins.kotlin.jvm) apply false
-    id("io.objectbox") version "4.0.3" apply false
+    id("io.objectbox") version "5.4.2" apply false
     `maven-publish`
     signing
 }
 
-val release = "0.5.4"
+val release = "0.6.0"
 val domain = "pro.aduki"
 
-// Java 17 bytecode whichever JDK (17 to 22) runs Gradle; Kotlin 2.0.x cannot target above 22.
+// Java 17 bytecode whichever JDK (17 or later) runs Gradle, so apps on Java 17 can use the SDK.
 val bytecode = 17
 
 subprojects {

@@ -45,7 +45,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val vault = Vault.platform()
-        accounts = Accounts(this, vault)
+        accounts = Accounts(this, Accounts.Mode.Own(vault))
         SignInConfig.flow = SignIn(Oidc(http, BuildConfig.ISSUER.trimEnd('/'), BuildConfig.CLIENT, redirect, dpop = Dpop(key)), redirect, PendingStore(this, vault))
         SignInConfig.done = { result -> runOnUiThread { signedIn(result) } }
 

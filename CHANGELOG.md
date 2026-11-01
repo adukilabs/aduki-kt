@@ -2,6 +2,53 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
+## 0.6.0 (2026-11-02)
+
+0.6.0 is a breaking release. It needs Aduki ID with handoffs, the refresh replay window and session-on-verification, and the mail server release with the scheduling changes below; against older servers those calls fail as noted.
+
+### Breaking
+
+- `Accounts(context, vault)` is `Accounts(context, mode)`: `Mode.Own(vault)` (default) keeps the tokens only in the app's private store, sealed; `Mode.Shared` keeps them only in the `AccountManager` entry. No mode writes two copies (#118). `Accounts.grant`, `redeem` and `revoke` are gone (#112); `share` only grants visibility.
+- `Aduki.register(hex, password, code, …)`: verification opens the session; `handle`, `name` and `backup` are gone. `Signup.verify` returns `Verified(codes, tokens)`.
+- Built with Kotlin 2.4.21, OkHttp 5.5.1, ObjectBox 5.4.2, AGP 9.5.0 and Gradle 9.8.2; `pro.aduki:android` is compiled against API 37 (#114). Apps need Kotlin 2.3+, ObjectBox 5.x, `compileSdk` 37 and AGP 9. Bytecode stays Java 17.
+
+### Accounts and sessions
+
+- `Accounts.read(hex)` returns `Stored.Found`, `Missing` or `Sealed`, so a sealing mismatch is no longer reported as "signed out"; the silent fallback to the shared entry is gone. `migrate(hex)` is the opt-in move of this app's own 0.5.x sealed entry; `forget(hex)` ends this app's session and keeps the entry (#113).
+- Handoffs (#112): `Aduki.handoff(target, ttl)` asks Aduki ID (`POST /v1/handoffs`) for a single-use code; `Accounts.offer` leaves it for that package; the peer takes it with `Accounts.claim` and opens its own session, bound to its own DPoP key, with `Aduki.redeem` (`POST /v1/handoffs/redeem`). Only the code crosses apps. `Accounts.holds(hex, package)` and `withdraw`.
+- `Aduki.login`, `register`, `redeem` and `Id.signIn` take `device`, the session's name in `Aduki.sessions()` (#116).
+- `Aduki.sessions`, `revoke` and `handoff` hold the renewal lock while they rotate the refresh token for the `id` audience and save the rotated token even when the call fails (a concurrent renewal could present the spent token and end the session).
+- Every API client renews once on a 401 and retries; tested for mail, contacts, scheduling and JMAP, and for concurrent 401s sharing one renewal (#110).
+- A process killed between a renewal and saving its result no longer loses the session: Aduki ID returns the same new refresh token when the spent one is presented again within 10 minutes, while its successor is unused (#117). The `TokenStore` contract is documented.
+
+### Mail
+
+- `Mail.moveMailbox` and `Mail.saveDraft` reach the server: `mailbox_move` and `draft_save` were missing from the dispatcher (#115). Drafts are created in the Drafts mailbox (looked up by role) with cc, bcc, from and HTML, a refused draft is reported instead of dropped, and the saved message takes the server's id (`openDraft` and `replace` accept the old placeholder).
+
+### Scheduling
+
+- `EventChanges.calendar` moves an event into another calendar (#105).
+- `Stats.revenue`: `Revenue(currency, paid, refunded, net, count)` per currency, minor units (#106).
+- `Scheduling.cancelBooking(hex, note)`: the host's note is kept as `BookingRecord.note` and sent to the guests (#107).
+- `Scheduling.rescheduleBooking(hex, start, length?)` moves a booking as the host (#108).
+- `ServiceRequest.colour` / `ServiceRecord.colour` (`#rrggbb`) (#109).
+
+### Fixes
+
+- The SDK frees ObjectBox's per-thread readers after its IO work and `close()` stops the store observers first; ObjectBox 5 reports closing a store under live readers of other threads as a usage error.
+
+### Corrections to earlier release notes
+
+Checked against the code and tests while preparing 0.6.0:
+
+- 0.5.3 said `Mail.saveDraft` and `Mail.moveMailbox` sync through the outbox (`draft_save`, `mailbox.move`). They never did: the dispatcher refused both (#115). Fixed here.
+- 0.5.3 said #91 updated the dependencies to the latest. Only coroutines, org.json and the AndroidX test libraries moved; Kotlin (2.0.21), OkHttp (4.12) and ObjectBox (4.0.3) did not (#114). Fixed here.
+- 0.5.3 said refreshed tokens are "synchronized across active sessions and token stores". That held inside one process only; apps sharing an account drifted apart (#118). Fixed here.
+- 0.5.4 said a peer app gets its session "without a TOTP prompt" through grants. It got the signer's own tokens, unsealed in `AccountManager` and DPoP-bound to the signer (#112). Replaced by handoffs here.
+- 0.5.4 said the RFC 6350 fields round-trip "losslessly across vCard 2.1, 3.0 and 4.0". The SDK reads 2.1 and writes 3.0 and 4.0; 0.6.0 adds the 3.0 round-trip and 2.1 read tests.
+- 0.5.4 said the collected marker survives sync. It travels as `X-ADUKI-COLLECTED` inside the vCard; the server has no flag of its own and its auto-collected contacts live in a separate address book without that property.
+- 0.4.1-beta said `Aduki.register` signs in after verification. It reused the verified authenticator code, which Aduki ID refuses; fixed here.
+
 ## 0.5.4 (2026-10-31)
 
 Release notes:

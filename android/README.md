@@ -1,6 +1,6 @@
 # Android Module (`pro.aduki:android`)
 
-The Android library module for the Aduki SDK (AAR, `minSdk` 26, `compileSdk` 34).
+The Android library module for the Aduki SDK (AAR, `minSdk` 26, `compileSdk` 37).
 
 Provides Android-specific capabilities:
 - **AndroidKey**: Hardware-backed or StrongBox P-256 DPoP keys in Android Keystore (`ES256`).
@@ -14,7 +14,7 @@ In your app's `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("pro.aduki:android:0.5.4")
+    implementation("pro.aduki:android:0.6.0")
 }
 ```
 

@@ -19,7 +19,8 @@ import pro.aduki.sync.outbox.Rejected
  *   `local-...` hex is then replaced by the server's. A `409` (the UID is
  *   already there, e.g. after a lost reply) completes it: the next sync
  *   adopts the server's copy by UID.
- * - `event_update`: `PATCH /user/events/{hex}` `{ical, notify?}`.
+ * - `event_update`: `PATCH /user/events/{hex}` `{ical, notify?, calendar?}`
+ *   (`calendar` moves the event into another calendar of the account).
  * - `event_reply`: `POST /user/events/{hex}/reply` `{partstat, comment?}`:
  *   the server sets the answer and sends the organizer an iTIP REPLY. An
  *   event the server will not answer for (no organizer, or the account is
@@ -52,7 +53,9 @@ class ScheduleDispatcher(
             try {
                 when (action.action) {
                     Schedule.CREATE -> create(payload)
-                    Schedule.UPDATE -> api.replaceEvent(hex(payload), payload.getString("ical"), payload.optBoolean("notify"))
+                    Schedule.UPDATE -> api.replaceEvent(
+                        hex(payload), payload.getString("ical"), payload.optBoolean("notify"), payload.optString("calendar")
+                    )
                     Schedule.REPLY -> reply(payload)
                     Schedule.DELETE -> api.removeEvent(hex(payload), payload.optBoolean("notify"))
                     Schedule.LEGACY -> legacy(payload)

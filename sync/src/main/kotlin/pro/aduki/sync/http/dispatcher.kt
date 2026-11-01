@@ -99,40 +99,7 @@ class HttpDispatcher(
                         }
                     }
                     "mailbox_delete" -> api.deleteMailbox(hexOf(action))
-                    "draft_save" -> {
-                        val obj = JSONObject(String(action.payload, Charsets.UTF_8))
-                        val placeholderHex = obj.getString("hex")
-                        val replace = obj.optString("replace").ifBlank { null }
-                        val mailbox = obj.getString("mailbox")
-                        if (jmap != null) {
-                            val createObj = JSONObject().apply {
-                                put("mailboxIds", JSONObject().put(mailbox, true))
-                                put("keywords", JSONObject().put("\$draft", true))
-                                put("subject", obj.optString("subject"))
-                                val to = obj.optJSONArray("to")
-                                if (to != null && to.length() > 0) {
-                                    val toArr = JSONArray()
-                                    for (i in 0 until to.length()) {
-                                        toArr.put(JSONObject().put("email", to.getString(i)))
-                                    }
-                                    put("to", toArr)
-                                }
-                                val text = obj.optString("text")
-                                put("bodyValues", JSONObject().put("1", JSONObject().put("value", text)))
-                                put("textBody", JSONArray().put(JSONObject().put("partId", "1").put("type", "text/plain")))
-                            }
-                            val setArg = JSONObject().put("create", JSONObject().put("draft1", createObj))
-                            if (replace != null) {
-                                setArg.put("destroy", JSONArray().put(replace))
-                            }
-                            val reply = jmap.call("Email/set", setArg)
-                            val created = reply.optJSONObject("created")?.optJSONObject("draft1")
-                            val newHex = created?.optString("id")
-                            if (!newHex.isNullOrBlank()) {
-                                adopt(placeholderHex, newHex)
-                            }
-                        }
-                    }
+                    "draft_save" -> saveDraft(JSONObject(String(action.payload, Charsets.UTF_8)))
                     "keywords" -> {
                         val obj = JSONObject(String(action.payload, Charsets.UTF_8))
                         api.flags(obj.getString("hex"), strings(obj.optJSONArray("add")), strings(obj.optJSONArray("remove")))
@@ -152,6 +119,53 @@ class HttpDispatcher(
                 throw e
             }
         }
+    }
+
+    // A draft is one `Email/set` create in the Drafts mailbox with `$draft`;
+    // the draft it replaces is destroyed in the same call once the server
+    // knows it (a `msg_` placeholder never reached the server).
+    private fun saveDraft(obj: JSONObject) {
+        val client = jmap ?: throw Rejected("Saving a draft needs JMAP")
+        val placeholder = obj.getString("hex")
+        val mailbox = drafts(client, obj.optString("mailbox"))
+        val created = JSONObject().apply {
+            put("mailboxIds", JSONObject().put(mailbox, true))
+            put("keywords", JSONObject().put("\$draft", true).put("\$seen", true))
+            put("subject", obj.optString("subject"))
+            for (field in listOf("to", "cc", "bcc")) {
+                val list = strings(obj.optJSONArray(field))
+                if (list.isNotEmpty()) put(field, JSONArray(list.map { JSONObject().put("email", it) }))
+            }
+            obj.optString("from").ifBlank { null }?.let { put("from", JSONArray().put(JSONObject().put("email", it))) }
+            val html = obj.optString("html").ifBlank { null }
+            val parts = JSONObject().put("1", JSONObject().put("value", obj.optString("text")))
+            put("textBody", JSONArray().put(JSONObject().put("partId", "1").put("type", "text/plain")))
+            if (html != null) {
+                parts.put("2", JSONObject().put("value", html))
+                put("htmlBody", JSONArray().put(JSONObject().put("partId", "2").put("type", "text/html")))
+            }
+            put("bodyValues", parts)
+        }
+        val args = JSONObject().put("create", JSONObject().put("draft", created))
+        val replace = obj.optString("replace").ifBlank { null }
+        if (replace != null && !replace.startsWith(Message.PENDING)) args.put("destroy", JSONArray().put(replace))
+        val reply = client.call("Email/set", args)
+        reply.optJSONObject("notCreated")?.optJSONObject("draft")?.let { err ->
+            throw Rejected("Draft refused: ${err.optString("type")} ${err.optString("description")}".trim())
+        }
+        val hex = reply.optJSONObject("created")?.optJSONObject("draft")?.optString("id").orEmpty()
+        if (hex.isBlank()) throw Rejected("Draft not created: the server returned no id")
+        rename(placeholder, hex)
+        adopt(placeholder, hex)
+    }
+
+    // The Drafts mailbox: [given] when it is a mailbox id, else the account's
+    // mailbox with the `drafts` role.
+    private fun drafts(client: Jmap, given: String): String {
+        if (given.isNotBlank() && given != "drafts") return given
+        val reply = client.call("Mailbox/query", JSONObject().put("filter", JSONObject().put("role", "drafts")))
+        return reply.optJSONArray("ids")?.optString(0)?.ifBlank { null }
+            ?: throw Rejected("The account has no Drafts mailbox")
     }
 
     private fun send(action: Outbox) {
@@ -266,10 +280,10 @@ class HttpDispatcher(
     companion object {
         private val MAIL = setOf(
             "send", "compose", "flag", "move", "delete", "flags", "moves", "deletes",
-            "mailbox_create", "mailbox_rename", "mailbox_delete", "keywords"
+            "mailbox_create", "mailbox_rename", "mailbox_move", "mailbox_delete", "keywords", "draft_save"
         )
         private const val CHUNK = 500
-        private val CREATES = setOf("send", "compose", "mailbox_create")
+        private val CREATES = setOf("send", "compose", "mailbox_create", "draft_save")
         private val TRANSIENT = setOf("serverFail", "serverUnavailable", "serverPartialFail")
 
         /** JMAP keyword of each flag bit that has one. */

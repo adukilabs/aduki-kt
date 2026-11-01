@@ -229,6 +229,32 @@ class CalendarTest {
     }
 
     @Test
+    fun anEventMovesToAnotherCalendarLocallyAndOnTheServer() = runBlocking<Unit> {
+        val aduki = build()
+        aduki.scheduling.create(standup().copy(calendar = "c1"))
+        val moved = aduki.scheduling.update("srv1", EventChanges(calendar = "c2"))
+        assertEquals("c2", moved.calendar)
+        assertEquals("c2", JSONObject(bodies.last()).getString("calendar"))
+        aduki.scheduling.update("srv1", EventChanges(title = "Same calendar"))
+        assertFalse("no move unless asked", JSONObject(bodies.last()).has("calendar"))
+        assertEquals(0, aduki.sync.outbox.value)
+    }
+
+    @Test
+    fun bookingsCancelWithANoteAndMoveToANewSlot() = runBlocking<Unit> {
+        val aduki = build()
+        aduki.scheduling.cancelBooking("b1", "Sick today")
+        assertTrue(JSONObject("""{"state":"cancelled","note":"Sick today"}""").similar(JSONObject(bodies.last())))
+        aduki.scheduling.rescheduleBooking("b2", Instant.parse("2026-11-04T09:00:00Z"))
+        assertEquals("""{"start":"2026-11-04T09:00:00Z"}""", bodies.last())
+        try {
+            aduki.scheduling.cancelBooking("b1", "x".repeat(501))
+            org.junit.Assert.fail("expected IllegalArgumentException")
+        } catch (_: IllegalArgumentException) {
+        }
+    }
+
+    @Test
     fun removingAnEventNeverSentForgetsItsCreate() = runBlocking<Unit> {
         val aduki = build()
         down = true

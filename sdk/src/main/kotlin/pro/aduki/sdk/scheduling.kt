@@ -63,7 +63,7 @@ class Scheduling internal constructor(
     fun observeCalendars(): StateFlow<List<CalendarRecord>> = calendars
 
     /** Fetches the account's calendars from the server and updates [calendars]. */
-    suspend fun calendars(): List<CalendarRecord> = withContext(Dispatchers.IO) {
+    suspend fun calendars(): List<CalendarRecord> = client.io {
         val list = api().calendars()
         _calendars.value = list
         list
@@ -91,7 +91,7 @@ class Scheduling internal constructor(
         color: String? = null,
         timezone: String? = null,
         description: String? = null
-    ): CalendarRecord = withContext(Dispatchers.IO) {
+    ): CalendarRecord = client.io {
         require(name.isNotBlank()) { "calendar name is required" }
         val created = api().createCalendar(name, color, timezone, description)
         _calendars.value = _calendars.value + created
@@ -99,7 +99,7 @@ class Scheduling internal constructor(
     }
 
     /** Renames a calendar. */
-    suspend fun renameCalendar(hex: String, name: String): CalendarRecord = withContext(Dispatchers.IO) {
+    suspend fun renameCalendar(hex: String, name: String): CalendarRecord = client.io {
         require(name.isNotBlank()) { "calendar name is required" }
         val updated = api().renameCalendar(hex, name)
         _calendars.value = _calendars.value.map { if (it.hex == hex) updated else it }
@@ -114,14 +114,14 @@ class Scheduling internal constructor(
         timezone: String? = null,
         description: String? = null,
         busy: Boolean? = null
-    ): CalendarRecord = withContext(Dispatchers.IO) {
+    ): CalendarRecord = client.io {
         val updated = api().updateCalendar(hex, name, color, timezone, description, busy)
         _calendars.value = _calendars.value.map { if (it.hex == hex) updated else it }
         updated
     }
 
     /** Deletes a calendar and its events from the server. */
-    suspend fun removeCalendar(hex: String) = withContext(Dispatchers.IO) {
+    suspend fun removeCalendar(hex: String) = client.io {
         api().removeCalendar(hex)
         _calendars.value = _calendars.value.filterNot { it.hex == hex }
     }
@@ -148,7 +148,7 @@ class Scheduling internal constructor(
             ?: emptyList()
 
     /** Loads every event from the server into the store; returns how many changed. */
-    suspend fun sync(): Int = withContext(Dispatchers.IO) {
+    suspend fun sync(): Int = client.io {
         flush()
         runCatching {
             net?.calendars()?.let { _calendars.value = it }
@@ -166,18 +166,18 @@ class Scheduling internal constructor(
      * invites the attendees (iTIP REQUEST) when the account organizes it.
      */
     suspend fun create(request: EventRequest, notify: Boolean = false): Appointment =
-        withContext(Dispatchers.IO) { local().create(request, notify) }.also { flush() }
+        client.io { local().create(request, notify) }.also { flush() }
 
     /**
      * Edits an event; null fields of [changes] keep their value. With
      * [notify], the server sends the changed event to the attendees.
      */
     suspend fun update(hex: String, changes: EventChanges, notify: Boolean = false): Appointment =
-        withContext(Dispatchers.IO) { local().update(hex, changes, notify) }.also { flush() }
+        client.io { local().update(hex, changes, notify) }.also { flush() }
 
     /** Moves an event to [start] .. [end]; [notify] as for [update]. */
     suspend fun reschedule(hex: String, start: Instant, end: Instant, notify: Boolean = false): Appointment =
-        withContext(Dispatchers.IO) { local().reschedule(hex, start, end, notify) }.also { flush() }
+        client.io { local().reschedule(hex, start, end, notify) }.also { flush() }
 
     /**
      * Edits a single occurrence of a recurring event at [occurrenceStart]
@@ -189,7 +189,7 @@ class Scheduling internal constructor(
         occurrenceStart: Instant,
         changes: EventChanges,
         notify: Boolean = false
-    ): Appointment = withContext(Dispatchers.IO) {
+    ): Appointment = client.io {
         local().updateOccurrence(hex, occurrenceStart, changes, notify)
     }.also { flush() }
 
@@ -202,7 +202,7 @@ class Scheduling internal constructor(
         hex: String,
         occurrenceStart: Instant,
         notify: Boolean = false
-    ): Appointment = withContext(Dispatchers.IO) {
+    ): Appointment = client.io {
         local().cancelOccurrence(hex, occurrenceStart, notify)
     }.also { flush() }
 
@@ -216,7 +216,7 @@ class Scheduling internal constructor(
         occurrenceStart: Instant,
         changes: EventChanges,
         notify: Boolean = false
-    ): Appointment = withContext(Dispatchers.IO) {
+    ): Appointment = client.io {
         local().updateFollowing(hex, occurrenceStart, changes, notify)
     }.also { flush() }
 
@@ -231,7 +231,7 @@ class Scheduling internal constructor(
         val engine = local()
         val me = address ?: client.me()?.email?.ifBlank { null }
             ?: throw IllegalStateException("the account's address is unknown: pass address")
-        return withContext(Dispatchers.IO) { engine.respond(hex, response, me, comment) }.also { flush() }
+        return client.io { engine.respond(hex, response, me, comment) }.also { flush() }
     }
 
     /**
@@ -241,11 +241,11 @@ class Scheduling internal constructor(
      * with `notify` sends a CANCEL).
      */
     suspend fun cancel(hex: String, reason: String = "", notify: Boolean = false): Appointment =
-        withContext(Dispatchers.IO) { local().cancel(hex, reason, notify) }.also { flush() }
+        client.io { local().cancel(hex, reason, notify) }.also { flush() }
 
     /** Deletes an event; with [notify], the attendees get an iTIP CANCEL when the account organizes it. */
     suspend fun remove(hex: String, notify: Boolean = false) {
-        withContext(Dispatchers.IO) { local().remove(hex, notify) }
+        client.io { local().remove(hex, notify) }
         flush()
     }
 
@@ -255,7 +255,7 @@ class Scheduling internal constructor(
      * server takes one event per request.
      */
     suspend fun importIcs(text: String, calendar: String = ""): List<Appointment> =
-        withContext(Dispatchers.IO) { local().import(text, calendar) }.also { flush() }
+        client.io { local().import(text, calendar) }.also { flush() }
 
     /** The events with [hexes] (every stored event when null) as one iCalendar file. */
     fun exportIcs(hexes: List<String>? = null): String = local().export(hexes)
@@ -263,17 +263,17 @@ class Scheduling internal constructor(
     // ── Services (booking pages) ─────────────────────────────────────
 
     /** The account's services. */
-    suspend fun services(): List<ServiceRecord> = withContext(Dispatchers.IO) { api().services() }
+    suspend fun services(): List<ServiceRecord> = client.io { api().services() }
 
     /** One service. */
-    suspend fun service(hex: String): ServiceRecord = withContext(Dispatchers.IO) { api().service(hex) }
+    suspend fun service(hex: String): ServiceRecord = client.io { api().service(hex) }
 
     /**
      * Creates a service. With [ServiceRequest.windows] it gets its own
      * schedule (named after the slug) open in those windows; without, it
      * uses the account's main schedule.
      */
-    suspend fun createService(request: ServiceRequest): ServiceRecord = withContext(Dispatchers.IO) {
+    suspend fun createService(request: ServiceRequest): ServiceRecord = client.io {
         request.validate()
         require(!request.name.isNullOrBlank() && !request.slug.isNullOrBlank()) { "name and slug are required" }
         val api = api()
@@ -287,7 +287,7 @@ class Scheduling internal constructor(
      * schedule (`ServiceRecord.schedule`), else of the schedule named after
      * the slug, else move the service to a new such schedule.
      */
-    suspend fun updateService(hex: String, request: ServiceRequest): ServiceRecord = withContext(Dispatchers.IO) {
+    suspend fun updateService(hex: String, request: ServiceRequest): ServiceRecord = client.io {
         request.validate()
         val api = api()
         var schedule = ""
@@ -302,12 +302,12 @@ class Scheduling internal constructor(
     }
 
     /** Deletes a service; one that has bookings cannot be deleted (pause it). */
-    suspend fun removeService(hex: String) = withContext(Dispatchers.IO) { api().removeService(hex) }
+    suspend fun removeService(hex: String) = client.io { api().removeService(hex) }
 
     /**
      * Reads the weekly hours and IANA zone of [service] (service hex, slug, or schedule hex).
      */
-    suspend fun availability(service: String): Availability = withContext(Dispatchers.IO) {
+    suspend fun availability(service: String): Availability = client.io {
         val target = service.trim()
         require(target.isNotEmpty()) { "service is required" }
         val api = api()
@@ -331,34 +331,57 @@ class Scheduling internal constructor(
 
     /** Open slots of [service] in `[start, end)` (at most 62 days), for [length] minutes or its default. */
     suspend fun slots(service: String, start: Instant, end: Instant, length: Int? = null): List<Slot> =
-        withContext(Dispatchers.IO) { api().slots(service, start, end, length) }
+        client.io { api().slots(service, start, end, length) }
 
     /** Books a slot of [service] as a guest; the reply carries the guest's manage token. */
-    suspend fun book(service: String, request: BookRequest): BookingRecord = withContext(Dispatchers.IO) {
+    suspend fun book(service: String, request: BookRequest): BookingRecord = client.io {
         request.validate()
         api().book(service, request)
     }
 
     /** Books a slot of [service] as the signed-in account (no guest details needed). */
-    suspend fun reserve(service: String, request: BookRequest): BookingRecord = withContext(Dispatchers.IO) {
+    suspend fun reserve(service: String, request: BookRequest): BookingRecord = client.io {
         request.validate(guest = false)
         api().reserve(service, request)
     }
 
     /** One booking with its guests. */
-    suspend fun booking(hex: String): BookingRecord = withContext(Dispatchers.IO) { api().booking(hex) }
+    suspend fun booking(hex: String): BookingRecord = client.io { api().booking(hex) }
 
     /** Confirms, cancels or closes a booking: [state] is `confirmed`, `cancelled`, `done` or `noshow`. */
-    suspend fun updateBooking(hex: String, state: String): BookingRecord = withContext(Dispatchers.IO) {
+    suspend fun updateBooking(hex: String, state: String): BookingRecord = client.io {
         require(state in setOf("confirmed", "cancelled", "done", "noshow")) { "state: confirmed, cancelled, done or noshow" }
         api().updateBooking(hex, state)
     }
 
+    /**
+     * Cancels a booking as the host. [note] (up to 500 characters) is what
+     * the host typed: kept as [BookingRecord.note] and sent to the guests
+     * with the cancellation. Paid bookings are refunded by the page's policy.
+     */
+    suspend fun cancelBooking(hex: String, note: String = ""): BookingRecord = client.io {
+        require(note.trim().length <= 500) { "note: up to 500 characters" }
+        api().updateBooking(hex, "cancelled", note)
+    }
+
+    /**
+     * Moves a booking to a new slot at [start], keeping its guests, notes and
+     * answers; [length] in minutes, the booking's own length when null. The
+     * slot is checked as for a new booking (`AdukiException.Network` 409 when
+     * taken). The guests are told; the old booking ends as cancelled with
+     * reason `moved`. Returns the new booking.
+     */
+    suspend fun rescheduleBooking(hex: String, start: Instant, length: Int? = null): BookingRecord =
+        client.io {
+            length?.let { require(it in 5..1440) { "length: 5 minutes to 24 hours" } }
+            api().rescheduleBooking(hex, start, length)
+        }
+
     /** The offers (priced or free sub-services) of the account's services, of one when [service] is set. */
-    suspend fun offers(service: String = ""): List<OfferRecord> = withContext(Dispatchers.IO) { api().offers(service) }
+    suspend fun offers(service: String = ""): List<OfferRecord> = client.io { api().offers(service) }
 
     /** Creates a priced sub-service (offer) for [service] (service hex or slug). */
-    suspend fun createOffer(service: String, request: OfferRequest): OfferRecord = withContext(Dispatchers.IO) {
+    suspend fun createOffer(service: String, request: OfferRequest): OfferRecord = client.io {
         request.validate()
         require(!request.name.isNullOrBlank()) { "offer name is required" }
         val target = service.trim()
@@ -368,7 +391,7 @@ class Scheduling internal constructor(
     }
 
     /** Edits an offer; a null field keeps its value. */
-    suspend fun updateOffer(hex: String, request: OfferRequest): OfferRecord = withContext(Dispatchers.IO) {
+    suspend fun updateOffer(hex: String, request: OfferRequest): OfferRecord = client.io {
         request.validate()
         val target = hex.trim()
         require(target.isNotEmpty()) { "offer hex is required" }
@@ -376,7 +399,7 @@ class Scheduling internal constructor(
     }
 
     /** Deletes an offer; 409 Conflict once it has bookings. */
-    suspend fun removeOffer(hex: String) = withContext(Dispatchers.IO) {
+    suspend fun removeOffer(hex: String) = client.io {
         val target = hex.trim()
         require(target.isNotEmpty()) { "offer hex is required" }
         api().removeOffer(target)
@@ -384,13 +407,14 @@ class Scheduling internal constructor(
 
     /** The bookings of the account's services. */
     suspend fun bookings(upcoming: Boolean = false): List<BookingRecord> =
-        withContext(Dispatchers.IO) { api().bookings(upcoming) }
+        client.io { api().bookings(upcoming) }
 
     /**
      * Booking counts of [service] by state for bookings starting in
-     * `[start, end)` (at most a year), and its page views on the days the
-     * range touches (`GET /user/pages/{hex}/stats`).
+     * `[start, end)` (at most a year), its page views on the days the range
+     * touches, and the money taken for those bookings per currency
+     * ([Stats.revenue], minor units) (`GET /user/pages/{hex}/stats`).
      */
     suspend fun stats(service: String, start: Instant, end: Instant): Stats =
-        withContext(Dispatchers.IO) { api().stats(service, start, end) }
+        client.io { api().stats(service, start, end) }
 }
