@@ -2,7 +2,7 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
-## 0.6.2 (unreleased)
+## 0.6.2 (2026-11-02)
 
 Server reading of message bodies. It needs the mail server release with the `urn:aduki:params:jmap:reading` capability (aduki#248); against older servers bodies are read as before.
 
