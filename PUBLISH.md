@@ -234,8 +234,8 @@ dependencyResolutionManagement {
 // app/build.gradle.kts
 dependencies {
     // Coordinates use com.github.adukilabs.aduki-kt:<module>:<tag>
-    implementation("com.github.adukilabs.aduki-kt:sdk:0.6.0")
-    implementation("com.github.adukilabs.aduki-kt:android:0.6.0")
+    implementation("com.github.adukilabs.aduki-kt:sdk:v0.6.0")
+    implementation("com.github.adukilabs.aduki-kt:android:v0.6.0")
 }
 ```
 
@@ -255,7 +255,7 @@ dependencyResolutionManagement {
 
 // app/build.gradle
 dependencies {
-    implementation 'com.github.adukilabs.aduki-kt:sdk:0.6.0'
-    implementation 'com.github.adukilabs.aduki-kt:android:0.6.0'
+    implementation 'com.github.adukilabs.aduki-kt:sdk:v0.6.0'
+    implementation 'com.github.adukilabs.aduki-kt:android:v0.6.0'
 }
 ```
