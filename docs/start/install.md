@@ -87,8 +87,8 @@ dependencies {
     implementation("pro.aduki:android:0.6.0") // Android-specific features (optional)
 
     // Or via JitPack:
-    // implementation("com.github.adukilabs.aduki-kt:sdk:0.6.0")
-    // implementation("com.github.adukilabs.aduki-kt:android:0.6.0")
+    // implementation("com.github.adukilabs.aduki-kt:sdk:v0.6.0")
+    // implementation("com.github.adukilabs.aduki-kt:android:v0.6.0")
 
     // ObjectBox persistence
     implementation("io.objectbox:objectbox-kotlin:5.4.2")
@@ -108,14 +108,14 @@ If your application only needs specific subsystems, you can import individual mo
 
 | Module | Maven Central / GitHub Packages | JitPack | Purpose |
 | :--- | :--- | :--- | :--- |
-| **SDK Facade** | `pro.aduki:sdk:0.6.0` | `com.github.adukilabs.aduki-kt:sdk:0.6.0` | The `Aduki` entry point |
-| **Android** | `pro.aduki:android:0.6.0` | `com.github.adukilabs.aduki-kt:android:0.6.0` | Keystore DPoP key, account authenticator, Custom Tabs sign-in, passkeys (Android library, `minSdk` 26) |
-| **State** | `pro.aduki:state:0.6.0` | `com.github.adukilabs.aduki-kt:state:0.6.0` | Repositories exposing `StateFlow` |
-| **Sync** | `pro.aduki:sync:0.6.0` | `com.github.adukilabs.aduki-kt:sync:0.6.0` | RFC 7162 CONDSTORE synchronizer & Outbox |
-| **Store** | `pro.aduki:store:0.6.0` | `com.github.adukilabs.aduki-kt:store:0.6.0` | ObjectBox entities |
-| **Net** | `pro.aduki:net:0.6.0` | `com.github.adukilabs.aduki-kt:net:0.6.0` | HTTP clients (Aduki ID, mail, scheduling) |
-| **Crypto** | `pro.aduki:crypto:0.6.0` | `com.github.adukilabs.aduki-kt:crypto:0.6.0` | Keystore provider, AES-256-GCM cipher, TLS pinning, DPoP keys |
-| **Core** | `pro.aduki:core:0.6.0` | `com.github.adukilabs.aduki-kt:core:0.6.0` | models, errors, Jitter, Circuit, memory helpers |
+| **SDK Facade** | `pro.aduki:sdk:0.6.0` | `com.github.adukilabs.aduki-kt:sdk:v0.6.0` | The `Aduki` entry point |
+| **Android** | `pro.aduki:android:0.6.0` | `com.github.adukilabs.aduki-kt:android:v0.6.0` | Keystore DPoP key, account authenticator, Custom Tabs sign-in, passkeys (Android library, `minSdk` 26) |
+| **State** | `pro.aduki:state:0.6.0` | `com.github.adukilabs.aduki-kt:state:v0.6.0` | Repositories exposing `StateFlow` |
+| **Sync** | `pro.aduki:sync:0.6.0` | `com.github.adukilabs.aduki-kt:sync:v0.6.0` | RFC 7162 CONDSTORE synchronizer & Outbox |
+| **Store** | `pro.aduki:store:0.6.0` | `com.github.adukilabs.aduki-kt:store:v0.6.0` | ObjectBox entities |
+| **Net** | `pro.aduki:net:0.6.0` | `com.github.adukilabs.aduki-kt:net:v0.6.0` | HTTP clients (Aduki ID, mail, scheduling) |
+| **Crypto** | `pro.aduki:crypto:0.6.0` | `com.github.adukilabs.aduki-kt:crypto:v0.6.0` | Keystore provider, AES-256-GCM cipher, TLS pinning, DPoP keys |
+| **Core** | `pro.aduki:core:0.6.0` | `com.github.adukilabs.aduki-kt:core:v0.6.0` | models, errors, Jitter, Circuit, memory helpers |
 
 ---
 

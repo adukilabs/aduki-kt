@@ -132,4 +132,4 @@ See [`PUBLISH.md`](PUBLISH.md) for full release, secret configuration, and distr
    Central, and triggers JitPack. It needs the repository secrets `SIGNING_KEY`,
    `SIGNING_PASSWORD`, `SONATYPE_USERNAME`, `SONATYPE_PASSWORD`, and `JITPACK_ACCESS_TOKEN`.
 4. Check that `pro.aduki:sdk:X.Y.Z` resolves from Maven Central, GitHub Packages,
-   and JitPack (`com.github.adukilabs.aduki-kt:sdk:X.Y.Z`).
+   and JitPack (`com.github.adukilabs.aduki-kt:sdk:vX.Y.Z`: JitPack versions are the tag name).

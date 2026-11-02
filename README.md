@@ -55,8 +55,8 @@ implementation("pro.aduki:android:0.6.0") // Android-specific features
 implementation("io.objectbox:objectbox-android:5.4.2")
 
 // Or JitPack:
-// implementation("com.github.adukilabs.aduki-kt:sdk:0.6.0")
-// implementation("com.github.adukilabs.aduki-kt:android:0.6.0")
+// implementation("com.github.adukilabs.aduki-kt:sdk:v0.6.0")
+// implementation("com.github.adukilabs.aduki-kt:android:v0.6.0")
 
 // Sign in at Aduki ID; the 10-minute token is renewed automatically
 val client = Aduki.login(handle = "ada@aduki.me", password = password, code = code)
