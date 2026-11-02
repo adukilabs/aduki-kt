@@ -32,7 +32,8 @@ class JmapTest {
                 val path = request.path.orEmpty()
                 return when {
                     path == "/jmap/session" -> MockResponse().setBody(
-                        """{"capabilities":{"urn:ietf:params:jmap:core":{},"urn:ietf:params:jmap:mail":{}},
+                        """{"capabilities":{"urn:ietf:params:jmap:core":{},"urn:ietf:params:jmap:mail":{},
+                           "urn:aduki:params:jmap:reading":{"properties":["aduki:text","aduki:reply","aduki:security",7]}},
                            "primaryAccounts":{"urn:ietf:params:jmap:mail":"acc1"},
                            "apiUrl":"$base/jmap","uploadUrl":"$base/jmap/upload/{accountId}",
                            "downloadUrl":"$base/jmap/download/{accountId}/{blobId}/{name}?accept={type}"}"""
@@ -62,6 +63,14 @@ class JmapTest {
         jmap.account()
         assertEquals(1, requests.count { it.path == "/jmap/session" })
         assertTrue(Jmap.MAIL in jmap.session().capabilities)
+    }
+
+    @Test
+    fun theSessionListsEachCapabilitysProperties() {
+        val session = jmap.session()
+        assertEquals(setOf("aduki:text", Jmap.REPLY, Jmap.SECURITY), session.properties[Jmap.READING])
+        // A capability without a list is left out.
+        assertEquals(null, session.properties[Jmap.MAIL])
     }
 
     @Test

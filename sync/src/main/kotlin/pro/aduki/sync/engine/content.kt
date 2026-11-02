@@ -23,6 +23,13 @@ fun interface ContentTransport {
      */
     suspend fun fetch(hex: String, mode: BodyMode): Body = fetch(hex)
 
+    /**
+     * The bodies of [hexes] read in [mode], in one request where the
+     * transport can; a message the server does not have is left out. By
+     * default one [fetch] per message.
+     */
+    suspend fun fetchAll(hexes: List<String>, mode: BodyMode): List<Body> = hexes.map { fetch(it, mode) }
+
     /** The server sanitises bodies ([Body.sanitised]); false by default. */
     suspend fun sanitised(): Boolean = false
 }
@@ -110,6 +117,56 @@ class Content(
         }
     }
 
+    /**
+     * The whole bodies of [hexes] ([BodyMode.Both]), cache-first: the ones
+     * not cached are fetched in one batch and cached. A raw cached body is
+     * served as it is. Best effort: when the fetch fails (offline) only the
+     * cached ones are returned; it throws only on cancellation.
+     */
+    suspend fun bodies(hexes: List<String>): Map<String, Body> {
+        val out = LinkedHashMap<String, Body>()
+        val missing = ArrayList<String>()
+        for (hex in hexes.distinct()) {
+            val row = try {
+                storage.get(hex)
+            } catch (e: Exception) {
+                Faults.report("body cache read", e)
+                null
+            }
+            if (row != null) out[hex] = body(row) else missing += hex
+        }
+        if (missing.isEmpty()) return out
+        val fresh = try {
+            missing.chunked(BATCH).flatMap { transport.fetchAll(it, BodyMode.Both) }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Faults.report("body batch fetch", e)
+            return out
+        }
+        for (body in fresh) {
+            if (body.hex !in missing) continue
+            out[body.hex] = body
+            try {
+                storage.put(
+                    ContentEntity(
+                        hex = body.hex,
+                        text = body.text,
+                        html = body.html,
+                        attachments = encode(body.attachments),
+                        fetched = System.currentTimeMillis(),
+                        quoteStart = body.quoteStart,
+                        hasText = body.hasText,
+                        hasHtml = body.hasHtml,
+                        sanitised = body.sanitised
+                    )
+                )
+            } catch (e: Exception) {
+                Faults.report("body cache write", e)
+            }
+        }
+        return out
+    }
+
     /** The cached body of [hex] without fetching, or null. */
     fun cached(hex: String): Body? = storage.get(hex)?.let(::body)
 
@@ -132,6 +189,9 @@ class Content(
 
     companion object {
         private const val RETRY = 60_000L
+
+        /** Bodies fetched per request by [bodies]. */
+        private const val BATCH = 50
 
         /** The ObjectBox-backed storage for [store]. */
         fun storage(store: BoxStore): ContentStorage = object : ContentStorage {

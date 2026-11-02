@@ -39,6 +39,26 @@ class JmapContentTransport(private val jmap: Jmap) : ContentTransport {
         if (reading) read(hex, email) else body(hex, email)
     }
 
+    override suspend fun fetchAll(hexes: List<String>, mode: BodyMode): List<Body> = withContext(Dispatchers.IO) {
+        if (hexes.isEmpty()) return@withContext emptyList()
+        val reading = Jmap.READING in jmap.session().capabilities
+        val args = JSONObject().put("ids", JSONArray(hexes))
+        val reply = if (reading) {
+            args.put("properties", JSONArray(listOf("id", "attachments"))).put(MODE, wire(mode))
+            jmap.call("Email/get", args, Jmap.USING + Jmap.READING)
+        } else {
+            args.put("properties", JSONArray(listOf("id", "bodyValues", "textBody", "htmlBody", "attachments")))
+                .put("fetchTextBodyValues", true)
+                .put("fetchHTMLBodyValues", true)
+            jmap.call("Email/get", args)
+        }
+        val list = reply.optJSONArray("list") ?: JSONArray()
+        (0 until list.length()).mapNotNull { list.optJSONObject(it) }.mapNotNull { email ->
+            val hex = email.optString("id").ifBlank { return@mapNotNull null }
+            if (reading) read(hex, email) else body(hex, email)
+        }
+    }
+
     override suspend fun sanitised(): Boolean = withContext(Dispatchers.IO) {
         Jmap.READING in jmap.session().capabilities
     }
@@ -96,7 +116,8 @@ class JmapContentTransport(private val jmap: Jmap) : ContentTransport {
             )
         }
 
-        private fun attachments(email: JSONObject): List<Attachment> {
+        /** The `attachments` of one `Email/get` object. */
+        fun attachments(email: JSONObject): List<Attachment> {
             val list = email.optJSONArray("attachments") ?: JSONArray()
             return (0 until list.length()).map { i ->
                 val part = list.getJSONObject(i)
