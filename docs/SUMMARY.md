@@ -57,6 +57,7 @@
 
 - [Transports](network/transports.md)
 - [Circuit Breaker](network/circuit.md)
+- [Failure handling](resilience.md)
 
 # API Reference
 

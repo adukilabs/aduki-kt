@@ -157,6 +157,13 @@ fun watchRights(host: String = <REST endpoint without /v1>)
 fun unwatchRights()
 ```
 
+### `fault`
+The last failure of the client's background work (the outbox flush on `resume`, `watchRights`, the store observers), or null. Background work never throws to the app; see [Failure handling](../resilience.md).
+
+```kotlin
+val fault: StateFlow<Throwable?>
+```
+
 ### `pause`
 Notifies the SDK that the host application entered the background (see [Lifecycle](../services/lifecycle.md)).
 
