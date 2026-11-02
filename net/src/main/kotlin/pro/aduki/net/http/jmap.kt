@@ -167,6 +167,12 @@ class Jmap(
         const val VACATION = "urn:ietf:params:jmap:vacationresponse"
         const val SIEVE = "urn:ietf:params:jmap:sieve"
 
+        /**
+         * Aduki body reading (session capability): `Email/get` takes
+         * `aduki:bodyMode` and returns sanitised HTML and unwrapped text.
+         */
+        const val READING = "urn:aduki:params:jmap:reading"
+
         /** Core and mail: enough for `Email`, `Mailbox` and `Thread`. */
         val USING = setOf(CORE, MAIL)
 

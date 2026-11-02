@@ -50,13 +50,13 @@ dependencyResolutionManagement {
 ```kotlin
 // build.gradle.kts
 // Maven Central / GitHub Packages:
-implementation("pro.aduki:sdk:0.6.1")
-implementation("pro.aduki:android:0.6.1") // Android-specific features
+implementation("pro.aduki:sdk:0.6.2")
+implementation("pro.aduki:android:0.6.2") // Android-specific features
 implementation("io.objectbox:objectbox-android:5.4.2")
 
 // Or JitPack:
-// implementation("com.github.adukilabs.aduki-kt:sdk:v0.6.1")
-// implementation("com.github.adukilabs.aduki-kt:android:v0.6.1")
+// implementation("com.github.adukilabs.aduki-kt:sdk:v0.6.2")
+// implementation("com.github.adukilabs.aduki-kt:android:v0.6.2")
 
 // Sign in at Aduki ID; the 10-minute token is renewed automatically
 val client = Aduki.login(handle = "ada@aduki.me", password = password, code = code)
@@ -69,6 +69,7 @@ val app = Aduki.builder()
     .build()
 app.sync.all()
 app.mail.mailboxes()?.collect { boxes -> /* ... */ }
+val body = app.mail.body(hex, BodyMode.Rich) // sanitised HTML when the server reads bodies
 
 // Headless
 val worker = Aduki.builder().key(apiKey).build()

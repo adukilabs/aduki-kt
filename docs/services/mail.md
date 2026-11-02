@@ -31,6 +31,7 @@ class Mail internal constructor(...) {
 
     // Bodies and attachments (#24)
     suspend fun body(hex: String, refresh: Boolean = false): Body
+    suspend fun body(hex: String, mode: BodyMode, refresh: Boolean = false): Body
     suspend fun attachments(hex: String): List<Attachment>
     fun open(attachment: Attachment): InputStream
     suspend fun save(attachment: Attachment, file: File): File
@@ -292,6 +293,37 @@ client.mail.send(draft)
 ## 6. Bodies and attachments
 
 `body(hex)` reads the text and HTML parts and the attachment list with JMAP `Email/get`. With a local store, the result is cached in the sealed `Content` entity and read offline afterwards; `refresh = true` fetches it again. Lists never load bodies. `open(attachment)` streams the blob (`/jmap/download`), and `save(attachment, file)` writes it to a file.
+
+`body(hex, mode)` asks for one reading of the body (0.6.2). `body(hex)` is `body(hex, BodyMode.Both)`.
+
+```kotlin
+enum class BodyMode { Rich, Plain, Both }
+
+data class Body(
+    val hex: String = "",
+    val text: String = "",
+    val html: String = "",
+    val attachments: List<Attachment> = emptyList(),
+    val quoteStart: Int? = null,               // where the quote starts in text, at a line start
+    val hasText: Boolean = text.isNotEmpty(),  // the message has a real text part
+    val hasHtml: Boolean = html.isNotEmpty(),  // the message has a real HTML part
+    val sanitised: Boolean = false             // the server read the body
+)
+
+val body = client.mail.body(hex, BodyMode.Rich)
+if (body.sanitised && body.hasHtml) showHtml(body.html) else showText(client.mail.body(hex, BodyMode.Plain).text)
+```
+
+When the mail server advertises the `urn:aduki:params:jmap:reading` session capability, the SDK sends `aduki:bodyMode` with `Email/get`, and the server reads the body (`sanitised` is true):
+
+- `html` (`Rich`, `Both`) is sanitised HTML. It is empty when the message has no real HTML part.
+- `text` (`Plain`, `Both`) has `format=flowed` unwrapped, with `\n` line breaks. Quoted paragraphs start with one `>` per depth and a space. `quoteStart` is the `String` index of the line where the quoted reply starts, or null.
+- A `Rich` body has an empty `text` and a null `quoteStart`, and a `Plain` body has an empty `html`. `hasText` and `hasHtml` describe the message in every mode.
+- When the server cannot read the message bytes, `text` and `html` are empty and both flags are false.
+
+Without the capability, the request is the one before 0.6.2. `text` and `html` are the raw parts whatever the mode, `sanitised` is false, and the flags say which parts came back. Raw HTML must be sanitised before it is shown.
+
+With a local store the whole body (`Both`) is cached, and every mode is read from the cache. A body cached raw (by 0.6.1, or before the server had the capability) is fetched again once the server has it. The client reads the capability from the JMAP session once, so a server upgraded while the app runs is noticed on the next start. Offline, or when that fetch fails, the raw body is returned, and cached reads do not wait on the network again for a minute. Drafts saved on the device are not fetched again.
 
 ## 7. Search and conversations
 

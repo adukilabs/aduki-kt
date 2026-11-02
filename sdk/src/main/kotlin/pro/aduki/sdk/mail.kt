@@ -11,6 +11,7 @@ import pro.aduki.sync.outbox.Manager
 import pro.aduki.sync.outbox.Worker
 import pro.aduki.core.models.Attachment
 import pro.aduki.core.models.Body
+import pro.aduki.core.models.BodyMode
 import pro.aduki.core.models.Draft
 import pro.aduki.sync.http.Composer
 import java.time.Instant
@@ -248,11 +249,25 @@ class Mail internal constructor(
 
     /**
      * The full body of message [hex]: text and HTML parts and the attachment
-     * list (JMAP `Email/get`). With a local store it is fetched once and then
-     * read offline; [refresh] fetches it again.
+     * list (JMAP `Email/get`), read as [BodyMode.Both]. With a local store it
+     * is fetched once and then read offline; [refresh] fetches it again.
      */
-    suspend fun body(hex: String, refresh: Boolean = false): Body =
-        content?.body(hex, refresh) ?: JmapContentTransport(client.jmap).fetch(hex)
+    suspend fun body(hex: String, refresh: Boolean = false): Body = body(hex, BodyMode.Both, refresh)
+
+    /**
+     * The body of message [hex] read in [mode]. When the server supports
+     * reading, [Body.sanitised] is true: [Body.html] is sanitised HTML (empty
+     * for [BodyMode.Plain]) and [Body.text] unwrapped text with
+     * [Body.quoteStart] (empty for [BodyMode.Rich]). Otherwise the raw parts
+     * are returned whatever the mode, and the HTML must be sanitised before it
+     * is shown.
+     *
+     * With a local store the whole body is cached and every mode is read from
+     * it offline; a body cached raw is fetched again once the server supports
+     * reading. [refresh] fetches it again.
+     */
+    suspend fun body(hex: String, mode: BodyMode, refresh: Boolean = false): Body =
+        content?.body(hex, mode, refresh) ?: JmapContentTransport(client.jmap).fetch(hex, mode)
 
     /** The attachments of message [hex] (from its body). */
     suspend fun attachments(hex: String): List<Attachment> = body(hex).attachments

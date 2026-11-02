@@ -2,6 +2,16 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
+## 0.6.2 (unreleased)
+
+Server reading of message bodies. It needs the mail server release with the `urn:aduki:params:jmap:reading` capability (aduki#248); against older servers bodies are read as before.
+
+- `BodyMode { Rich, Plain, Both }` and `Mail.body(hex, mode, refresh = false)`. `Mail.body(hex)` and `Mail.body(hex, refresh)` are unchanged and read `Both`.
+- With the capability, `Email/get` sends `aduki:bodyMode`. `Body.html` is the sanitised HTML and `Body.text` the text with `format=flowed` unwrapped. A `Rich` body has an empty `text`, and a `Plain` body an empty `html`.
+- `Body` gains `quoteStart` (where the quoted reply starts in `text`), `hasText`, `hasHtml` and `sanitised`, all with defaults. Code that builds a `Body` with named arguments still compiles, but code compiled against 0.6.1 must be recompiled.
+- `ContentTransport` gains `fetch(hex, mode)` and `sanitised()`, with defaults. `Content.body(hex, mode, refresh)` reads from the cache.
+- The `Content` entity gains `quoteStart`, `hasText`, `hasHtml`, `sanitised` and `local`; ObjectBox adds them without a migration. The cache holds the whole (`Both`) body and serves every mode from it. A body cached raw is fetched again once the server has the capability; offline, the raw body is still served. Drafts saved on the device are not fetched again.
+
 ## 0.6.1 (2026-11-02)
 
 - `Accounts` in `Mode.Shared` no longer deletes a `Mode.Own` app's private session for the same account: it drops only the copies 0.5.x kept next to the entry. `Mode.Own` copies are marked (#122).
