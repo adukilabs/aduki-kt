@@ -2,7 +2,9 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
-## Unreleased
+## 0.6.3 (2026-11-02)
+
+Safer imports and network calls, and the mail thread reader.
 
 - `Mail.conversation(threadId): Flow<Conversation>` and `Mail.conversation(threadId, refresh)`: a thread as a reply tree with each message's own words, for the thread reader. Copies with the same Message-ID are merged. Parents come from In-Reply-To, then References, then matching subjects and recipients. Missing parents become placeholders, cycles are broken and depth is capped at 32. Siblings are ordered by `sentAt`, or `receivedAt` when that is missing or more than 48 h ahead. New models in `pro.aduki.core.models`: `Conversation`, `ThreadMessage`, `Reply`, `Forwarded`, `Confidence`, `ReplySource`, `Security`, `Transport`, `AuthResult`, `SecuritySummary` and `Person` (an alias of `Address`). See `docs/services/conversation.md`.
 - With a server whose `urn:aduki:params:jmap:reading` capability lists `aduki:reply` and `aduki:security` (aduki#249), they are read and used. Otherwise, or when their confidence is low, the body is cut on the device. The client tries the server's quote start, then HTML quote markers, then attribution lines in nine languages, Outlook headers, forward dividers and `>` blocks, then an ancestor's text found at the end. It also splits off signatures (`-- `, mobile footers, and blocks repeated by the same sender). Each message has a time budget; a failure leaves it whole with `Confidence.Low`. Offline, the thread is built from the store and the body cache.
