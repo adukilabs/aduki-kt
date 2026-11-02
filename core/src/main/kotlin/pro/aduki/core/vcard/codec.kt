@@ -48,7 +48,7 @@ object Vcard {
 
     /**
      * The fields of one vCard; [Card.vcard] is [card] itself. Throws
-     * [IllegalArgumentException] when it is not a 3.0 or 4.0 vCard or has
+     * [IllegalArgumentException] when it is not a 2.1, 3.0 or 4.0 vCard or has
      * no name (`FN`, `N`, organisation, e-mail or phone).
      */
     fun parse(card: String): Card {

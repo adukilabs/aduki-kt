@@ -2,6 +2,11 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
+## Unreleased
+
+- `Contacts.import` and `Contacts.ingest`: a card that fails for any reason (not only an `IllegalArgumentException`) is reported in `Imported.errors` and the other cards go on, so a malformed or unstorable card can no longer abort an import with an unexpected exception. Cancellation still stops the import.
+- The import KDoc now says vCard 2.1 is read (it already was).
+
 ## 0.6.2 (2026-11-02)
 
 Server reading of message bodies. It needs the mail server release with the `urn:aduki:params:jmap:reading` capability (aduki#248); against older servers bodies are read as before.
