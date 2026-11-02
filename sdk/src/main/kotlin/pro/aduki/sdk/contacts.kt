@@ -1,5 +1,6 @@
 package pro.aduki.sdk
 
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -173,7 +174,8 @@ class Contacts internal constructor(
     }
 
     /**
-     * Imports a vCard file (3.0 or 4.0, one or more cards).
+     * Imports a vCard file (2.1, 3.0 or 4.0, one or more cards). A card that cannot be read or
+     * stored becomes an entry in [Imported.errors]; it never stops the other cards.
      *
      * With a local store it runs on the device off the main thread ([Dispatchers.IO]),
      * so it works offline and each card goes through the outbox like any write.
@@ -241,8 +243,10 @@ class Contacts internal constructor(
                             updated++
                         }
                     }
-                } catch (e: IllegalArgumentException) {
-                    errors += "card ${i + 1}: ${e.message}"
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    errors += "card ${i + 1}: ${e.message ?: e.javaClass.simpleName}"
                 }
                 val currentProgress = Progress(
                     done = i + 1,
@@ -321,8 +325,10 @@ class Contacts internal constructor(
                             updated++
                         }
                     }
-                } catch (e: IllegalArgumentException) {
-                    errors += "card ${i + 1}: ${e.message}"
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    errors += "card ${i + 1}: ${e.message ?: e.javaClass.simpleName}"
                 }
                 emit(
                     Progress(
