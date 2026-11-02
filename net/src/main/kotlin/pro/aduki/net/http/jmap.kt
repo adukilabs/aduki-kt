@@ -1,6 +1,8 @@
 package pro.aduki.net.http
 
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -55,16 +57,16 @@ class Jmap(
     /** The session, fetched once; [refresh] fetches it again. */
     fun session(refresh: Boolean = false): Session {
         cached?.takeIf { !refresh }?.let { return it }
-        val request = Request.Builder().url("${host.trimEnd('/')}/jmap/session").get().build()
-        val obj = JSONObject(execute(request))
+        val request = Request.Builder().url(url("${host.trimEnd('/')}/jmap/session")).get().build()
+        val obj = json(execute(request), "session")
         val primary = obj.optJSONObject("primaryAccounts") ?: JSONObject()
         val account = primary.optString(MAIL).ifBlank { primary.optString(CORE) }
         if (account.isBlank()) throw AdukiException.Protocol("JMAP session has no mail account")
         val fresh = Session(
             account = account,
-            api = obj.getString("apiUrl"),
-            upload = obj.getString("uploadUrl"),
-            download = obj.getString("downloadUrl"),
+            api = field(obj, "apiUrl"),
+            upload = field(obj, "uploadUrl"),
+            download = field(obj, "downloadUrl"),
             capabilities = obj.optJSONObject("capabilities")?.keySet()?.toSet() ?: emptySet()
         )
         cached = fresh
@@ -85,14 +87,18 @@ class Jmap(
             .put("using", JSONArray(using.toList()))
             .put("methodCalls", JSONArray(calls.map { JSONArray().put(it.name).put(it.args).put(it.id) }))
         val request = Request.Builder()
-            .url(session().api)
+            .url(url(session().api))
             .post(body.toString().toRequestBody(JSON))
             .build()
-        val obj = JSONObject(execute(request))
+        val obj = json(execute(request), "method call")
         val responses = obj.optJSONArray("methodResponses") ?: throw AdukiException.Protocol("JMAP reply has no methodResponses")
         return (0 until responses.length()).map { i ->
-            val item = responses.getJSONArray(i)
-            val reply = Reply(item.getString(0), item.getJSONObject(1), item.getString(2))
+            val reply = try {
+                val item = responses.getJSONArray(i)
+                Reply(item.getString(0), item.getJSONObject(1), item.getString(2))
+            } catch (e: Exception) {
+                throw AdukiException.Protocol("JMAP method response $i is malformed", e)
+            }
             if (reply.name == "error") {
                 val type = reply.args.optString("type", "serverFail")
                 throw AdukiException.Api(400, type, reply.args.optString("description", type))
@@ -104,19 +110,20 @@ class Jmap(
     /** Runs one method and returns its first response's arguments. `accountId` is added. */
     fun call(name: String, args: JSONObject, using: Set<String> = USING): JSONObject {
         args.put("accountId", account())
-        return call(listOf(Invocation(name, args, "0")), using).first { it.id == "0" }.args
+        return call(listOf(Invocation(name, args, "0")), using).firstOrNull { it.id == "0" }?.args
+            ?: throw AdukiException.Protocol("JMAP reply has no response to $name")
     }
 
     /** Uploads [bytes] as a blob of [type] (RFC 8620 §6.1). */
-    fun upload(bytes: ByteArray, type: String): Blob = upload(bytes.toRequestBody(type.toMediaType()), type)
+    fun upload(bytes: ByteArray, type: String): Blob = upload(bytes.toRequestBody(media(type)), type)
 
     /** Uploads [file] as a blob of [type], streaming it. */
-    fun upload(file: File, type: String): Blob = upload(file.asRequestBody(type.toMediaType()), type)
+    fun upload(file: File, type: String): Blob = upload(file.asRequestBody(media(type)), type)
 
     private fun upload(body: RequestBody, type: String): Blob {
         val url = session().upload.replace("{accountId}", account())
-        val obj = JSONObject(execute(Request.Builder().url(url).post(body).build()))
-        return Blob(obj.getString("blobId"), obj.optString("type", type), obj.optLong("size"))
+        val obj = json(execute(Request.Builder().url(url(url)).post(body).build()), "upload")
+        return Blob(field(obj, "blobId"), obj.optString("type", type), obj.optLong("size"))
     }
 
     /**
@@ -129,7 +136,7 @@ class Jmap(
             .replace("{blobId}", encode(blob))
             .replace("{name}", encode(name.ifBlank { "blob" }))
             .replace("{type}", encode(type))
-        val response = open(Request.Builder().url(url).get().build())
+        val response = open(Request.Builder().url(url(url)).get().build())
         return response.body?.byteStream() ?: run {
             response.close()
             throw AdukiException.Protocol("Empty download for blob $blob")
@@ -150,9 +157,27 @@ class Jmap(
             val raw = resp.body?.string() ?: ""
             val why = Envelope.failure(raw) ?: problem(raw) ?: resp.message
             if (resp.code == 401 || resp.code == 403) throw AdukiException.Auth(Scheme.refusal(resp.request, why))
-            throw AdukiException.Network("HTTP error ${resp.code}: $why", code = resp.code)
+            throw AdukiException.Network("HTTP error ${resp.code}: $why", code = resp.code, retryAfter = Envelope.retryAfter(resp))
         }
     }
+
+    // A 2xx body that is not a JSON object (an HTML page from a proxy, an
+    // empty or cut body) is a protocol failure.
+    private fun json(raw: String, what: String): JSONObject = try {
+        JSONObject(raw)
+    } catch (e: Exception) {
+        throw AdukiException.Protocol("JMAP $what answer is not JSON", e)
+    }
+
+    // An unparsable content type is sent as bytes rather than refused.
+    private fun media(type: String) = type.toMediaTypeOrNull() ?: OCTETS
+
+    private fun field(obj: JSONObject, name: String): String =
+        obj.optString(name).ifBlank { throw AdukiException.Protocol("JMAP answer has no $name") }
+
+    // A URL from the server's session that cannot be parsed.
+    private fun url(value: String): okhttp3.HttpUrl =
+        value.toHttpUrlOrNull() ?: throw AdukiException.Protocol("JMAP URL is not valid: $value")
 
     // RFC 7807 problem details, which JMAP request-level errors use.
     private fun problem(raw: String): String? =
@@ -177,5 +202,6 @@ class Jmap(
         val USING = setOf(CORE, MAIL)
 
         private val JSON = "application/json; charset=utf-8".toMediaType()
+        private val OCTETS = "application/octet-stream".toMediaType()
     }
 }

@@ -1,5 +1,8 @@
 package pro.aduki.sync.outbox
 
+import kotlinx.coroutines.CancellationException
+import pro.aduki.core.errors.AdukiException
+import pro.aduki.core.errors.Faults
 import pro.aduki.core.retry.Jitter
 import pro.aduki.store.entities.Outbox
 
@@ -63,17 +66,42 @@ class Worker(
             dispatcher.dispatch(action)
             manager.complete(action.id, hexes(action))
             true
+        } catch (e: CancellationException) {
+            // The drain was cancelled: the action stays pending, untouched.
+            throw e
         } catch (e: Rejected) {
             // Permanent: mark as failed, preserve in store for user inspection/retry/discard,
             // clear the message dirty mark, and move on.
             manager.reject(action.id, e.code, e.message.orEmpty(), hexes(action))
-            onRejected(action, e)
+            try {
+                onRejected(action, e)
+            } catch (failure: Exception) {
+                // The app's callback must not stop the queue or escape a background drain.
+                Faults.report("outbox rejected callback", failure)
+            }
             true
-        } catch (_: Exception) {
-            val delay = jitter.next(action.attempts)
-            manager.fail(action.id, delay)
+        } catch (e: Exception) {
+            Faults.report("outbox ${action.action}", e)
+            manager.fail(action.id, delay(action, e))
             false
         }
+    }
+
+    // The backoff before the next attempt: jittered, and never sooner than
+    // the server's Retry-After (429, 503), capped at [MAX_WAIT].
+    private fun delay(action: Outbox, e: Exception): Long {
+        val backoff = jitter.next(action.attempts)
+        val seconds = when (e) {
+            is AdukiException.Network -> e.retryAfter
+            is AdukiException.Api -> e.retryAfter
+            else -> null
+        } ?: return backoff
+        return maxOf(backoff, minOf(seconds * 1000, MAX_WAIT))
+    }
+
+    private companion object {
+        /** The longest a Retry-After may hold the queue back, ms (one hour). */
+        const val MAX_WAIT = 3_600_000L
     }
 
     // The messages an action touched: its own hex, or the payload's `hex` or `hexes`.

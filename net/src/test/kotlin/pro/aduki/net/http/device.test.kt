@@ -216,6 +216,18 @@ class DeviceTest {
     }
 
     @Test
+    fun awaitWaitsOutARetryAfterOnA429() {
+        server.enqueue(discovery()); server.enqueue(started(interval = 5))
+        val rp = tv()
+        val code = rp.startDevice()
+        server.enqueue(MockResponse().setResponseCode(429).setHeader("Retry-After", "30"))
+        server.enqueue(granted()); server.enqueue(jwks())
+        assertEquals("adka_1", rp.awaitDevice(code, sleeper()).access)
+        // The interval, the rest of the 30 s Retry-After, then the interval again.
+        assertEquals(listOf(5_000L, 25_000L, 5_000L), slept)
+    }
+
+    @Test
     fun awaitRetriesTransientFailuresButNotClientErrors() {
         server.enqueue(discovery()); server.enqueue(started())
         val rp = tv()

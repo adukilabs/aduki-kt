@@ -8,7 +8,12 @@ sealed class AdukiException(
     cause: Throwable? = null
 ) : Exception(message, cause) {
 
-    class Network(message: String, cause: Throwable? = null, val code: Int? = null) :
+    /**
+     * A transport failure, or an HTTP failure with its status [code]. For a
+     * 429 or 503 [retryAfter] holds the server's `Retry-After` seconds when
+     * it sent them.
+     */
+    class Network(message: String, cause: Throwable? = null, val code: Int? = null, val retryAfter: Long? = null) :
         AdukiException(message, cause)
 
     /**

@@ -131,7 +131,7 @@ sealed class Push {
                             types.keySet().associateWith { types.optString(it) }
                         },
                         boxes.keySet().mapNotNull { account ->
-                            boxes.optJSONArray(account)?.let { ids -> account to (0 until ids.length()).map(ids::getString) }
+                            boxes.optJSONArray(account)?.let { ids -> account to (0 until ids.length()).mapNotNull { ids.optString(it).ifBlank { null } } }
                         }.toMap()
                     )
                 }

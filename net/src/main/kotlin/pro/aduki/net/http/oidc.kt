@@ -75,17 +75,18 @@ class Oidc(
     fun discover(): Discovery {
         found?.let { return it }
         val body = get("${issuer.trimEnd('/')}/.well-known/openid-configuration")
-        val json = JSONObject(body)
+        val json = obj(body)
         if (json.optString("issuer") != issuer.trimEnd('/')) throw AdukiException.Protocol("Issuer mismatch in discovery")
         if (!json.optJSONArray("code_challenge_methods_supported").has("S256")) {
             throw AdukiException.Protocol("Provider does not offer PKCE S256")
         }
+        fun field(name: String) = json.optString(name).ifBlank { throw AdukiException.Protocol("Discovery has no $name") }
         return Discovery(
-            issuer = json.getString("issuer"),
-            authorize = json.getString("authorization_endpoint"),
-            token = json.getString("token_endpoint"),
-            userinfo = json.getString("userinfo_endpoint"),
-            jwks = json.getString("jwks_uri"),
+            issuer = field("issuer"),
+            authorize = field("authorization_endpoint"),
+            token = field("token_endpoint"),
+            userinfo = field("userinfo_endpoint"),
+            jwks = field("jwks_uri"),
             revocation = json.optString("revocation_endpoint").ifBlank { null },
             device = json.optString("device_authorization_endpoint").ifBlank { null }
         ).also { found = it }
@@ -197,7 +198,7 @@ class Oidc(
         require("openid" in scope) { "scope must include openid" }
         val endpoint = discover().device ?: throw AdukiException.Protocol("Provider has no device authorization endpoint")
         val form = FormBody.Builder().add("scope", scope.joinToString(" "))
-        val json = JSONObject(send(authenticated(Request.Builder().url(endpoint), form).build()))
+        val json = obj(send(authenticated(Request.Builder().url(endpoint), form).build()))
         val device = json.optString("device_code")
         val user = json.optString("user_code")
         val uri = json.optString("verification_uri")
@@ -241,7 +242,7 @@ class Oidc(
                 else -> throw e.mapped()
             }
         }
-        val result = parseGrant(JSONObject(body), null)
+        val result = parseGrant(obj(body), null)
         val claims = result.second?.let { validate(it, null, result.first.access) }
         val g = result.first
         return Poll.Done(Grant(g.access, g.type, g.expires, g.scope, g.refresh, claims))
@@ -279,6 +280,9 @@ class Oidc(
                 val status = e.code
                 val transient = status == null || status == 429 || status >= 500
                 if (!transient || ++failures > MAX_TRANSIENT) throw e
+                // Wait out the server's Retry-After beyond the usual interval (the deadline still holds).
+                val extra = (e.retryAfter ?: 0) * 1000 - current.interval * 1000
+                if (extra > 0) sleep(minOf(extra, (current.expiresAt - clock()).coerceAtLeast(0)))
             }
         }
     }
@@ -291,7 +295,7 @@ class Oidc(
             .header("Authorization", "${if (bound) "DPoP" else "Bearer"} ${grant.access}")
         if (bound && dpop == null) throw AdukiException.Protocol("Token is DPoP-bound but no DPoP key was given")
         val request = builder.build().let { if (bound) forceBound(it, grant.access) else it }
-        return JSONObject(send(request))
+        return obj(send(request))
     }
 
     /** Revokes [token] (a refresh token takes its family). Aduki ID answers 200 in every case. */
@@ -314,7 +318,7 @@ class Oidc(
         val builder = Request.Builder().url(discover().token)
         val request = authenticated(builder, form).let { it.build() }
         val withProof = if (dpop != null) request.newBuilder().header("DPoP", dpop.proof("POST", request.url.toString())).build() else request
-        return parseGrant(JSONObject(send(withProof)), spending)
+        return parseGrant(obj(send(withProof)), spending)
     }
 
     private fun parseGrant(json: JSONObject, spending: String?): Pair<Raw, String?> {
@@ -360,7 +364,7 @@ class Oidc(
                 when {
                     error == "invalid_grant" || error == "invalid_client" || error == "invalid_token" || response.code == 401 ->
                         throw AdukiException.Unauthorized(message)
-                    else -> throw AdukiException.Network(message, code = response.code)
+                    else -> throw AdukiException.Network(message, code = response.code, retryAfter = Envelope.retryAfter(response))
                 }
             }
         } catch (e: IOException) {
@@ -368,6 +372,13 @@ class Oidc(
         }
 
     private fun get(url: String) = send(Request.Builder().url(url).build())
+
+    // A 2xx body that is not a JSON object (an HTML page, an empty body).
+    private fun obj(body: String): JSONObject = try {
+        JSONObject(body)
+    } catch (e: Exception) {
+        throw AdukiException.Protocol("Answer from Aduki ID is not JSON", e)
+    }
 
     /** Validates an `EdDSA` id token (OpenID Core §3.1.3.7) and returns its claims. */
     private fun validate(raw: String, nonce: String?, access: String): JSONObject {
@@ -404,7 +415,7 @@ class Oidc(
     // Looks the key up by `kid`; an unknown one refetches the JWKS once (rotation).
     private fun verified(kid: String, input: String, signature: ByteArray): Boolean {
         for (attempt in 0..1) {
-            if (keys == null || attempt == 1) keys = JSONObject(get(discover().jwks)).optJSONArray("keys") ?: JSONArray()
+            if (keys == null || attempt == 1) keys = obj(get(discover().jwks)).optJSONArray("keys") ?: JSONArray()
             val list = keys!!
             for (i in 0 until list.length()) {
                 val jwk = list.getJSONObject(i)

@@ -5,6 +5,7 @@ import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONObject
 import pro.aduki.crypto.dpop.Key
+import java.io.IOException
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
@@ -80,15 +81,27 @@ class Dpop(
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
-        val response = chain.proceed(apply(request))
+        val response = chain.proceed(signed(request))
         val nonce = response.header("DPoP-Nonce")
         if (nonce != null) nonces[request.url.host] = nonce
         if (nonce == null || (response.code != 401 && response.code != 400)) return response
         // Retry once, with the nonce the server just handed out.
         response.close()
-        val retry = chain.proceed(apply(request, nonce))
+        val retry = chain.proceed(signed(request, nonce))
         retry.header("DPoP-Nonce")?.let { nonces[request.url.host] = it }
         return retry
+    }
+
+    // [apply] for the interceptor. A key that cannot sign (a Keystore key
+    // invalidated or busy) throws a runtime or security exception; OkHttp
+    // expects interceptors to fail with an IOException, which callers handle
+    // (an asynchronous call would otherwise crash its dispatcher thread).
+    private fun signed(request: Request, nonce: String? = nonces[request.url.host]): Request = try {
+        apply(request, nonce)
+    } catch (e: IOException) {
+        throw e
+    } catch (e: Exception) {
+        throw IOException("DPoP proof could not be signed (${e.javaClass.simpleName})", e)
     }
 
     // True when the access token (a JWT) is bound to this key.

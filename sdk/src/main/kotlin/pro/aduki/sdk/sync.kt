@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import pro.aduki.core.errors.Faults
 import pro.aduki.store.entities.Outbox
 import pro.aduki.sync.engine.Contact as ContactEngine
 import pro.aduki.sync.engine.Mailbox as MailboxEngine
@@ -61,7 +62,7 @@ class Sync internal constructor(
      * returns the mailbox hexes. Known mailboxes keep their sync cursor;
      * mailboxes deleted on the server are dropped with their messages.
      */
-    suspend fun mailboxes(): List<String> = mailboxEngine?.refresh() ?: emptyList()
+    suspend fun mailboxes(): List<String> = client.io { mailboxEngine?.refresh() ?: emptyList() }
 
     /**
      * Runs incremental delta sync across mailboxes and the address book.
@@ -72,7 +73,7 @@ class Sync internal constructor(
      * mailbox does not exist ([SyncState.missing] names it). Snoozed messages that are due come back to the
      * inbox ([Mail.wake]). Failures are rethrown and kept in [state].
      */
-    suspend fun all(mailboxes: List<String>? = null): Boolean = lock.withLock {
+    suspend fun all(mailboxes: List<String>? = null): Boolean = client.io { lock.withLock {
         current.update { it.copy(running = true) }
         try {
             val missing = mutableListOf<String>()
@@ -95,12 +96,14 @@ class Sync internal constructor(
             current.value = SyncState(synced = System.currentTimeMillis(), missing = missing)
             missing.isEmpty()
         } catch (e: Exception) {
-            if (e !is CancellationException) current.update { it.copy(error = e) }
-            throw e
+            // Kept and thrown as the public calls throw it (see Faults).
+            val failure = Faults.normal(e)
+            if (failure !is CancellationException) current.update { it.copy(error = failure) }
+            throw failure
         } finally {
             current.update { it.copy(running = false) }
         }
-    }
+    } }
 
     /** Hex for each of [names] (a hex or a role), null where none exists. */
     private suspend fun resolve(engine: MailboxEngine, names: List<String>): List<String?> {
@@ -112,9 +115,7 @@ class Sync internal constructor(
     /**
      * Flushes all pending outbox mutations over the network.
      */
-    suspend fun flush(): Int {
-        return worker?.drain() ?: 0
-    }
+    suspend fun flush(): Int = client.io { worker?.drain() ?: 0 }
 
     /**
      * Returns the count of pending outbox mutations; [outbox] observes it.
@@ -127,12 +128,12 @@ class Sync internal constructor(
      * Retries a permanently failed action by restoring its status to pending.
      * Optionally flushes immediately if [flush] is true.
      */
-    suspend fun retry(id: Long, flush: Boolean = true): Boolean {
+    suspend fun retry(id: Long, flush: Boolean = true): Boolean = client.io {
         val ok = manager?.retry(id) ?: false
         if (ok && flush) {
-            this.flush()
+            this@Sync.flush()
         }
-        return ok
+        ok
     }
 
     /**

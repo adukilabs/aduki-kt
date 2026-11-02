@@ -14,7 +14,7 @@ sealed class AdukiException(
     cause: Throwable? = null
 ) : Exception(message, cause) {
 
-    class Network(message: String, cause: Throwable? = null, val code: Int? = null) :
+    class Network(message: String, cause: Throwable? = null, val code: Int? = null, val retryAfter: Long? = null) :
         AdukiException(message, cause)
 
     /** An auth response that could not be used; [refresh] carries a rotated refresh token it did include. */
@@ -68,10 +68,16 @@ sealed class AdukiException(
 | `Api` | An Aduki service returned a failure envelope with an HTTP status, stable dotted `kind` (e.g. `entity.conflict`, `rate.limited`, `sod.refused`), raw `details` JSON, and optional `retryAfter` | branch on `e.kind`; wait `e.retryAfter` seconds if rate limited; refresh on `409 entity.conflict` |
 | `Denied` | The person refused an authorization (OAuth/device authorization grant `access_denied`) | user opted out; abort flow |
 | `Expired` | A device code or authorization expired (`expired_token` or local deadline) | start a new authorization flow |
-| `Network` | transport failure (timeout, DNS, TLS), or an HTTP error not covered above; `code` holds the status when there was a response (e.g. `429`) | retry later; the outbox does this for queued changes |
-| `Protocol` | a response that cannot be parsed, a missing mandatory field, or an OIDC check failing (state, issuer, id token) | report it; do not retry blindly |
+| `Network` | transport failure (timeout, DNS, TLS), or an HTTP error not covered above; `code` holds the status when there was a response (e.g. `429`), `retryAfter` the server's `Retry-After` seconds | retry later, not before `retryAfter`; the outbox does this for queued changes |
+| `Protocol` | a response that cannot be parsed (an HTML page, an empty or cut body), a missing mandatory field, an OIDC check failing (state, issuer, id token), or any other unexpected exception inside an SDK call (the original is the `cause`) | report it; do not retry blindly |
 | `CircuitOpen` | a `Circuit` you use is open | wait for the cooldown |
-| `Storage`, `Sync` | declared for local-store and sync failures | the SDK does not raise them yet |
+| `Storage` | the local database failed inside an SDK call (the ObjectBox exception is the `cause`) | report it |
+| `Sync` | declared for sync failures | the SDK does not raise it yet |
+
+Besides `AdukiException`, a public `suspend` call can throw `IOException`
+(transport), `IllegalArgumentException` or `IllegalStateException` (a wrong
+call), and `CancellationException`; nothing else. Background work reports to
+`Aduki.fault` instead of throwing. See [Failure handling](../resilience.md).
 
 Sign-in messages start with Aduki ID's error kind where it sent one, for
 example `auth.factor: ...`.

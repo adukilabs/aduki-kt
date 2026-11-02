@@ -1,18 +1,23 @@
 package pro.aduki.sdk
 
 import io.objectbox.BoxStore
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import okhttp3.Authenticator
 import okhttp3.OkHttpClient
 import org.json.JSONObject
 import pro.aduki.core.config.Endpoints
 import pro.aduki.core.config.Options
 import pro.aduki.core.config.Pin
+import pro.aduki.core.errors.Faults
 import pro.aduki.core.models.AccountSession
 import pro.aduki.net.http.Client as HttpClient
 import pro.aduki.net.http.Dpop
@@ -91,6 +96,30 @@ class Aduki internal constructor(
         }
     }
 
+    private val failure = MutableStateFlow<Throwable?>(null)
+
+    /**
+     * The last failure of the client's background work: the outbox flush on
+     * [resume], the [watchRights] stream, and the store observers behind the
+     * `observe` flows. Null until one fails. Background work never throws to
+     * the app (no uncaught exception reaches the thread's handler); it fails
+     * here, as a public call would throw it, and is logged by type only.
+     */
+    val fault: StateFlow<Throwable?> = failure.asStateFlow()
+
+    // Records a background failure (not a cancellation) in [fault] and the log.
+    private fun background(where: String, e: Throwable) {
+        if (e is CancellationException) return
+        Faults.report(where, e)
+        failure.value = Faults.normal(e)
+    }
+
+    // The scope of every background coroutine. Its handler takes what a
+    // coroutine did not catch, which would otherwise reach the default
+    // uncaught exception handler and end the app.
+    private val work: CoroutineScope =
+        CoroutineScope(scope.coroutineContext + CoroutineExceptionHandler { _, e -> background("background work", e) })
+
     private fun activeAuthString(): String {
         return session.token() ?: if (token.isNotBlank()) token else apiKey
     }
@@ -150,7 +179,14 @@ class Aduki internal constructor(
                 .header("Authorization", "Bearer $fresh")
                 .header("X-Aduki-Retry", "1")
                 .build()
-            dpop?.apply(next) ?: next // a rebuilt request needs its own proof
+            // A rebuilt request needs its own proof. A key that cannot sign
+            // gives up the retry: the 401 goes back to the caller.
+            try {
+                dpop?.apply(next) ?: next
+            } catch (e: Exception) {
+                Faults.report("DPoP proof for a renewed request", e)
+                null
+            }
         }
     }
 
@@ -181,7 +217,10 @@ class Aduki internal constructor(
      * Renews the access token unless another caller already replaced [stale].
      */
     private fun renew(stale: String?): String? = synchronized(renewal) {
-        var current = session.tokens.value ?: tokenStore?.load() ?: return null
+        var current = session.tokens.value ?: try { tokenStore?.load() } catch (e: Exception) {
+            Faults.report("token store load", e)
+            null
+        } ?: return null
 
         if (tokenStore != null) {
             val stored = try { tokenStore.load() } catch (_: Exception) { null }
@@ -275,7 +314,7 @@ class Aduki internal constructor(
             networkInterceptors().clear()
             authenticator(Authenticator.NONE)
             dpop?.let(::addInterceptor)
-        }?.build() ?: HttpClient.create("", options.timeoutSeconds, pinner).let { base ->
+        }?.build() ?: identityHttp(options.timeoutSeconds, pinner).let { base ->
             if (dpop == null) base else base.newBuilder().addInterceptor(dpop).build()
         }
     }
@@ -345,12 +384,12 @@ class Aduki internal constructor(
 
     private val bodies: ContentEngine? = store?.let { ContentEngine(it, JmapContentTransport(jmap)) }
 
-    val mail = Mail(this, outbox, mailRepo ?: store?.let { MailRepo(it, outbox, scope) }, outboxWorker, bodies)
-    val contacts = Contacts(this, contactRepo ?: store?.let { ContactRepo(it, scope) }, contactSync, book, outboxWorker)
+    val mail = Mail(this, outbox, mailRepo ?: store?.let { MailRepo(it, outbox, work) }, outboxWorker, bodies)
+    val contacts = Contacts(this, contactRepo ?: store?.let { ContactRepo(it, work) }, contactSync, book, outboxWorker)
     val sync = Sync(this, mailboxSync, contactSync, outboxWorker, outbox)
     val scheduling = Scheduling(
         this,
-        appointmentRepo ?: store?.let { AppointmentRepo(it, scope) },
+        appointmentRepo ?: store?.let { AppointmentRepo(it, work) },
         scheduleSync,
         schedulingApi,
         outboxWorker
@@ -361,8 +400,14 @@ class Aduki internal constructor(
     init {
         lifecycle.listen { active ->
             if (active) {
-                scope.launch {
-                    try { sync.flush() } finally { release() }
+                work.launch {
+                    try {
+                        sync.flush()
+                    } catch (e: Exception) {
+                        background("outbox flush on resume", e)
+                    } finally {
+                        release()
+                    }
                 }
             }
         }
@@ -376,10 +421,15 @@ class Aduki internal constructor(
         if (cached != null) return cached
 
         return try {
-            val resolved = Whoami.resolve(activeHttpClient(), options.endpoint)
-            session.update(resolved)
-            resolved
-        } catch (_: Exception) {
+            guard {
+                val resolved = Whoami.resolve(activeHttpClient(), options.endpoint)
+                session.update(resolved)
+                resolved
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Faults.report("identity lookup", e)
             null
         }
     }
@@ -389,9 +439,9 @@ class Aduki internal constructor(
      */
     @Deprecated("Second factors are managed in Aduki ID's Account Center; mail's /user/totp is going away.")
     @Suppress("DEPRECATION")
-    suspend fun totp(code: String): Boolean {
+    suspend fun totp(code: String): Boolean = guard {
         val currentToken = activeAuthString()
-        return Login.totp(activeHttpClient(), options.endpoint, currentToken, code, usingApiKey())
+        Login.totp(activeHttpClient(), options.endpoint, currentToken, code, usingApiKey())
     }
 
     /**
@@ -399,9 +449,7 @@ class Aduki internal constructor(
      * refresh token rotates, so the new pair replaces the old one; the
      * session hex is kept for sign-out.
      */
-    suspend fun refresh(): Boolean {
-        return renew(null) != null
-    }
+    suspend fun refresh(): Boolean = guard { renew(null) != null }
 
     /**
      * Handles a `rights` push (ADK-AUTH-003 §7.4): an `event: rights` from the
@@ -410,7 +458,7 @@ class Aduki internal constructor(
      * before the next request would be refused with `auth.stale`; anything
      * else is ignored. Returns whether a token was renewed.
      */
-    suspend fun rights(payload: String): Boolean = applyRights(payload)
+    suspend fun rights(payload: String): Boolean = guard { applyRights(payload) }
 
     private fun applyRights(payload: String): Boolean {
         val type = runCatching { JSONObject(payload).optString("@type") }.getOrNull()
@@ -437,7 +485,13 @@ class Aduki internal constructor(
             watcher?.stop()
             watcher = events
         }
-        scope.launch { events.run() }
+        work.launch {
+            try {
+                events.run()
+            } catch (e: Exception) {
+                background("rights stream", e)
+            }
+        }
     }
 
     /** Stops the subscription started by [watchRights]. */
@@ -455,14 +509,14 @@ class Aduki internal constructor(
      * `false` and keeps the session (with the rotated refresh token) so a
      * later call can retry; `session.clear()` forgets it locally instead.
      */
-    suspend fun logout(): Boolean = synchronized(renewal) {
+    suspend fun logout(): Boolean = guard { synchronized(renewal) {
         watcher?.stop()
         watcher = null
         val current = session.tokens.value
         if (current == null) {
             session.clear()
             try { tokenStore?.clear() } catch (_: Exception) {}
-            return false
+            return@guard false
         }
         align(current)
         val revoked = id.signOut()
@@ -476,18 +530,18 @@ class Aduki internal constructor(
             try { tokenStore?.clear() } catch (_: Exception) {}
         }
         revoked
-    }
+    } }
 
     /**
      * Lists active sessions for the signed-in account from Aduki ID.
      */
-    suspend fun sessions(): List<AccountSession> = withContext(Dispatchers.IO) { identity { it.sessions() } }
+    suspend fun sessions(): List<AccountSession> = guard { identity { it.sessions() } }
 
     /**
      * Revokes the active session with [hex].
      * If the revoked session is this client's current session, clears local authentication as well.
      */
-    suspend fun revoke(hex: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun revoke(hex: String): Boolean = guard {
         val revoked = identity { it.revoke(hex) }
         if (revoked && session.tokens.value?.session == hex) {
             synchronized(renewal) {
@@ -508,7 +562,7 @@ class Aduki internal constructor(
      * `Accounts.offer` on Android. [ttl] is in seconds, 60 to 86400.
      */
     suspend fun handoff(target: String, ttl: Long = Handoff.TTL): Handoff =
-        withContext(Dispatchers.IO) { identity { it.handoff(target, ttl) } }
+        guard { identity { it.handoff(target, ttl) } }
 
     // Runs [block] against Aduki ID with the `id` audience. Getting that token
     // rotates the refresh token, so this holds [renewal] like [renew] does
@@ -717,6 +771,16 @@ class Aduki internal constructor(
     }
 
     companion object {
+        // Aduki ID calls are small JSON exchanges: besides the connect, read
+        // and write timeouts, the whole call is bounded, so a server that
+        // trickles an answer cannot hold a sign-in or a renewal (which holds
+        // the renewal lock) for longer. The mail clients have no call timeout:
+        // downloads and the event stream legitimately last longer.
+        internal fun identityHttp(seconds: Long, pinner: okhttp3.CertificatePinner?): OkHttpClient =
+            HttpClient.create("", seconds, pinner).newBuilder()
+                .callTimeout(seconds * 4, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+
         // How long close() waits for the background work to stop, ms.
         private const val CLOSE_WAIT = 2_000L
         fun builder() = Builder()
@@ -738,9 +802,9 @@ class Aduki internal constructor(
             pins: List<Pin> = emptyList(),
             tokenStore: TokenStore? = null,
             device: String? = null
-        ): Aduki {
+        ): Aduki = guard {
             val tokens = Login.submit(signing(dpop, pins), identity, handle, password, code, backup, device = device)
-            return open(tokens, endpoint, identity, dpop, pins, tokenStore)
+            open(tokens, endpoint, identity, dpop, pins, tokenStore)
         }
 
         /**
@@ -760,16 +824,14 @@ class Aduki internal constructor(
             pins: List<Pin> = emptyList(),
             tokenStore: TokenStore? = null,
             device: String? = null
-        ): Aduki {
-            val tokens = withContext(Dispatchers.IO) {
-                Login.redeem(signing(dpop, pins), identity, handoff, Endpoints.AUDIENCE, device)
-            }
-            return open(tokens, endpoint, identity, dpop, pins, tokenStore)
+        ): Aduki = guard {
+            val tokens = Login.redeem(signing(dpop, pins), identity, handoff, Endpoints.AUDIENCE, device)
+            open(tokens, endpoint, identity, dpop, pins, tokenStore)
         }
 
         // An unauthenticated client for Aduki ID; with [dpop] the session it opens is bound to that key.
         private fun signing(dpop: pro.aduki.crypto.dpop.Key?, pins: List<Pin>): okhttp3.OkHttpClient =
-            HttpClient.create("", 15, pro.aduki.crypto.tls.Pinning.pinner(pins)).let { base ->
+            identityHttp(15, pro.aduki.crypto.tls.Pinning.pinner(pins)).let { base ->
                 if (dpop == null) base else base.newBuilder().addInterceptor(Dpop(dpop)).build()
             }
 
@@ -803,9 +865,9 @@ class Aduki internal constructor(
         suspend fun requirements(
             identity: String = Endpoints.ID,
             pins: List<Pin> = emptyList()
-        ): Requirements {
-            val tempClient = HttpClient.create("", 15, pro.aduki.crypto.tls.Pinning.pinner(pins))
-            return Signup.requirements(tempClient, identity)
+        ): Requirements = guard {
+            val tempClient = identityHttp(15, pro.aduki.crypto.tls.Pinning.pinner(pins))
+            Signup.requirements(tempClient, identity)
         }
 
         /**
@@ -819,9 +881,9 @@ class Aduki internal constructor(
             phone: String? = null,
             identity: String = Endpoints.ID,
             pins: List<Pin> = emptyList()
-        ): Enrolment {
-            val tempClient = HttpClient.create("", 15, pro.aduki.crypto.tls.Pinning.pinner(pins))
-            return Signup.create(tempClient, identity, handle, name, password, phone)
+        ): Enrolment = guard {
+            val tempClient = identityHttp(15, pro.aduki.crypto.tls.Pinning.pinner(pins))
+            Signup.create(tempClient, identity, handle, name, password, phone)
         }
 
         /**
@@ -833,9 +895,9 @@ class Aduki internal constructor(
             code: String,
             identity: String = Endpoints.ID,
             pins: List<Pin> = emptyList()
-        ): List<String> {
-            val tempClient = HttpClient.create("", 15, pro.aduki.crypto.tls.Pinning.pinner(pins))
-            return Signup.verify(tempClient, identity, hex, password, code).codes
+        ): List<String> = guard {
+            val tempClient = identityHttp(15, pro.aduki.crypto.tls.Pinning.pinner(pins))
+            Signup.verify(tempClient, identity, hex, password, code).codes
         }
 
         /**
@@ -859,12 +921,12 @@ class Aduki internal constructor(
             pins: List<Pin> = emptyList(),
             tokenStore: TokenStore? = null,
             device: String? = null
-        ): Pair<Aduki, List<String>> {
+        ): Pair<Aduki, List<String>> = guard {
             val verified = Signup.verify(signing(dpop, pins), identity, hex, password, code, Endpoints.AUDIENCE, device)
             val tokens = verified.tokens ?: throw pro.aduki.core.errors.AdukiException.Protocol(
                 "Aduki ID activated the account but opened no session; sign in with the next code"
             )
-            return Pair(open(tokens, endpoint, identity, dpop, pins, tokenStore), verified.codes)
+            Pair(open(tokens, endpoint, identity, dpop, pins, tokenStore), verified.codes)
         }
     }
 }

@@ -178,10 +178,12 @@ class Contacts(
                 throw AdukiException.Auth("Unauthorized access (${Envelope.failure(raw) ?: "HTTP ${resp.code}"})")
             }
             if (!resp.isSuccessful) {
-                throw AdukiException.Network("HTTP error ${resp.code}: ${Envelope.failure(raw) ?: resp.message}", code = resp.code)
+                throw AdukiException.Network("HTTP error ${resp.code}: ${Envelope.failure(raw) ?: resp.message}", code = resp.code, retryAfter = Envelope.retryAfter(resp))
             }
             return try {
                 transform(Envelope.data(raw))
+            } catch (e: AdukiException) {
+                throw e
             } catch (e: Exception) {
                 throw AdukiException.Protocol("Unexpected response from ${request.url}", e)
             }

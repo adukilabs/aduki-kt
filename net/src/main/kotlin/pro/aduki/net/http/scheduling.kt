@@ -682,9 +682,17 @@ class Scheduling(
             }
             if (!resp.isSuccessful) {
                 val why = Envelope.failure(raw) ?: resp.message
-                throw AdukiException.Network("HTTP error ${resp.code}: $why", code = resp.code)
+                throw AdukiException.Network("HTTP error ${resp.code}: $why", code = resp.code, retryAfter = Envelope.retryAfter(resp))
             }
-            return transform(Envelope.data(raw))
+            // A 2xx that is not the expected JSON (an HTML page from a proxy,
+            // a cut body) is a protocol failure, not a crash.
+            return try {
+                transform(Envelope.data(raw))
+            } catch (e: AdukiException) {
+                throw e
+            } catch (e: Exception) {
+                throw AdukiException.Protocol("Unexpected response from ${request.url}", e)
+            }
         }
     }
 

@@ -1,11 +1,13 @@
 package pro.aduki.sdk
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import pro.aduki.core.errors.Faults
 import pro.aduki.core.models.BookRequest
 import pro.aduki.core.models.BookingRecord
 import pro.aduki.core.models.Availability
@@ -51,7 +53,13 @@ class Scheduling internal constructor(
 
     // Sends what was queued; a failure stays queued for the next flush.
     private suspend fun flush() {
-        runCatching { worker?.drain() }
+        try {
+            worker?.drain()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Faults.report("calendar flush", e)
+        }
     }
 
     private val _calendars = MutableStateFlow<List<CalendarRecord>>(emptyList())
@@ -150,8 +158,12 @@ class Scheduling internal constructor(
     /** Loads every event from the server into the store; returns how many changed. */
     suspend fun sync(): Int = client.io {
         flush()
-        runCatching {
+        try {
             net?.calendars()?.let { _calendars.value = it }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Faults.report("calendar list", e)
         }
         engine?.sync() ?: (net?.events()?.size ?: 0)
     }
@@ -227,12 +239,12 @@ class Scheduling internal constructor(
      * [comment]. For an event without an organizer the answer is only
      * stored.
      */
-    suspend fun respond(hex: String, response: Response, address: String? = null, comment: String = ""): Appointment {
+    suspend fun respond(hex: String, response: Response, address: String? = null, comment: String = ""): Appointment = client.io {
         val engine = local()
         val me = address ?: client.me()?.email?.ifBlank { null }
             ?: throw IllegalStateException("the account's address is unknown: pass address")
-        return client.io { engine.respond(hex, response, me, comment) }.also { flush() }
-    }
+        engine.respond(hex, response, me, comment)
+    }.also { flush() }
 
     /**
      * Cancels an event (`STATUS:CANCELLED`, [reason] as a comment); it stays

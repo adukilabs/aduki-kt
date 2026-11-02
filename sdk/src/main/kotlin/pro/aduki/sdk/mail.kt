@@ -9,6 +9,7 @@ import pro.aduki.store.entities.Mailbox
 import pro.aduki.store.entities.Message
 import pro.aduki.sync.outbox.Manager
 import pro.aduki.sync.outbox.Worker
+import pro.aduki.core.errors.Faults
 import pro.aduki.core.models.Attachment
 import pro.aduki.core.models.Body
 import pro.aduki.core.models.BodyMode
@@ -51,7 +52,7 @@ class Mail internal constructor(
      * HTML, attachments, a display name, or a reply or forward goes over
      * JMAP. Both are safe to retry: a send is never made twice.
      */
-    suspend fun send(draft: Draft, mailbox: String = "outbox"): Message {
+    suspend fun send(draft: Draft, mailbox: String = "outbox"): Message = client.io {
         draft.validate()
         val msg = Message(
             hex = "msg_${UUID.randomUUID()}",
@@ -79,27 +80,27 @@ class Mail internal constructor(
             outbox().send(msg, Composer.encode(draft).toString().toByteArray(Charsets.UTF_8), "compose")
         }
         worker?.drain()
-        return msg
+        return@io msg
     }
 
     /**
      * Toggles a flag bitmask optimistically on a message.
      */
-    suspend fun flag(hex: String, flag: Int) {
+    suspend fun flag(hex: String, flag: Int): Unit = client.io {
         outbox().flag(hex, flag)
     }
 
     /**
      * Moves a message optimistically to a destination mailbox.
      */
-    suspend fun move(hex: String, dest: String) {
+    suspend fun move(hex: String, dest: String): Unit = client.io {
         outbox().move(hex, dest)
     }
 
     /**
      * Removes or marks a message as deleted optimistically.
      */
-    suspend fun remove(hex: String) {
+    suspend fun remove(hex: String): Unit = client.io {
         outbox().remove(hex)
         content?.forget(listOf(hex))
     }
@@ -109,7 +110,7 @@ class Mail internal constructor(
      * message, optimistically and queued. Idempotent: nothing is queued when
      * the flag already is so.
      */
-    suspend fun setFlag(hex: String, flag: Int, on: Boolean) {
+    suspend fun setFlag(hex: String, flag: Int, on: Boolean): Unit = client.io {
         outbox().set(hex, flag, on)
     }
 
@@ -117,23 +118,23 @@ class Mail internal constructor(
      * Sets or clears [flag] on many messages in one queued action; messages
      * already so are left alone.
      */
-    suspend fun setFlags(hexes: List<String>, flag: Int, on: Boolean) {
+    suspend fun setFlags(hexes: List<String>, flag: Int, on: Boolean): Unit = client.io {
         outbox().set(hexes, flag, on)
     }
 
     /** Moves many messages to [dest] in one queued action. */
-    suspend fun move(hexes: List<String>, dest: String) {
+    suspend fun move(hexes: List<String>, dest: String): Unit = client.io {
         outbox().move(hexes, dest)
     }
 
     /** Deletes many messages in one queued action. */
-    suspend fun remove(hexes: List<String>) {
+    suspend fun remove(hexes: List<String>): Unit = client.io {
         outbox().remove(hexes)
         content?.forget(hexes)
     }
 
     /** Marks every unread message of [mailbox] (a hex) read. */
-    suspend fun markAllRead(mailbox: String) {
+    suspend fun markAllRead(mailbox: String): Unit = client.io {
         setFlags(store().unseen(mailbox), Message.SEEN, true)
     }
 
@@ -143,25 +144,25 @@ class Mail internal constructor(
      * the server's hex when the queued create is sent; messages moved into
      * it meanwhile follow.
      */
-    suspend fun createMailbox(name: String, parent: String? = null): Mailbox {
+    suspend fun createMailbox(name: String, parent: String? = null): Mailbox = client.io {
         val box = outbox().createMailbox(name, parent)
         worker?.drain()
-        return box
+        return@io box
     }
 
     /** Renames a mailbox, optimistically and queued. */
-    suspend fun renameMailbox(hex: String, name: String) {
+    suspend fun renameMailbox(hex: String, name: String): Unit = client.io {
         outbox().renameMailbox(hex, name)
     }
 
     /** Moves a mailbox under [parent] (null or empty for top-level). */
-    suspend fun moveMailbox(hex: String, parent: String? = null) {
+    suspend fun moveMailbox(hex: String, parent: String? = null): Unit = client.io {
         outbox().moveMailbox(hex, parent)
         worker?.drain()
     }
 
     /** Deletes a mailbox and the messages in it, optimistically and queued. */
-    suspend fun deleteMailbox(hex: String) {
+    suspend fun deleteMailbox(hex: String): Unit = client.io {
         outbox().deleteMailbox(hex)
     }
 
@@ -172,7 +173,7 @@ class Mail internal constructor(
      * device to sync after [until] ([Sync.all] calls [wake]) brings it back
      * to the inbox, unread. The server itself does not wake messages.
      */
-    suspend fun snooze(hex: String, until: Instant) {
+    suspend fun snooze(hex: String, until: Instant): Unit = client.io {
         val queue = outbox()
         val msg = queue.message(hex) ?: throw IllegalArgumentException("Message not found: $hex")
         val stale = msg.keywordList().filter { it.startsWith(Message.SNOOZED) }
@@ -181,7 +182,7 @@ class Mail internal constructor(
     }
 
     /** Ends a snooze now: back to the inbox, unread, keyword removed. */
-    suspend fun unsnooze(hex: String) {
+    suspend fun unsnooze(hex: String): Unit = client.io {
         val queue = outbox()
         val msg = queue.message(hex) ?: throw IllegalArgumentException("Message not found: $hex")
         val inbox = store().listMailboxes().firstOrNull { it.role == "inbox" }?.hex
@@ -195,13 +196,13 @@ class Mail internal constructor(
      * Brings back every snoozed message whose time has come; returns how
      * many. [Sync.all] calls it after each sync.
      */
-    suspend fun wake(now: Instant = Instant.now()): Int {
-        val local = repo ?: return 0
+    suspend fun wake(now: Instant = Instant.now()): Int = client.io {
+        val local = repo ?: return@io 0
         val due = local.listMailboxes().filter(::snoozing)
             .flatMap { local.listMessages(it.hex) }
             .filter { it.snoozed() in 1..now.toEpochMilli() }
         due.forEach { unsnooze(it.hex) }
-        return due.size
+        return@io due.size
     }
 
     // The "Snoozed" mailbox hex, created when missing.
@@ -266,8 +267,9 @@ class Mail internal constructor(
      * it offline; a body cached raw is fetched again once the server supports
      * reading. [refresh] fetches it again.
      */
-    suspend fun body(hex: String, mode: BodyMode, refresh: Boolean = false): Body =
+    suspend fun body(hex: String, mode: BodyMode, refresh: Boolean = false): Body = client.io {
         content?.body(hex, mode, refresh) ?: JmapContentTransport(client.jmap).fetch(hex, mode)
+    }
 
     /** The attachments of message [hex] (from its body). */
     suspend fun attachments(hex: String): List<Attachment> = body(hex).attachments
@@ -328,7 +330,7 @@ class Mail internal constructor(
     /**
      * Mutes or unmutes a thread by threadId or message hex, setting the `$muted` keyword.
      */
-    suspend fun mute(threadId: String, on: Boolean = true) {
+    suspend fun mute(threadId: String, on: Boolean = true): Unit = client.io {
         val queue = outbox()
         val local = repo
         val messages = local?.listThread(threadId)?.ifEmpty { null }
@@ -361,7 +363,7 @@ class Mail internal constructor(
      * offline it keeps its `msg_` placeholder, which [openDraft] and a later
      * [replace] still accept.
      */
-    suspend fun saveDraft(draft: Draft, replace: String? = null): Message {
+    suspend fun saveDraft(draft: Draft, replace: String? = null): Message = client.io {
         val queue = outbox()
         val draftsBox = repo?.listMailboxes()?.firstOrNull { it.role == "drafts" }?.hex
             ?: repo?.listMailboxes()?.firstOrNull { it.name.equals("Drafts", ignoreCase = true) }?.hex
@@ -380,20 +382,28 @@ class Mail internal constructor(
         worker?.drain()
         // Sent: the draft now has the server's id.
         val hex = queue.latest(msg.hex)
-        if (hex == msg.hex) return msg
+        if (hex == msg.hex) return@io msg
         content?.put(hex, draft.text, draft.html.orEmpty())
-        return repo?.get(hex) ?: queue.message(hex) ?: msg
+        return@io repo?.get(hex) ?: queue.message(hex) ?: msg
     }
 
     /**
      * Reads a draft message and its body content as a [Draft].
      */
-    suspend fun openDraft(hex: String): Draft {
+    suspend fun openDraft(hex: String): Draft = client.io {
         val queue = outbox()
         @Suppress("NAME_SHADOWING") val hex = queue.latest(hex)
         val msg = repo?.get(hex) ?: queue.message(hex) ?: throw IllegalArgumentException("Draft not found: $hex")
-        val b = try { body(hex) } catch (_: Exception) { Body() }
-        return Draft(
+        val b = try {
+            body(hex)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Offline or refused: the draft opens with its stored preview.
+            Faults.report("draft body", e)
+            Body()
+        }
+        return@io Draft(
             to = msg.recipients(),
             cc = msg.ccList(),
             bcc = msg.bccList(),
