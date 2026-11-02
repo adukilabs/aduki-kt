@@ -8,9 +8,11 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import pro.aduki.core.errors.Faults
 import pro.aduki.core.models.Card
 import pro.aduki.core.vcard.Vcard
 import pro.aduki.store.entities.Contact
@@ -89,9 +91,9 @@ class Contacts internal constructor(
     /**
      * Performs incremental delta sync for address book.
      */
-    suspend fun sync(tenant: String = ""): Boolean {
+    suspend fun sync(tenant: String = ""): Boolean = client.io {
         val targetTenant = tenant.ifBlank { client.me()?.tenant ?: "" }
-        return engine?.sync(targetTenant) ?: false
+        return@io engine?.sync(targetTenant) ?: false
     }
 
     /**
@@ -151,24 +153,24 @@ class Contacts internal constructor(
      * server's reply replaces it. Throws [IllegalArgumentException] for a
      * card [Card.validate] refuses.
      */
-    suspend fun create(card: Card): Contact {
+    suspend fun create(card: Card): Contact = client.io {
         val contact = book().create(card)
         worker?.drain()
-        return contact
+        return@io contact
     }
 
     /**
      * Replaces the fields of [hex] with [card]. Properties of the stored
      * vCard that [Card] does not model are kept.
      */
-    suspend fun update(hex: String, card: Card): Contact {
+    suspend fun update(hex: String, card: Card): Contact = client.io {
         val contact = book().update(hex, card)
         worker?.drain()
-        return contact
+        return@io contact
     }
 
     /** Deletes [hex]. */
-    suspend fun delete(hex: String) {
+    suspend fun delete(hex: String): Unit = client.io {
         book().delete(hex)
         worker?.drain()
     }
@@ -346,7 +348,7 @@ class Contacts internal constructor(
                 worker?.drain()
             }
         }
-    }.flowOn(Dispatchers.IO)
+    }.catch { throw Faults.normal(it) }.flowOn(Dispatchers.IO)
 
     /**
      * The contacts [hexes] (every stored contact when null) as one vCard
@@ -407,10 +409,10 @@ class Contacts internal constructor(
      * notes are joined, and the others are deleted. Applied locally at once
      * and sent as one atomic server merge (`POST /user/contacts/{hex}/merge`).
      */
-    suspend fun merge(keep: String, others: List<String>): Contact {
+    suspend fun merge(keep: String, others: List<String>): Contact = client.io {
         val contact = book().merge(keep, others)
         worker?.drain()
-        return contact
+        return@io contact
     }
 
     private companion object {
@@ -445,7 +447,7 @@ class Groups internal constructor(
     fun list(): List<String> = repo?.names().orEmpty()
 
     /** Creates [group], with [members] or none; it stays listed while empty. */
-    suspend fun create(group: String, members: List<String> = emptyList()) {
+    suspend fun create(group: String, members: List<String> = emptyList()): Unit = guard {
         book().group(group)
         if (members.isEmpty()) worker?.drain() else add(group, members)
     }
@@ -454,27 +456,27 @@ class Groups internal constructor(
      * Renames [group] to [name] on every member, as one queued action (see
      * `ContactDispatcher` for the server routes it uses).
      */
-    suspend fun rename(group: String, name: String) {
+    suspend fun rename(group: String, name: String): Unit = guard {
         require(name.isNotBlank()) { "group name is required" }
-        if (name.trim() == group) return
+        if (name.trim() == group) return@guard
         book().rename(group, name)
         worker?.drain()
     }
 
     /** Deletes [group], as one queued action: its members stay, without it. */
-    suspend fun delete(group: String) {
+    suspend fun delete(group: String): Unit = guard {
         book().dissolve(group)
         worker?.drain()
     }
 
     /** Adds [hexes] to [group]. */
-    suspend fun add(group: String, hexes: List<String>) {
+    suspend fun add(group: String, hexes: List<String>): Unit = guard {
         require(group.isNotBlank()) { "group name is required" }
         change(hexes) { groups -> groups + group.trim() }
     }
 
     /** Removes [hexes] from [group]. */
-    suspend fun remove(group: String, hexes: List<String>) {
+    suspend fun remove(group: String, hexes: List<String>): Unit = guard {
         change(hexes) { groups -> groups - group }
     }
 

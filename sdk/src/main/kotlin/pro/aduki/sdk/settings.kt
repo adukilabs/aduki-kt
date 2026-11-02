@@ -1,7 +1,6 @@
 package pro.aduki.sdk
 
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import pro.aduki.net.http.Filters
 import pro.aduki.net.http.Push
@@ -29,7 +28,7 @@ class Settings internal constructor(private val client: Aduki) {
     private val identities by lazy { Senders(client.jmap) }
     private val subscriptions by lazy { Subscriptions(client.jmap) }
 
-    private suspend fun <T> io(block: () -> T): T = withContext(Dispatchers.IO) { block() }
+    private suspend fun <T> io(block: () -> T): T = client.io { block() }
 
     /**
      * The filter rules, in the order they run. They live in the Sieve script
@@ -123,14 +122,14 @@ class Settings internal constructor(private val client: Aduki) {
      *   mailbox;
      * - [Push.Rights]: renews the access token, as `client.rights(payload)`.
      */
-    suspend fun receive(payload: String): Push? {
-        val push = Push.parse(payload) ?: return null
+    suspend fun receive(payload: String): Push? = guard {
+        val push = Push.parse(payload) ?: return@guard null
         when (push) {
             is Push.Verification -> io { subscriptions.verify(push) }
             is Push.Change -> if (push.mail()) client.sync.all(push.targets())
             is Push.Rights -> client.rights(body(payload))
         }
-        return push
+        push
     }
 
     /**
