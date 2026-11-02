@@ -229,7 +229,7 @@ class Mail(
             }
             if (!resp.isSuccessful) {
                 val why = Envelope.failure(raw) ?: resp.message
-                throw AdukiException.Network("HTTP error ${resp.code}: $why", code = resp.code)
+                throw AdukiException.Network("HTTP error ${resp.code}: $why", code = resp.code, retryAfter = Envelope.retryAfter(resp))
             }
             val body = Envelope.data(raw)
             return try {

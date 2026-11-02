@@ -1,6 +1,10 @@
 package pro.aduki.net.http
 
+import okhttp3.Response
 import org.json.JSONObject
+import java.time.Duration
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 
 /**
  * Envelope reads the Aduki REST envelope (ADK-NET-001 §3):
@@ -36,5 +40,18 @@ internal object Envelope {
         if (!text.startsWith("{")) return null
         val obj = runCatching { JSONObject(text) }.getOrNull() ?: return null
         return if (obj.has("success")) obj else null
+    }
+
+    /**
+     * The `Retry-After` of [response] in seconds (delta seconds or an HTTP
+     * date), or null when absent or unreadable. Never negative.
+     */
+    fun retryAfter(response: Response, now: () -> ZonedDateTime = ZonedDateTime::now): Long? {
+        val value = response.header("Retry-After")?.trim()?.ifBlank { null } ?: return null
+        value.toLongOrNull()?.let { return it.coerceAtLeast(0) }
+        return runCatching {
+            val at = ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME)
+            Duration.between(now(), at).seconds.coerceAtLeast(0)
+        }.getOrNull()
     }
 }
