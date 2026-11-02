@@ -43,6 +43,10 @@ class Mail internal constructor(...) {
     fun thread(threadId: String): StateFlow<List<Message>>?
     fun conversations(mailboxHex: String): StateFlow<List<Conversation>>?
 
+    // Thread reader (see conversation.md)
+    fun conversation(threadId: String): Flow<pro.aduki.core.models.Conversation>
+    suspend fun conversation(threadId: String, refresh: Boolean): pro.aduki.core.models.Conversation
+
     // Snooze (#27)
     suspend fun snooze(hex: String, until: Instant)
     suspend fun unsnooze(hex: String)
@@ -332,6 +336,7 @@ With a local store the whole body (`Both`) is cached, and every mode is read fro
 - `fetch(hex)` loads a message (and its mailbox row if unknown) into the local store so it can be flagged, moved, snoozed, or opened in thread view.
 - `thread(threadId)` gives one conversation across mailboxes, oldest first.
 - `conversations(mailbox)` gives one `Conversation(latest, count, unread)` per thread, newest first.
+- `conversation(threadId)` gives the thread as the thread reader shows it: a reply tree with each message's own words and delivery facts. It is a different `Conversation` (`pro.aduki.core.models`); see [Conversations](conversation.md).
 
 ## 8. Mailboxes
 

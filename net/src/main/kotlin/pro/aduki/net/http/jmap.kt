@@ -40,7 +40,13 @@ class Jmap(
         val api: String,
         val upload: String,
         val download: String,
-        val capabilities: Set<String> = emptySet()
+        val capabilities: Set<String> = emptySet(),
+        /**
+         * The `properties` list a capability object advertises, by capability
+         * (e.g. the `Email` properties of [READING]); capabilities without one
+         * are left out.
+         */
+        val properties: Map<String, Set<String>> = emptyMap()
     )
 
     /** One method call; [id] ties the responses to it. */
@@ -62,15 +68,28 @@ class Jmap(
         val primary = obj.optJSONObject("primaryAccounts") ?: JSONObject()
         val account = primary.optString(MAIL).ifBlank { primary.optString(CORE) }
         if (account.isBlank()) throw AdukiException.Protocol("JMAP session has no mail account")
+        val capabilities = obj.optJSONObject("capabilities")
         val fresh = Session(
             account = account,
             api = field(obj, "apiUrl"),
             upload = field(obj, "uploadUrl"),
             download = field(obj, "downloadUrl"),
-            capabilities = obj.optJSONObject("capabilities")?.keySet()?.toSet() ?: emptySet()
+            capabilities = capabilities?.keySet()?.toSet() ?: emptySet(),
+            properties = properties(capabilities)
         )
         cached = fresh
         return fresh
+    }
+
+    // Each capability's advertised `properties`, skipping anything that is not a list of strings.
+    private fun properties(capabilities: JSONObject?): Map<String, Set<String>> {
+        if (capabilities == null) return emptyMap()
+        val out = HashMap<String, Set<String>>()
+        for (name in capabilities.keySet()) {
+            val list = capabilities.optJSONObject(name)?.optJSONArray("properties") ?: continue
+            out[name] = (0 until list.length()).mapNotNull { list.opt(it) as? String }.toSet()
+        }
+        return out
     }
 
     /** The primary mail account id. */
@@ -195,8 +214,16 @@ class Jmap(
         /**
          * Aduki body reading (session capability): `Email/get` takes
          * `aduki:bodyMode` and returns sanitised HTML and unwrapped text.
+         * Its `properties` list names the extra `Email` properties the server
+         * has, such as [REPLY] and [SECURITY].
          */
         const val READING = "urn:aduki:params:jmap:reading"
+
+        /** `Email` property: the message's own words, quote and signature (with [READING]). */
+        const val REPLY = "aduki:reply"
+
+        /** `Email` property: how the message was delivered (TLS, SPF, DKIM, DMARC) (with [READING]). */
+        const val SECURITY = "aduki:security"
 
         /** Core and mail: enough for `Email`, `Mailbox` and `Thread`. */
         val USING = setOf(CORE, MAIL)

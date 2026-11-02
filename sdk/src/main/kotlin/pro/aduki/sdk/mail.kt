@@ -1,7 +1,12 @@
 package pro.aduki.sdk
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -35,6 +40,8 @@ class Mail internal constructor(
     private val worker: Worker? = null,
     private val content: ContentEngine? = null
 ) {
+    private val reader = Conversations(client, repo, content)
+
     // Writes need the local store: without one they would vanish silently.
     private fun outbox(): Manager = manager ?: throw IllegalStateException("no local store")
 
@@ -539,6 +546,65 @@ class Mail internal constructor(
     fun thread(threadId: String): StateFlow<List<Message>>? {
         return repo?.thread(threadId)
     }
+
+    /**
+     * The thread [threadId] as a reply tree, each message reduced to its own
+     * words (see `docs/services/conversation.md`).
+     *
+     * With a local store, the thread as stored is emitted first when the
+     * store has it (`Conversation.offline` true), then the thread read from
+     * the server, then again whenever the stored thread changes (a new
+     * message, a flag, a move). When the server cannot be reached the
+     * stored thread stands and the flow does not fail; without a stored
+     * thread it fails as [conversation] (snapshot) does.
+     *
+     * The server's `aduki:reply` and `aduki:security` are used when its
+     * reading capability lists them; otherwise the bodies are read and cut on
+     * the device. Parsing runs on `Dispatchers.Default`; a message that
+     * cannot be parsed is shown whole with `Confidence.Low`.
+     */
+    fun conversation(threadId: String): Flow<pro.aduki.core.models.Conversation> = flow {
+        val local = repo
+        val first = reader.cached(threadId)
+        if (first != null) emit(first)
+        val fresh = try {
+            reader.load(threadId, refresh = false)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (first == null) throw e
+            Faults.report("conversation", e)
+            null
+        }
+        if (fresh != null && fresh != first) emit(fresh)
+        if (local == null) return@flow
+        var last = client.io { reader.version(local.listThread(threadId)) }
+        local.thread(threadId).map { reader.version(it) }.distinctUntilChanged().collect { version ->
+            // The flow starts empty; the thread just loaded is not loaded again.
+            if (version.isEmpty() || version == last) return@collect
+            last = version
+            val next = try {
+                reader.load(threadId, refresh = false)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Faults.report("conversation", e)
+                null
+            }
+            if (next != null) emit(next)
+        }
+    }.catch { throw Faults.normal(it) }
+
+    /**
+     * The thread [threadId] now (see the flow [conversation]): read from the
+     * server, or from the local store when the server cannot be reached
+     * (`Conversation.offline` true). [refresh] asks the server again for
+     * what it read about each message instead of the copy kept in memory.
+     * Fails only as the [Mail] calls do: offline without a stored thread,
+     * an unknown thread (`AdukiException.Api` 404), a blank [threadId].
+     */
+    suspend fun conversation(threadId: String, refresh: Boolean): pro.aduki.core.models.Conversation =
+        reader.load(threadId, refresh)
 
     /**
      * A mailbox grouped by conversation, newest first: per thread the latest
