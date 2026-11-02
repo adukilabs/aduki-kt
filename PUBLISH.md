@@ -116,7 +116,7 @@ When cutting a new release:
 ### 1. Bump Version
 Update `release` in `build.gradle.kts`:
 ```kotlin
-val release = "0.6.0"
+val release = "0.6.1"
 ```
 
 ### 2. Update Documentation
@@ -137,7 +137,7 @@ The bundle zip is written to `build/bundle.zip`.
 
 ### 4. Commit and Tag
 ```bash
-git commit -s -m "chore: release 0.6.0"
+git commit -s -m "chore: release 0.6.1"
 git tag v0.6.0
 git push origin main
 git push origin v0.6.0
@@ -171,8 +171,8 @@ dependencyResolutionManagement {
 
 // app/build.gradle.kts
 dependencies {
-    implementation("pro.aduki:sdk:0.6.0")
-    implementation("pro.aduki:android:0.6.0") // Android-specific features
+    implementation("pro.aduki:sdk:0.6.1")
+    implementation("pro.aduki:android:0.6.1") // Android-specific features
 }
 ```
 
@@ -201,8 +201,8 @@ dependencyResolutionManagement {
 
 // app/build.gradle.kts
 dependencies {
-    implementation("pro.aduki:sdk:0.6.0")
-    implementation("pro.aduki:android:0.6.0")
+    implementation("pro.aduki:sdk:0.6.1")
+    implementation("pro.aduki:android:0.6.1")
 }
 ```
 
@@ -234,8 +234,8 @@ dependencyResolutionManagement {
 // app/build.gradle.kts
 dependencies {
     // Coordinates use com.github.adukilabs.aduki-kt:<module>:<tag>
-    implementation("com.github.adukilabs.aduki-kt:sdk:v0.6.0")
-    implementation("com.github.adukilabs.aduki-kt:android:v0.6.0")
+    implementation("com.github.adukilabs.aduki-kt:sdk:v0.6.1")
+    implementation("com.github.adukilabs.aduki-kt:android:v0.6.1")
 }
 ```
 
@@ -255,7 +255,7 @@ dependencyResolutionManagement {
 
 // app/build.gradle
 dependencies {
-    implementation 'com.github.adukilabs.aduki-kt:sdk:v0.6.0'
-    implementation 'com.github.adukilabs.aduki-kt:android:v0.6.0'
+    implementation 'com.github.adukilabs.aduki-kt:sdk:v0.6.1'
+    implementation 'com.github.adukilabs.aduki-kt:android:v0.6.1'
 }
 ```

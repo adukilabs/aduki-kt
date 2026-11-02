@@ -55,7 +55,7 @@ There is always exactly one copy of a session's tokens:
 | `Mode.Own(vault)` (default) | In this app's private storage (`pro.aduki.account.tokens`), sealed with `vault` (the Keystore on a device). | Metadata only, plus an `own.<package>` marker. | Each app has its own session and DPoP key (recommended). |
 | `Mode.Shared` | In the `AccountManager` entry only (password = refresh token, auth token `access` = access token), unsealed. | Metadata and the tokens. | Several apps of one publisher share one session through a `TokenStore`. |
 
-A Keystore key belongs to one app, so tokens shared between apps cannot be sealed: in `Mode.Shared` they are protected by the system account database, which only apps the account is made visible to can read. Every read goes to the entry, so after one app renews the next app reads the rotated pair. A private copy that 0.5.x wrote is deleted on the first read or save. All apps of one publisher should use the same mode.
+A Keystore key belongs to one app, so tokens shared between apps cannot be sealed: in `Mode.Shared` they are protected by the system account database, which only apps the account is made visible to can read. Every read goes to the entry, so after one app renews the next app reads the rotated pair. A private copy that 0.5.x wrote is deleted on the first read or save; a `Mode.Own` copy of the same app is never touched (0.6.1). All apps of one publisher should use the same mode.
 
 | Call | Does |
 | --- | --- |
@@ -64,6 +64,7 @@ A Keystore key belongs to one app, so tokens shared between apps cannot be seale
 | `tokens(hex)` | The tokens of `Stored.Found`, else `null`. |
 | `migrate(hex)` | Opt-in, `Mode.Own` only: moves tokens this app wrote into the entry with 0.5.x (sealed with its own vault) into its private store and removes them from the entry. Another app's tokens are never adopted. |
 | `forget(hex)` | Ends this app's session and keeps the entry (in `Mode.Shared` that is every app's session). |
+| `discard(hex)` | `Mode.Own`: returns this app's private tokens of `hex` and deletes them, even after the entry is gone (another app signed out, or the account was removed in Settings), so the session can still be revoked. |
 | `fresh(hex)`, `needsSignIn(hex)`, `invalidate(hex)` | As before, against the mode's copy. |
 
 ### Sharing accounts across companion apps
@@ -98,7 +99,7 @@ A signed-in app (A) lets a companion app (B) of the same publisher open **its ow
    }
    ```
    `Aduki.redeem` is `POST /v1/handoffs/redeem {handoff, audience, device}` with B's DPoP proof: Aduki ID opens a new session of the same account at tier 1. A used, expired or orphaned code is `AdukiException.Unauthorized`; B then signs in normally.
-3. `accounts.withdraw(hex, target)` removes a handoff that was not claimed. `accounts.holds(hex, target)` tells whether `target` saved its own session (A offers only to apps that did not).
+3. `accounts.offered(hex, target)` returns the handoff waiting for `target` without claiming it (null when none or expired): offer a new one only when it is null or about to expire. `accounts.withdraw(hex, target)` removes a handoff that was not claimed. `accounts.holds(hex, target)` tells whether `target` saved its own session (A offers only to apps that did not).
 
 The handoff sits in `AccountManager` user data, readable by the apps `share` named, until claimed; it is a bearer code for one new session, so keep `ttl` short when B is expected to open soon.
 

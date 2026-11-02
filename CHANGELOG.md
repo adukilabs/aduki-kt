@@ -2,6 +2,12 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
+## 0.6.1 (2026-11-02)
+
+- `Accounts` in `Mode.Shared` no longer deletes a `Mode.Own` app's private session for the same account: it drops only the copies 0.5.x kept next to the entry. `Mode.Own` copies are marked (#122).
+- `Accounts.offered(hex, target)`: the handoff left for a peer and not claimed yet, without claiming it, so an app offers a new one only when needed (#123).
+- `Accounts.discard(hex)`: this app's private tokens of `hex`, returned and deleted even after the account entry is gone, so the session can still be revoked (#124).
+
 ## 0.6.0 (2026-11-02)
 
 0.6.0 is a breaking release. It needs Aduki ID with handoffs, the refresh replay window and session-on-verification, and the mail server release with the scheduling changes below; against older servers those calls fail as noted.
