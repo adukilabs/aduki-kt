@@ -18,7 +18,7 @@ android {
         minSdk = 26
         targetSdk = 37
         versionCode = 1
-        versionName = "0.6.0"
+        versionName = "0.6.1"
         manifestPlaceholders["adukiRedirectScheme"] = scheme.get()
         buildConfigField("String", "ISSUER", "\"${issuer.get()}\"")
         buildConfigField("String", "CLIENT", "\"${clientId.get()}\"")
