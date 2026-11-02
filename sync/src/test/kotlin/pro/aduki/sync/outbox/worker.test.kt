@@ -149,5 +149,62 @@ class WorkerTest {
         assertEquals(0, manager.failed.value.size)
         assertTrue(manager.pending().isEmpty())
     }
-}
 
+    @Test
+    fun aRetryAfterHoldsTheActionAtLeastThatLong() = runBlocking {
+        val worker = Worker(
+            manager,
+            Dispatcher { throw pro.aduki.core.errors.AdukiException.Network("HTTP error 429", code = 429, retryAfter = 120) },
+            jitter = Jitter(base = 100, max = 500)
+        )
+        manager.enqueue("flag", "msg_1:4".toByteArray(Charsets.UTF_8))
+        val before = System.currentTimeMillis()
+        assertEquals(0, worker.drain())
+        val next = manager.pending().single().nextRetry
+        assertTrue(next >= before + 120_000)
+        assertTrue(next < before + 121_000)
+    }
+
+    @Test
+    fun aHugeRetryAfterIsCappedAtAnHour() = runBlocking {
+        val worker = Worker(
+            manager,
+            Dispatcher { throw pro.aduki.core.errors.AdukiException.Api(503, "unavailable", "busy", retryAfter = 10_000_000) },
+            jitter = Jitter(base = 100, max = 500)
+        )
+        manager.enqueue("flag", "msg_1:4".toByteArray(Charsets.UTF_8))
+        val before = System.currentTimeMillis()
+        worker.drain()
+        assertTrue(manager.pending().single().nextRetry <= before + 3_600_000 + 1_000)
+    }
+
+    @Test
+    fun aThrowingRejectedCallbackDoesNotStopTheQueue() = runBlocking {
+        val worker = Worker(
+            manager,
+            Dispatcher { action -> if (action.action == "flag") throw Rejected("refused", code = 422) },
+            onRejected = { _, _ -> throw IllegalStateException("app callback bug") }
+        )
+        manager.enqueue("flag", "msg_1:4".toByteArray(Charsets.UTF_8))
+        manager.enqueue("move", "msg_2:archive".toByteArray(Charsets.UTF_8))
+        assertEquals(2, worker.drain())
+        assertTrue(manager.pending().isEmpty())
+        assertEquals(1, manager.failed().size)
+    }
+
+    @Test
+    fun aCancelledDispatchLeavesTheActionPendingAndPropagates() = runBlocking {
+        val worker = Worker(manager, Dispatcher { throw kotlinx.coroutines.CancellationException("stopped") })
+        manager.enqueue("flag", "msg_1:4".toByteArray(Charsets.UTF_8))
+        var cancelled = false
+        try {
+            worker.drain()
+        } catch (_: kotlinx.coroutines.CancellationException) {
+            cancelled = true
+        }
+        assertTrue(cancelled)
+        val entry = manager.pending().single()
+        assertEquals(0, entry.attempts)
+        assertEquals(0L, entry.nextRetry)
+    }
+}
