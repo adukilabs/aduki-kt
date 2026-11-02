@@ -317,6 +317,49 @@ class AccountsTest {
         assertEquals(Accounts.Stored.Missing, shared.read("a1b2"))
     }
 
+    @Test fun aSharedInstanceLeavesAnOwnAppsSessionAlone() {
+        val ctx = AppContext(context, "pro.aduki.mail")
+        val own = Accounts(ctx, Accounts.Mode.Own(softVault()), manager)
+        own.reconcile(center(ada))
+        own.save("a1b2", Tokens("own_access", "own_refresh", "600", "s"))
+        val shared = Accounts(ctx, Accounts.Mode.Shared, manager)
+        shared.read("a1b2")
+        shared.save("a1b2", Tokens("shared_access", "shared_refresh", "600", "s"))
+        shared.forget("a1b2")
+        assertEquals("aduki-kt#122", "own_refresh", own.tokens("a1b2")?.refresh)
+        // an unmarked, unsealed 0.5.x copy is still dropped
+        ctx.getSharedPreferences("pro.aduki.account.tokens", Context.MODE_PRIVATE).edit()
+            .putString("e5f6", JSONObject().put("token", "old").put("refresh", "spent").toString()).commit()
+        own.reconcile(center(ada, contoso))
+        shared.read("e5f6")
+        assertNull(ctx.getSharedPreferences("pro.aduki.account.tokens", Context.MODE_PRIVATE).getString("e5f6", null))
+    }
+
+    @Test fun anOfferedHandoffCanBeReadWithoutClaimingIt() {
+        val mail = Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Own(softVault()), manager)
+        val calendar = Accounts(AppContext(context, "pro.aduki.calendar"), Accounts.Mode.Own(softVault()), manager)
+        mail.reconcile(center(ada))
+        val now = System.currentTimeMillis() / 1000
+        assertNull(mail.offered("a1b2", "pro.aduki.calendar"))
+        mail.offer("a1b2", "pro.aduki.calendar", pro.aduki.net.http.Handoff("adkh_1", now + 600))
+        assertEquals(pro.aduki.net.http.Handoff("adkh_1", now + 600), mail.offered("a1b2", "pro.aduki.calendar"))
+        assertNull("expired", mail.offered("a1b2", "pro.aduki.calendar", now = now + 601))
+        assertEquals("still there to claim", "adkh_1", calendar.claim("a1b2"))
+        assertNull(mail.offered("a1b2", "pro.aduki.calendar"))
+    }
+
+    @Test fun discardReturnsAndDropsThisAppsTokensAfterTheEntryIsGone() {
+        val ctx = AppContext(context, "pro.aduki.calendar")
+        val calendar = Accounts(ctx, Accounts.Mode.Own(softVault()), manager)
+        calendar.reconcile(center(ada))
+        calendar.save("a1b2", Tokens("cal_access", "cal_refresh", "600", "s9"))
+        Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Own(softVault()), manager).remove("a1b2")
+        assertNull(calendar.find("a1b2"))
+        assertEquals("aduki-kt#124", Tokens("cal_access", "cal_refresh", "600", "s9"), calendar.discard("a1b2"))
+        assertNull("gone", calendar.discard("a1b2"))
+        assertNull(ctx.getSharedPreferences("pro.aduki.account.tokens", Context.MODE_PRIVATE).getString("a1b2", null))
+    }
+
     @Test fun customVisibilityProviderTestSeam() {
         val recorded = mutableListOf<Triple<String, String, Int>>()
         val customVisibility = object : Visibility {

@@ -209,7 +209,7 @@ class Accounts(
         val entry = find(hex) ?: return false
         when (mode) {
             is Mode.Shared -> {
-                tokensPrefs.edit().remove(hex).apply() // a 0.5.x private copy would go stale
+                dropLegacyCopy(hex) // a 0.5.x private copy would go stale
                 manager.setUserData(entry.account, SAVED, now.toString())
                 manager.setUserData(entry.account, EXPIRES, tokens.expires)
                 manager.setUserData(entry.account, SESSION, tokens.session)
@@ -223,6 +223,7 @@ class Accounts(
                     put("expires", tokens.expires)
                     put("session", tokens.session)
                     put("saved", now)
+                    put("mode", OWN)
                 }
                 tokensPrefs.edit().putString(hex, json.toString()).apply()
                 manager.setUserData(entry.account, own(packageName), now.toString())
@@ -240,7 +241,7 @@ class Accounts(
         val entry = find(hex) ?: return Stored.Missing
         return when (mode) {
             is Mode.Shared -> {
-                tokensPrefs.edit().remove(hex).apply()
+                dropLegacyCopy(hex)
                 val access = manager.peekAuthToken(entry.account, ACCESS).orEmpty()
                 val refresh = manager.getPassword(entry.account).orEmpty()
                 when {
@@ -309,14 +310,44 @@ class Accounts(
      */
     fun forget(hex: String) {
         val entry = find(hex) ?: return
-        tokensPrefs.edit().remove(hex).apply()
         when (mode) {
             is Mode.Shared -> {
+                dropLegacyCopy(hex)
                 manager.peekAuthToken(entry.account, ACCESS)?.let { manager.invalidateAuthToken(TYPE, it) }
                 manager.setPassword(entry.account, null)
             }
-            is Mode.Own -> manager.setUserData(entry.account, own(packageName), null)
+            is Mode.Own -> {
+                tokensPrefs.edit().remove(hex).apply()
+                manager.setUserData(entry.account, own(packageName), null)
+            }
         }
+    }
+
+    /**
+     * This app's private tokens of [hex], deleted on the way out, whether or
+     * not the account entry still exists ([Mode.Own]): after another app or
+     * system Settings removed the account, the caller can still revoke the
+     * session it held. Null when this app kept none or cannot open them.
+     */
+    fun discard(hex: String): Tokens? {
+        if (mode !is Mode.Own) return null
+        val stored = tokensPrefs.getString(hex, null) ?: return null
+        tokensPrefs.edit().remove(hex).apply()
+        find(hex)?.let { manager.setUserData(it.account, own(packageName), null) }
+        val json = runCatching { JSONObject(stored) }.getOrNull() ?: return null
+        val access = open(json.optString("token")) ?: return null
+        val refresh = open(json.optString("refresh")) ?: return null
+        if (access.isEmpty() && refresh.isEmpty()) return null
+        return Tokens(token = access, refresh = refresh, expires = json.optString("expires"), session = json.optString("session"))
+    }
+
+    // Mode.Shared drops a private copy 0.5.x kept next to the entry, never a Mode.Own app's
+    // session: 0.6.1 marks those, and the unmarked ones 0.6.0 wrote are sealed (0.5.x suites kept them unsealed).
+    private fun dropLegacyCopy(hex: String) {
+        val stored = tokensPrefs.getString(hex, null) ?: return
+        val json = runCatching { JSONObject(stored) }.getOrNull()
+        val own = json != null && (json.optString("mode") == OWN || json.optString("refresh").startsWith(SEALED))
+        if (!own) tokensPrefs.edit().remove(hex).apply()
     }
 
     /**
@@ -383,6 +414,18 @@ class Accounts(
         manager.setUserData(entry.account, slot(packageName), null)
         val handoff = runCatching { JSONObject(raw).let { Handoff(it.getString("code"), it.optLong("expires")) } }.getOrNull()
         return handoff?.takeUnless { it.expired(now) }?.code
+    }
+
+    /**
+     * The handoff left for [target] on [hex] and not claimed yet, without
+     * claiming it: a signed-in app offers a new one only when this is null or
+     * about to expire. Null too when it has expired.
+     */
+    fun offered(hex: String, target: String, now: Long = System.currentTimeMillis() / 1000): Handoff? {
+        val entry = find(hex) ?: return null
+        val raw = manager.getUserData(entry.account, slot(target)) ?: return null
+        val handoff = runCatching { JSONObject(raw).let { Handoff(it.getString("code"), it.optLong("expires")) } }.getOrNull()
+        return handoff?.takeUnless { it.expired(now) }
     }
 
     /** Removes a handoff left for [target] on [hex] that was not claimed. */
@@ -572,6 +615,9 @@ class Accounts(
 
         /** This app's private file of [Mode.Own] tokens. */
         private const val TOKENS = "pro.aduki.account.tokens"
+
+        /** The marker of a [Mode.Own] copy in the private file. */
+        private const val OWN = "own"
 
         /** The prefix of text sealed by a [Vault]. */
         private const val SEALED = "aduki:1:"
