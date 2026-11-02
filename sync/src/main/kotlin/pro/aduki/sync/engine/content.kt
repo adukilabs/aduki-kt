@@ -4,6 +4,7 @@ import io.objectbox.BoxStore
 import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
 import org.json.JSONObject
+import pro.aduki.core.errors.Faults
 import pro.aduki.core.models.Attachment
 import pro.aduki.core.models.Body
 import pro.aduki.core.models.BodyMode
@@ -67,20 +68,26 @@ class Content(
             if (e is CancellationException || cached == null || refresh) throw e
             return body(cached).only(mode)
         }
-        storage.put(
-            ContentEntity(
-                id = cached?.id ?: 0,
-                hex = hex,
-                text = fresh.text,
-                html = fresh.html,
-                attachments = encode(fresh.attachments),
-                fetched = System.currentTimeMillis(),
-                quoteStart = fresh.quoteStart,
-                hasText = fresh.hasText,
-                hasHtml = fresh.hasHtml,
-                sanitised = fresh.sanitised
+        // The cache is best effort: a body the store cannot take (too large,
+        // database full or closed) is still returned, just not cached.
+        try {
+            storage.put(
+                ContentEntity(
+                    id = cached?.id ?: 0,
+                    hex = hex,
+                    text = fresh.text,
+                    html = fresh.html,
+                    attachments = encode(fresh.attachments),
+                    fetched = System.currentTimeMillis(),
+                    quoteStart = fresh.quoteStart,
+                    hasText = fresh.hasText,
+                    hasHtml = fresh.hasHtml,
+                    sanitised = fresh.sanitised
+                )
             )
-        )
+        } catch (e: Exception) {
+            Faults.report("body cache write", e)
+        }
         return fresh.copy(hex = hex).only(mode)
     }
 

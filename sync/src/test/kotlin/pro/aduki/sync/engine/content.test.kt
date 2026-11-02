@@ -174,4 +174,15 @@ class ContentTest {
         assertFalse(draft.sanitised)
         assertTrue(server.modes.isEmpty())
     }
+
+    @Test
+    fun aBodyTheStoreCannotTakeIsStillReturned() = runBlocking {
+        val full = object : ContentStorage {
+            override fun get(hex: String): ContentEntity? = null
+            override fun put(content: ContentEntity) = throw io.objectbox.exception.DbFullException("Could not put")
+            override fun remove(hexes: List<String>) {}
+        }
+        val content = Content(full, Server(reading = true, body = sanitised))
+        assertEquals(sanitised, content.body("m1"))
+    }
 }
