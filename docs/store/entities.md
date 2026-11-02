@@ -1,6 +1,6 @@
 # Entities
 
-The SDK's local data models are ObjectBox entities (`pro.aduki.store.entities`). Besides the four below the module holds `Appointment` (one calendar event with its iCalendar object), `Service` and `Slot` for [scheduling](../services/scheduling.md).
+The SDK's local data models are ObjectBox entities (`pro.aduki.store.entities`). Besides the four below the module holds `Appointment` (one calendar event with its iCalendar object), `Service` and `Slot` for [scheduling](../services/scheduling.md). `Content` caches a message body for [`Mail.body`](../services/mail.md#6-bodies-and-attachments): the text, HTML and attachments, sealed, and (0.6.2) `quoteStart`, `hasText`, `hasHtml`, `sanitised` and `local` (a draft saved on the device).
 
 ---
 

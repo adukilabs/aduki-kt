@@ -170,6 +170,75 @@ class LiveTest {
         client.close()
     }
 
+    // Sends [draft] to self and returns the hex of the copy that arrives in the inbox.
+    private suspend fun arrive(client: Aduki, tag: String, draft: pro.aduki.core.models.Draft): String {
+        client.mail.send(draft)
+        assertEquals(0, client.sync.pending())
+        var found: pro.aduki.store.entities.Message? = null
+        repeat(20) {
+            if (found != null) return@repeat
+            client.sync.all(listOf("inbox"))
+            found = client.mail.search(tag)!!.let { flow -> kotlinx.coroutines.withTimeoutOrNull(2_000) { flow.first { it.isNotEmpty() } } }?.firstOrNull()
+            if (found == null) Thread.sleep(1_500)
+        }
+        return (found ?: error("the message did not arrive")).hex
+    }
+
+    /**
+     * T5-LIVE-06b: Server reading (`urn:aduki:params:jmap:reading`) in each
+     * BodyMode, with and without a store; skipped when the server lacks it.
+     */
+    @Test
+    fun bodyModes() = runBlocking {
+        val me = System.getProperty("aduki.address") ?: System.getenv("ADUKI_ADDRESS")
+        assumeTrue("Skipping live send: set ADUKI_ADDRESS to the account's own address", !me.isNullOrBlank())
+        val client = live(store = true)
+        assumeTrue(
+            "Skipping body modes: the server has no reading support",
+            pro.aduki.net.http.Jmap.READING in client.jmap.session().capabilities
+        )
+        val tag = "modes-${System.currentTimeMillis()}"
+        val text = "plain $tag\n\n> quoted $tag\n"
+        val hex = arrive(
+            client, tag,
+            pro.aduki.core.models.Draft(to = listOf(me!!), subject = "Modes $tag", text = text, html = "<p onclick=\"x()\">html $tag</p><script>x()</script>")
+        )
+        val both = client.mail.body(hex, pro.aduki.core.models.BodyMode.Both, refresh = true)
+        assertTrue(both.sanitised && both.hasText && both.hasHtml)
+        assertTrue(both.html.contains("html $tag"))
+        assertFalse(both.html.contains("<script", ignoreCase = true))
+        assertFalse(both.html.contains("onclick", ignoreCase = true))
+        assertTrue(both.text.contains("plain $tag"))
+        both.quoteStart?.let { assertTrue(both.text.substring(it).startsWith(">")) }
+
+        val rich = client.mail.body(hex, pro.aduki.core.models.BodyMode.Rich)
+        assertEquals(both.html, rich.html)
+        assertEquals("", rich.text)
+        val plain = client.mail.body(hex, pro.aduki.core.models.BodyMode.Plain)
+        assertEquals(both.text, plain.text)
+        assertEquals("", plain.html)
+
+        // Without a store each mode goes to the server.
+        val bare = live()
+        for (mode in pro.aduki.core.models.BodyMode.entries) {
+            val body = bare.mail.body(hex, mode)
+            assertTrue(body.sanitised && body.hasText && body.hasHtml)
+            assertEquals(mode != pro.aduki.core.models.BodyMode.Plain, body.html.isNotEmpty())
+            assertEquals(mode != pro.aduki.core.models.BodyMode.Rich, body.text.isNotEmpty())
+        }
+
+        // An HTML-only message.
+        val only = arrive(
+            client, "$tag-html",
+            pro.aduki.core.models.Draft(to = listOf(me), subject = "Modes $tag-html", html = "<p>only $tag-html</p>")
+        )
+        val html = client.mail.body(only, pro.aduki.core.models.BodyMode.Rich)
+        assertTrue(html.sanitised && html.hasHtml)
+        assertTrue(html.html.contains("only $tag-html"))
+        bare.close()
+        client.close()
+    }
+
     /**
      * T5-LIVE-07: Live event create, reschedule, answer, cancel and delete through
      * the outbox (`/user/events`), then the account's services and bookings.

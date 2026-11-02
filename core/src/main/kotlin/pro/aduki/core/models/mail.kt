@@ -121,14 +121,36 @@ data class Attachment(
 )
 
 /**
+ * BodyMode is the reading a message body is asked for: [Rich] the sanitised
+ * HTML, [Plain] the unwrapped text with its quote start, [Both] both. A
+ * server without reading support returns the raw parts whatever the mode.
+ */
+enum class BodyMode { Rich, Plain, Both }
+
+/**
  * Body is the full content of a message: its text and HTML parts (either
  * may be empty) and its attachments.
+ *
+ * When the server reads the body for the SDK ([sanitised] true), [html] is
+ * HTML already cleaned by the server, and [text] the text with `format=flowed`
+ * unwrapped and quoted lines marked with `>` per depth. A [BodyMode.Rich]
+ * body then has an empty [text], and a [BodyMode.Plain] body an empty [html].
+ * Otherwise [text] and [html] are the raw parts, and [html] must be sanitised
+ * before it is shown.
  */
 data class Body(
     val hex: String = "",
     val text: String = "",
     val html: String = "",
-    val attachments: List<Attachment> = emptyList()
+    val attachments: List<Attachment> = emptyList(),
+    /** Where the quoted reply starts in [text] (a [String] index, at a line start), or null. */
+    val quoteStart: Int? = null,
+    /** The message has a real text part (even when this body leaves [text] out). */
+    val hasText: Boolean = text.isNotEmpty(),
+    /** The message has a real HTML part (even when this body leaves [html] out). */
+    val hasHtml: Boolean = html.isNotEmpty(),
+    /** The server sanitised [html] and unwrapped [text]. */
+    val sanitised: Boolean = false
 )
 
 /**
