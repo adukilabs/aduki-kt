@@ -56,7 +56,7 @@ class HandoffTest {
     @Test
     fun ttlAndTargetAreChecked() {
         val id = Id(client, identity())
-        for ((target, ttl) in listOf("" to 600L, "pro.aduki.calendar" to 59L, "pro.aduki.calendar" to 86_401L)) {
+        for ((target, ttl) in listOf("" to 600L, "pro.aduki.calendar" to 29L, "pro.aduki.calendar" to 86_401L)) {
             try {
                 id.handoff(target, ttl)
                 fail("expected IllegalArgumentException for $target/$ttl")

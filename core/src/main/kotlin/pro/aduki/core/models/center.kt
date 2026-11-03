@@ -7,6 +7,7 @@ package pro.aduki.core.models
  * @property unlock `center` when a center unlock opens it, `self` when it
  * needs its own credential.
  */
+@Deprecated("Use AccountProfile (GET /v1/center lists each account's full profile: CenterView).")
 data class Linked(
     val hex: String,
     val handle: String,

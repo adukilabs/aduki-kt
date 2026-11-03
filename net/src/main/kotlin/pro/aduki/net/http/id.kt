@@ -4,6 +4,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 
 import okhttp3.MediaType.Companion.toMediaType
 
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -11,7 +12,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import pro.aduki.core.config.Endpoints
 import pro.aduki.core.errors.AdukiException
+import pro.aduki.core.models.AccountProfile
 import pro.aduki.core.models.AccountSession
+import pro.aduki.core.models.CenterView
 import java.time.Instant
 
 /**
@@ -145,8 +148,12 @@ class Id(
             store(audience, fresh)
             return fresh.token
         } catch (e: AdukiException.Unauthorized) {
-            refresh = "" // spent, expired or revoked: never present it again
-            cache.clear()
+            // Spent, expired or revoked: never present it again. Any other
+            // 401 (a second factor, a stale epoch) leaves the token unspent.
+            if (e.ended) {
+                refresh = ""
+                cache.clear()
+            }
             throw e
         } catch (e: AdukiException.Auth) {
             // 2xx that failed validation: the old token is spent already.
@@ -154,7 +161,8 @@ class Id(
             cache.clear()
             throw e
         }
-        // Network failures and 429/5xx leave the token unspent: keep it.
+        // A refused proof (AdukiException.Proof: auth.dpop, auth.nonce), network
+        // failures and 429/5xx leave the token unspent: keep it.
     }
 
     private fun store(audience: String, tokens: Tokens) {
@@ -185,7 +193,7 @@ class Id(
         }
         return response.use { resp ->
             if (!resp.isSuccessful) {
-                if (resp.code == 401) throw AdukiException.Unauthorized("Unauthorized")
+                if (resp.code == 401) Failures.raise(resp, resp.body?.string().orEmpty(), "Sessions")
                 throw AdukiException.Api(resp.code, "sessions.error", "Failed to list sessions: HTTP ${resp.code}")
             }
             val body = resp.body?.string().orEmpty()
@@ -228,24 +236,122 @@ class Id(
     /**
      * Asks Aduki ID for a single-use [Handoff] that lets the app [target] (a
      * package name) open its own session of this account without a password
-     * or second factor: `POST /v1/handoffs`. [ttl] is in seconds, 60 to
-     * 86400. A new handoff for the same target replaces an unredeemed one;
-     * all of them end with this session.
+     * or second factor: `POST /v1/handoffs`. [ttl] is in seconds, 30 to
+     * 86400. With [jkt] (the RFC 7638 thumbprint of the **receiving** app's
+     * DPoP key) the code works only with a proof by that key. A new handoff
+     * for the same target replaces an unredeemed one; all of them end with
+     * this session. [Handoff.expires] is on this device's clock (from the
+     * server's `expires_in`).
      */
-    fun handoff(target: String, ttl: Long = Handoff.TTL): Handoff {
+    fun handoff(target: String, ttl: Long = Handoff.TTL, jkt: String? = null): Handoff {
         require(target.isNotBlank()) { "target is required" }
-        require(ttl in 60..86_400) { "ttl: 60 seconds to 24 hours" }
-        val body = JSONObject().put("target", target.trim()).put("ttl", ttl).toString()
+        require(ttl in 30..86_400) { "ttl: 30 seconds to 24 hours" }
+        val body = JSONObject().put("target", target.trim()).put("ttl", ttl)
+            .apply { jkt?.trim()?.ifBlank { null }?.let { put("jkt", it) } }
+            .toString()
         val response = call("id") { token ->
             Request.Builder()
                 .url(url("handoffs"))
                 .header("Authorization", "Bearer $token")
-                .post(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .post(body.toRequestBody(JSON))
                 .build()
         }
         return response.use { resp ->
             val data = Login.data(resp, "Handoff")
-            Handoff(Login.required(data, "handoff", "handoff"), data.optLong("expires", 0))
+            Handoff(Login.required(data, "handoff", "handoff"), Handoff.local(data, clock))
+        }
+    }
+
+    /**
+     * The signed-in account's profile, `GET /v1/me`: hex, handle, name, kind,
+     * tenant, photo tag, center, unlock, and this session and its device group.
+     */
+    fun me(): AccountProfile {
+        val response = call("id") { token ->
+            Request.Builder().url(url("me")).header("Authorization", "Bearer $token").get().build()
+        }
+        return response.use { Center.profile(Login.data(it, "Profile")) }
+    }
+
+    /**
+     * The Account Center of the signed-in account, `GET /v1/center`: an
+     * account in no center is listed alone with [CenterView.center] null.
+     */
+    fun center(): CenterView {
+        val response = call("id") { token ->
+            Request.Builder().url(url("center")).header("Authorization", "Bearer $token").get().build()
+        }
+        return response.use { Center.view(Login.data(it, "Center")) }
+    }
+
+    /**
+     * Adds the account a link [ticket] names to the signed-in account's Account
+     * Center: `POST /v1/links {ticket}`. The ticket comes from a sign-in with
+     * `link: true` in this app; this session must be bound to the same DPoP
+     * key (the client carries it).
+     *
+     * @throws AdukiException.Network with code 403 when a tenant forbids
+     * links, 409 when the center would hold two personal accounts.
+     * @throws AdukiException.Unauthorized (`auth.invalid`) for an unknown,
+     * used or expired ticket.
+     * @throws AdukiException.Proof (`auth.dpop`) when this session is not
+     * bound to the ticket's key; the ticket stays usable.
+     */
+    fun link(ticket: String): CenterView {
+        require(ticket.isNotBlank()) { "ticket is required" }
+        val body = JSONObject().put("ticket", ticket.trim()).toString()
+        val response = call("id") { token ->
+            Request.Builder().url(url("links")).header("Authorization", "Bearer $token")
+                .post(body.toRequestBody(JSON)).build()
+        }
+        return response.use { Center.view(Login.data(it, "Link")) }
+    }
+
+    /**
+     * Unlinks the signed-in account from its Account Center (`DELETE
+     * /v1/links {code}`); [code] is a fresh authenticator code. False when it
+     * was in no center (`404`).
+     */
+    fun unlink(code: String): Boolean {
+        val body = JSONObject().put("code", code.trim()).toString()
+        val response = call("id") { token ->
+            Request.Builder().url(url("links")).header("Authorization", "Bearer $token")
+                .delete(body.toRequestBody(JSON)).build()
+        }
+        return response.use { resp ->
+            val raw = resp.body?.string().orEmpty()
+            when {
+                resp.code == 404 -> false
+                !resp.isSuccessful -> Failures.raise(resp, raw, "Unlink")
+                else -> true
+            }
+        }
+    }
+
+    /**
+     * Ends the sessions of the device [group] (`DELETE /v1/sessions?group=`):
+     * every app's session of this account on this device, this one included.
+     * With [account] (a hex in this account's Account Center) only that
+     * account's sessions of the group end ("remove from this device").
+     * Returns how many ended; 0 when the group (or the account in it) has no
+     * live session (`404`).
+     */
+    fun endGroup(group: String, account: String? = null): Int {
+        require(group.isNotBlank()) { "group is required" }
+        val target = url("sessions").toHttpUrl().newBuilder()
+            .addQueryParameter("group", group.trim())
+            .apply { account?.trim()?.ifBlank { null }?.let { addQueryParameter("account", it) } }
+            .build()
+        val response = call("id") { token ->
+            Request.Builder().url(target).header("Authorization", "Bearer $token").delete().build()
+        }
+        return response.use { resp ->
+            val raw = resp.body?.string().orEmpty()
+            when {
+                resp.code == 404 -> 0
+                !resp.isSuccessful -> Failures.raise(resp, raw, "Sign-out")
+                else -> runCatching { JSONObject(Envelope.data(raw)).optInt("ended", 1) }.getOrDefault(1)
+            }
         }
     }
 
@@ -280,12 +386,19 @@ class Id(
     }
 
     private fun url(path: String) = "${base.trimEnd('/')}/$path"
+
+    private companion object {
+        val JSON = "application/json; charset=utf-8".toMediaType()
+    }
 }
 
 /**
  * A single-use code from Aduki ID ([Id.handoff]) with which another app of the
  * same publisher opens its own session ([Login.redeem]). [expires] is in Unix
- * seconds. It is a bearer secret until redeemed: hand it only to [Id.handoff]'s target.
+ * seconds on **this device's clock**: Aduki ID's `expires_in` added to the
+ * local time when the answer came (a phone whose clock is wrong would
+ * otherwise drop every code). It is a bearer secret until redeemed (unless
+ * bound to the receiver's key): hand it only to [Id.handoff]'s target.
  */
 data class Handoff(val code: String, val expires: Long) {
     /** True once [expires] has passed. */
@@ -294,5 +407,15 @@ data class Handoff(val code: String, val expires: Long) {
     companion object {
         /** The default lifetime, seconds. */
         const val TTL = 3_600L
+
+        /** The lifetime a broker asks for, seconds (ADK-AUTH-001 §10). */
+        const val BROKER_TTL = 120L
+
+        // The local expiry of a handoff answer: now + expires_in, else the
+        // server's absolute expires (an older server).
+        internal fun local(data: JSONObject, clock: () -> Long): Long {
+            val lifetime = data.optLong("expires_in", -1)
+            return if (lifetime >= 0) clock() / 1000 + lifetime else data.optLong("expires", 0)
+        }
     }
 }

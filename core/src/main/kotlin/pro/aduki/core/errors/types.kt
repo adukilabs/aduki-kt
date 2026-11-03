@@ -24,7 +24,41 @@ sealed class AdukiException(
     class Auth(message: String, cause: Throwable? = null, val refresh: String = "") :
         AdukiException(message, cause)
 
-    class Unauthorized(message: String, cause: Throwable? = null) :
+    /**
+     * A `401` from Aduki ID or a service. [kind] is the server's error kind
+     * (`auth.invalid`, `auth.reused`, `auth.revoked`, `auth.expired`,
+     * `auth.factor`, `auth.stale`, ...; blank when the answer had none).
+     * A DPoP failure (`auth.dpop`, `auth.nonce`) is [Proof] instead, so a
+     * `catch (e: Unauthorized)` that drops the session never sees one.
+     */
+    class Unauthorized(message: String, cause: Throwable?, val kind: String) :
+        AdukiException(message, cause) {
+
+        constructor(message: String, cause: Throwable? = null) : this(message, cause, "")
+
+        /**
+         * True when the session is over and its tokens must be dropped: a
+         * spent, revoked, expired or unknown refresh token (`auth.reused`,
+         * `auth.revoked`, `auth.expired`, `auth.invalid`). False for any other
+         * kind (`auth.factor`, `auth.stale`) and for a `401` without a kind
+         * (a proxy or gateway answer is no verdict on the session).
+         */
+        val ended: Boolean get() = kind in ENDED
+
+        companion object {
+            /** The kinds after which the tokens are useless (Aduki ID, `POST /v1/tokens`). */
+            val ENDED = setOf("auth.invalid", "auth.reused", "auth.revoked", "auth.expired")
+        }
+    }
+
+    /**
+     * A DPoP proof was refused (`401 auth.dpop`: invalid, mismatched, replayed
+     * or missing for a bound session) or still needs the server nonce after
+     * the one retry (`auth.nonce`, OAuth `use_dpop_nonce`). Nothing changed at
+     * the server: keep the tokens, fix the key or clock, and retry later.
+     * [nonce] is the server's latest nonce when it sent one.
+     */
+    class Proof(message: String, val kind: String, val nonce: String? = null, cause: Throwable? = null) :
         AdukiException(message, cause)
 
     /**

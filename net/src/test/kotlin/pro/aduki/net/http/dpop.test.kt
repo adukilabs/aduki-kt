@@ -9,6 +9,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -30,7 +31,7 @@ import java.util.Base64
 class DpopTest {
     private lateinit var server: MockWebServer
 
-    @Before fun setup() { server = MockWebServer().also { it.start() } }
+    @Before fun setup() { Dpop.forgetNonces(); server = MockWebServer().also { it.start() } }
     @After fun teardown() { server.shutdown() }
 
     private fun dec(s: String) = Base64.getUrlDecoder().decode(s)
@@ -161,7 +162,7 @@ class DpopTest {
     @Test
     fun serverNonceIsRetriedOnceWithAFreshJtiAndRemembered() {
         val http = OkHttpClient.Builder().addInterceptor(Dpop(Software.p256())).build()
-        server.enqueue(MockResponse().setResponseCode(401).setHeader("DPoP-Nonce", "srv-1"))
+        server.enqueue(MockResponse().setResponseCode(401).setHeader("DPoP-Nonce", "srv-1").setBody(NONCE))
         server.enqueue(MockResponse().setBody("{}"))
         server.enqueue(MockResponse().setBody("{}"))
         fun post() = http.newCall(Request.Builder().url(server.url("/v1/tokens")).post(okhttp3.RequestBody.create(null, "{}")).build()).execute()
@@ -180,11 +181,83 @@ class DpopTest {
     @Test
     fun aSecondNonceRefusalIsReturnedNotLooped() {
         val http = OkHttpClient.Builder().addInterceptor(Dpop(Software.p256())).build()
-        server.enqueue(MockResponse().setResponseCode(401).setHeader("DPoP-Nonce", "n1"))
-        server.enqueue(MockResponse().setResponseCode(401).setHeader("DPoP-Nonce", "n2"))
+        server.enqueue(MockResponse().setResponseCode(401).setHeader("DPoP-Nonce", "n1").setBody(NONCE))
+        server.enqueue(MockResponse().setResponseCode(401).setHeader("DPoP-Nonce", "n2").setBody(NONCE))
         val response = http.newCall(Request.Builder().url(server.url("/v1/tokens")).post(okhttp3.RequestBody.create(null, "{}")).build()).execute()
         assertEquals(401, response.code)
         response.close()
         assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun aRefusalThatIsNotANonceChallengeIsNotRetried() {
+        val http = OkHttpClient.Builder().addInterceptor(Dpop(Software.p256())).build()
+        // Aduki ID stamps a nonce on every answer to a DPoP request, failures included.
+        server.enqueue(
+            MockResponse().setResponseCode(401).setHeader("DPoP-Nonce", "n1")
+                .setBody("""{"success":false,"error":{"status":401,"kind":"auth.revoked","message":"ended"}}""")
+        )
+        val response = http.newCall(Request.Builder().url(server.url("/v1/tokens")).post(okhttp3.RequestBody.create(null, "{}")).build()).execute()
+        assertEquals(401, response.code)
+        assertTrue("the body is still readable", response.body!!.string().contains("auth.revoked"))
+        assertEquals("a refresh refused as revoked is never sent twice", 1, server.requestCount)
+        // ...but its nonce is used by the next proof.
+        server.enqueue(MockResponse().setBody("{}"))
+        http.newCall(Request.Builder().url(server.url("/v1/tokens")).post(okhttp3.RequestBody.create(null, "{}")).build()).execute().close()
+        server.takeRequest()
+        assertEquals("n1", verify(server.takeRequest().getHeader("DPoP")!!).second.getString("nonce"))
+    }
+
+    @Test
+    fun oauthUseDpopNonceIsRetriedWithTheNonceOfTheDetailsOrHeader() {
+        val http = OkHttpClient.Builder().addInterceptor(Dpop(Software.p256())).build()
+        server.enqueue(
+            MockResponse().setResponseCode(400).setHeader("DPoP-Nonce", "o1")
+                .setHeader("WWW-Authenticate", "DPoP error=\"use_dpop_nonce\"")
+                .setBody("""{"error":"use_dpop_nonce","error_description":"use the nonce"}""")
+        )
+        server.enqueue(MockResponse().setBody("{}"))
+        val response = http.newCall(Request.Builder().url(server.url("/oauth/token")).post(okhttp3.RequestBody.create(null, "x")).build()).execute()
+        assertEquals(200, response.code)
+        response.close()
+        server.takeRequest()
+        assertEquals("o1", verify(server.takeRequest().getHeader("DPoP")!!).second.getString("nonce"))
+    }
+
+    @Test
+    fun aNonceOnlyInTheErrorDetailsIsUsed() {
+        val http = OkHttpClient.Builder().addInterceptor(Dpop(Software.p256())).build()
+        server.enqueue(
+            MockResponse().setResponseCode(401)
+                .setBody("""{"success":false,"error":{"status":401,"kind":"auth.nonce","message":"m","details":{"nonce":"d1"}}}""")
+        )
+        server.enqueue(MockResponse().setBody("{}"))
+        http.newCall(Request.Builder().url(server.url("/v1/tokens")).post(okhttp3.RequestBody.create(null, "{}")).build()).execute().close()
+        server.takeRequest()
+        assertEquals("d1", verify(server.takeRequest().getHeader("DPoP")!!).second.getString("nonce"))
+    }
+
+    @Test
+    fun aLazyKeyIsReadAtTheFirstProofAndAgainWhileItFails() {
+        var reads = 0
+        val key = Software.p256()
+        val dpop = Dpop.lazy({
+            reads++
+            if (reads == 1) throw IllegalStateException("Keystore busy") else key
+        })
+        assertEquals("building reads no key", 0, reads)
+        val http = OkHttpClient.Builder().addInterceptor(dpop).build()
+        server.enqueue(MockResponse().setBody("{}"))
+        server.enqueue(MockResponse().setBody("{}"))
+        fun post() = http.newCall(Request.Builder().url(server.url("/v1/tokens")).post(okhttp3.RequestBody.create(null, "{}")).build()).execute()
+        assertThrows(java.io.IOException::class.java) { post() }
+        post().close()
+        post().close()
+        assertEquals("kept once it worked", 2, reads)
+        assertEquals(key.thumbprint(), dpop.thumbprint())
+    }
+
+    private companion object {
+        const val NONCE = """{"success":false,"error":{"status":401,"kind":"auth.nonce","message":"use the DPoP nonce"}}"""
     }
 }
