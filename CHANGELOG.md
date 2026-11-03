@@ -2,6 +2,17 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
+## 0.7.1 (unreleased)
+
+Public holidays. It needs the mail server with `GET /user/holidays`, `PUT|DELETE /user/holidays/{region}` and `GET /user/exceptions`.
+
+- `Scheduling.holidayRegions(): List<HolidayRegion>?` lists the regions the account follows (ISO 3166-1 alpha-2 codes), empty for a new account.
+- `Scheduling.holidays(start, end): List<Holiday>?` reads the holidays the server blocks on the account's schedules: the exceptions of source `holiday`, read in parts of at most 366 days. The server keeps them from yesterday to about 400 days ahead. Both reads never throw: null on failure, reported through `Faults.report`.
+- `Scheduling.followHoliday(region): HolidayRegion` and `unfollowHoliday(region)` throw `AdukiException` (`Network` with `code` 400 for a region without data, 404 for unfollowing a region not followed).
+- New models in `pro.aduki.core.models`: `HolidayRegion` and `Holiday` (with `date(zone)`, the date of the middle of the day in a zone, and `date` in UTC).
+- `pro.aduki.net.http.Scheduling.holidayRegions`, `followHoliday`, `unfollowHoliday` and `holidays(from, to)`.
+- See `docs/services/scheduling.md`.
+
 ## 0.7.0 (2026-11-03)
 
 Profiles: name, photo, tenant, role, plan and storage. It needs the mail server with `GET /user/profile` and the `/user/avatar` routes, and Aduki ID with `PATCH /v1/accounts/{hex}`; against older servers `profile()` returns null and the writes fail with `AdukiException.Api`.

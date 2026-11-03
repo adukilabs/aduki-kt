@@ -15,6 +15,8 @@ import pro.aduki.core.models.CalendarRecord
 import pro.aduki.core.models.AppointmentRecord
 import pro.aduki.core.models.EventChanges
 import pro.aduki.core.models.EventRequest
+import pro.aduki.core.models.Holiday
+import pro.aduki.core.models.HolidayRegion
 import pro.aduki.core.models.OfferRecord
 import pro.aduki.core.models.OfferRequest
 import pro.aduki.core.models.Response
@@ -429,4 +431,44 @@ class Scheduling internal constructor(
      */
     suspend fun stats(service: String, start: Instant, end: Instant): Stats =
         client.io { api().stats(service, start, end) }
+
+    // ── Holidays ─────────────────────────────────────────────────────
+
+    /**
+     * The regions whose public holidays the account follows
+     * (`GET /user/holidays`), empty for a new account. Never throws: null
+     * when they could not be read (offline, refused, no client), reported
+     * through `Faults.report`.
+     */
+    suspend fun holidayRegions(): List<HolidayRegion>? = quiet("holiday regions") { api().holidayRegions() }
+
+    /**
+     * The public holidays of the followed regions overlapping [start] ..
+     * [end], sorted by start. The server keeps them as whole-day blocks from
+     * yesterday to about 400 days ahead, so earlier days are not returned.
+     * Never throws: null when they could not be read, reported through
+     * `Faults.report`.
+     */
+    suspend fun holidays(start: Instant, end: Instant): List<Holiday>? =
+        quiet("holidays") { api().holidays(start, end) }
+
+    /**
+     * Follows [region] (ISO 3166-1 alpha-2, such as `KE`). The server then
+     * blocks its holidays on the account's schedules. Following it again
+     * is not an error. Throws `AdukiException` (`Network` with `code` 400
+     * for a malformed code or a region the server has no holiday data for).
+     */
+    suspend fun followHoliday(region: String): HolidayRegion = client.io { api().followHoliday(region) }
+
+    /** Stops following [region]. Throws `AdukiException` (`Network` with `code` 404 when it was not followed). */
+    suspend fun unfollowHoliday(region: String) = client.io { api().unfollowHoliday(region) }
+
+    private suspend fun <T> quiet(where: String, block: () -> T): T? = try {
+        client.io { block() }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Faults.report(where, e)
+        null
+    }
 }

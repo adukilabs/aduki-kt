@@ -15,6 +15,8 @@ import pro.aduki.core.models.Availability
 import pro.aduki.core.models.BookRequest
 import pro.aduki.core.models.BookingRecord
 import pro.aduki.core.models.CalendarRecord
+import pro.aduki.core.models.Holiday
+import pro.aduki.core.models.HolidayRegion
 import pro.aduki.core.models.OfferRecord
 import pro.aduki.core.models.OfferRequest
 import pro.aduki.core.models.Place
@@ -45,6 +47,8 @@ import java.time.Instant
  *   `POST /user/book/pages/{hex}/bookings` (signed in),
  *   `POST /book/pages/{hex}/bookings` (public, guest), `GET /user/bookings`,
  *   `GET|PATCH /user/bookings/{hex}`.
+ * - holidays: `GET /user/holidays`, `PUT|DELETE /user/holidays/{region}`;
+ *   the dates are the `holiday` exceptions of `GET /user/exceptions?from&to`.
  */
 class Scheduling(
     private val client: OkHttpClient,
@@ -488,6 +492,83 @@ class Scheduling(
 
     // ── Wire shapes ──────────────────────────────────────────────────
 
+    // ── Holidays ─────────────────────────────────────────────────────
+
+    /** The regions whose public holidays the account follows (`GET /user/holidays`). */
+    fun holidayRegions(): List<HolidayRegion> {
+        val request = Request.Builder().url(url("user/holidays")).get().build()
+        return execute(request) { body -> objects(JSONArray(body)).map(::parseRegion) }
+    }
+
+    /**
+     * Follows [region] (ISO 3166-1 alpha-2, any case): `PUT /user/holidays/{region}`.
+     * The server refuses a malformed code or a region it has no holiday data
+     * for (400). Following an already followed region is not an error.
+     */
+    fun followHoliday(region: String): HolidayRegion {
+        val request = Request.Builder()
+            .url(url("user/holidays").newBuilder().addPathSegment(region.trim().uppercase()).build())
+            .put(json(JSONObject()))
+            .build()
+        return execute(request) { parseRegion(JSONObject(it)) }
+    }
+
+    /** Stops following [region] (`DELETE /user/holidays/{region}`); 404 when it was not followed. */
+    fun unfollowHoliday(region: String) {
+        val request = Request.Builder()
+            .url(url("user/holidays").newBuilder().addPathSegment(region.trim().uppercase()).build())
+            .delete()
+            .build()
+        execute(request) { }
+    }
+
+    /**
+     * The holidays overlapping `[from, to)`: the exceptions of source
+     * `holiday` from `GET /user/exceptions?from&to`. The server allows at most
+     * 366 days per call, so a longer range is read in parts. The server
+     * expands holidays from yesterday to about 400 days ahead.
+     */
+    fun holidays(from: Instant, to: Instant): List<Holiday> {
+        if (!from.isBefore(to)) return emptyList()
+        val out = LinkedHashMap<String, Holiday>()
+        var start = from
+        while (start.isBefore(to)) {
+            val end = minOf(start.plusSeconds(SPAN), to)
+            val path = url("user/exceptions").newBuilder()
+                .addQueryParameter("from", start.toString())
+                .addQueryParameter("to", end.toString())
+                .build()
+            val request = Request.Builder().url(path).get().build()
+            execute(request) { body ->
+                objects(JSONArray(body))
+                    .filter { text(it, "source") == "holiday" }
+                    .map(::parseHoliday)
+            }.forEach { out.putIfAbsent(it.hex.ifBlank { "${it.start}/${it.name}" }, it) }
+            start = end
+        }
+        return out.values.sortedBy { it.start }
+    }
+
+    private fun parseRegion(obj: JSONObject) = HolidayRegion(
+        region = text(obj, "region").uppercase(),
+        created = text(obj, "created")
+    )
+
+    // The server writes the reason as "KE: Jamhuri Day" (a tenant's own day has no region).
+    private fun parseHoliday(obj: JSONObject): Holiday {
+        val span = obj.optJSONObject("span")
+        val reason = text(obj, "reason")
+        val code = reason.substringBefore(": ", "")
+        val region = if (code.length == 2 && code.all { it in 'A'..'Z' }) code else ""
+        return Holiday(
+            hex = text(obj, "hex"),
+            name = if (region.isEmpty()) reason else reason.substring(region.length + 2),
+            region = region,
+            start = span?.let { text(it, "start") }.orEmpty(),
+            end = span?.let { text(it, "end") }.orEmpty()
+        )
+    }
+
     private fun json(obj: JSONObject) = obj.toString().toRequestBody(mediaJson)
 
     private fun rules(windows: List<Window>): JSONArray = JSONArray().apply {
@@ -698,5 +779,8 @@ class Scheduling(
 
     private companion object {
         const val LIMIT = 200
+
+        // The longest window `GET /user/exceptions` accepts: 366 days.
+        const val SPAN = 366L * 24 * 3600
     }
 }
