@@ -2,7 +2,7 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
-## 0.7.1 (unreleased)
+## 0.7.1 (2026-11-04)
 
 Public holidays. It needs the mail server with `GET /user/holidays`, `PUT|DELETE /user/holidays/{region}` and `GET /user/exceptions`.
 
