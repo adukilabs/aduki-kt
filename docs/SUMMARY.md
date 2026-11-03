@@ -17,6 +17,7 @@
 - [DPoP](auth/dpop.md)
 - [OIDC Client](auth/oidc.md)
 - [Account Center & Unlock](auth/center.md)
+- [Suite sign-in & Accounts Center](auth/suite.md)
 - [Passkeys](auth/passkeys.md)
 - [API Keys](auth/keys.md)
 - [Two-Factor TOTP (deprecated)](auth/totp.md)

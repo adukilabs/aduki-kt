@@ -2,7 +2,35 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
-## Unreleased
+## 0.8.0 (unreleased)
+
+The suite sign-in protocol: one account directory per device, per-app sessions opened on demand from a signed-in sibling, and the Accounts Center. It needs Aduki ID with handoff `jkt`/`expires_in`, device groups, `GET /v1/me`, link tickets, the rich `GET /v1/center` and DPoP nonces (adukilabs/id#62). This is a minor release because sign-in, token clearing and reconcile change in substance. The public types change additively, with these source breaks: a new `AdukiException.Proof` subclass (an exhaustive `when` needs a branch) and `pro.aduki:android` now depends on `pro.aduki:sdk`. See `docs/auth/suite.md`.
+
+Sessions are no longer wiped by mistake:
+
+- 401s are typed by Aduki ID's kind. `AdukiException.Unauthorized` gains `kind` and `ended`; `ended` is true for `auth.invalid`, `auth.reused`, `auth.revoked`, `auth.expired` only (a 401 with no kind, e.g. from a proxy, keeps the tokens). The new `AdukiException.Proof(kind, nonce)` covers `auth.dpop`, and `auth.nonce` after the one retry. The SDK drops tokens only when `ended` is true. Before, every 401 cleared the store, a refused DPoP proof (a clock off by more than 60 s, a Keystore hiccup) included. `Login.logout` keeps the token unless the session ended.
+- DPoP nonces (RFC 9449 section 8). The `DPoP-Nonce` of every answer is kept per origin, shared by every `Dpop` in the process, and put in the next proofs. Only a nonce challenge is retried, once: `401 auth.nonce`, OAuth `400 use_dpop_nonce`, or a `WWW-Authenticate` naming it. Before, any 401 or 400 carrying a nonce was resent, a refused refresh included.
+- `Dpop.lazy(source)` and `Aduki.Builder.dpop { key }` read the key at the first proof, and again while that fails, instead of once at build.
+- Rotated tokens are saved with the new `TokenStore.saveNow` (the default calls `save`) before they are used. `Accounts.save` (`Mode.Own`) and `Accounts.discard` write with `commit()`, not `apply()`.
+- Renewals are serialised by a process-wide lock per Aduki ID session, across `Aduki` instances: two clients of one session in one process rotate it once.
+- `Handoff.expires` is on the phone's clock: Aduki ID's `expires_in` is added to the local time. Before, the server's absolute time was compared with a clock that may be wrong.
+- `Center.fetch` reads `center: null` as "in no center" (it used to return a center named `"null"`).
+
+New API:
+
+- `Aduki.account(refresh)`: `GET /v1/me` as an `AccountProfile`, cached. It has the real hex, handle, name, kind, tenant (`Tenancy`: hex, name, role, owner), photo tag, center, unlock, session and device group.
+- `Aduki.center()`: a `CenterView` with every account's profile. A lone account comes back with `center` null.
+- `Aduki.link(ticket)`, `unlink(code)` and `handoff(target, ttl, jkt)`; `ttl` now accepts 30 to 86400 seconds.
+- `Aduki.endDevice()` (`DELETE /v1/sessions?group=`; false, tokens kept, when the group is unknown) and `removeFromDevice(account, group)` (`&account=`).
+- `Aduki.signIn(..., link)` and `Aduki.exchange(handoff, ...)` return `Opened(client, group, ticket)`.
+- Net: `Login.signIn(..., link)` and `Login.open(handoff)` return `SignedIn(tokens, group, ticket)`, and `Passkeys.signIn(..., link)` does the same. Also `Id.me`, `Id.center`, `Id.link`, `Id.unlink`, `Id.endGroup` and `Id.handoff(target, ttl, jkt)`, plus `Center.view` and `Center.link(..., ticket)`.
+- New models in `pro.aduki.core.models`: `AccountProfile`, `Tenancy`, `CenterView` and `SignedIn`.
+- Android, `AccountDirectory`: the device's accounts as version 2 `AccountManager` entries with the full profile, device group and link state (`linked`, `removedBy`, `refusal`), plus a private mirror (`orphans`, `restore`) and `changes()`. Its `reconcile(view, current)` never drops an account; device-only accounts are kept with the reason. `migrate(profile)` moves an entry keyed by email to the real hex in place and moves this app's tokens with it. It returns the move, so the app can re-key its own settings (e.g. `contacts.phonebook`).
+- Android, the broker: `SuiteBrokerService` (provider) is an exported bound service behind the signature permission `pro.aduki.permission.ACCOUNT_ACCESS`. Every call is checked with `Callers`: the caller's package must be in the suite and pass `checkSignatures == SIGNATURE_MATCH`, with no debug bypass. `SuiteBroker.open(hex, key) { code -> ... }` (caller) asks each signed-in sibling for a code bound to its key (ttl 120) and redeems it. When none can help it returns `NeedsPassword(reason)`: `NoSibling`, `SignedOut`, `Offline` or `Refused`.
+- Android, `AccountsCenter`: `accounts` (`StateFlow`), `watch`, `refresh`, `add(active, opened)` and `switch(hex, allApps)`. `add` links with the ticket; on 403/409 the account is kept device-only with `Refusal.TenantDenies` or `SecondPersonal`. Also `signOut(hex)` (this app), `removeFromDevice(hex)`, `unlink(hex, code)`, `signOutDevice(hex?)` and `profile(hex)`.
+- `Accounts.pending(hex)` and `settle(hex, code)` replace `claim`: the code is removed only after it was redeemed, and its expiry is left to the server. `Accounts.rekey(from, to)` is new.
+
+Deprecated, still working: `Accounts.offer`, `claim`, `offered`, `withdraw` and `holds` (the push path, kept one release for older siblings), `Accounts.reconcile` and `refresh` (they drop entries), `SwitcherState` (`SwitcherState.of(center.accounts.value)` maps the new rows), and `Linked`.
 
 Fast, observable contacts sync, and contact photos. It uses the mail server's `GET /user/contacts/sync` and `/user/contacts/{hex}/photo` routes; against older servers the sync reads the whole list as before and photo writes are refused.
 

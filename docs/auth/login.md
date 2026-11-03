@@ -46,8 +46,9 @@ with the account (`me()`) already resolved.
 **Throws**
 
 - `AdukiException.Unauthorized`: wrong password, inactive account, or a
-  missing or wrong second factor. The message starts with Aduki ID's error
-  kind, e.g. `auth.factor: ...` when no second factor was given.
+  missing or wrong second factor. `kind` is Aduki ID's error kind (the
+  message starts with it too), e.g. `auth.factor` when no second factor was given.
+- `AdukiException.Proof`: the DPoP proof was refused (`auth.dpop`).
 - `AdukiException.Network`: anything else, e.g. `429` while rate-limited
   (`code` holds the status).
 

@@ -42,10 +42,20 @@ On Android, use `pro.aduki.android.keystore.AndroidKey` from the `android` modul
 - Other credentials (API keys, unbound tokens) are left unchanged.
 - Each proof has `htm`, `htu` (without query or fragment), `iat`, a fresh
   random `jti`, and `nonce` when the server asked for one.
-- A `DPoP-Nonce` from the server is remembered per host; a `401` or `400`
-  carrying a new nonce is retried once with it.
+- The `DPoP-Nonce` of every answer is remembered per origin, shared by every
+  `Dpop` in the process, and put in the next proofs (Aduki ID then accepts a
+  proof whatever the phone's clock says). Only a nonce challenge is retried,
+  once: `401 auth.nonce` or OAuth `400 use_dpop_nonce` (or a
+  `WWW-Authenticate: DPoP error="use_dpop_nonce"`). Any other `401`/`400` is
+  returned as it is, so a refused refresh is never sent twice (0.8.0).
+- `Dpop.lazy { AndroidKey.open() }` (or `Aduki.Builder.dpop { ... }`) reads
+  the key at the first proof and again while that fails, instead of once at
+  build: a Keystore hiccup at start no longer leaves the process without a key.
 
 The private key is never read; `Key` only signs.
+
+A refused proof is `AdukiException.Proof` (`kind` `auth.dpop` or `auth.nonce`):
+nothing changed at the server, and the SDK keeps the tokens.
 
 ## Android device key
 
