@@ -156,6 +156,7 @@ class Accounts(
      * centers and tokens of kept entries are left alone. The center token is
      * stored for later calls to Aduki ID.
      */
+    @Deprecated("Drops entries a center no longer lists; use AccountDirectory.reconcile (keeps device-only accounts) or AccountsCenter.refresh.")
     @Synchronized
     fun reconcile(switcher: Switcher): Change {
         val wanted = switcher.accounts.associateBy { it.hex }
@@ -185,6 +186,8 @@ class Accounts(
      * center, every other entry that belonged to a center is removed and
      * [current] stays as a single account.
      */
+    @Deprecated("Drops every other entry when the account is in no center; use AccountsCenter.refresh.")
+    @Suppress("DEPRECATION")
     fun refresh(client: OkHttpClient, identity: String, bearer: String, current: String): Change {
         val switcher = Center.fetch(client, identity, bearer)
         if (switcher != null) return reconcile(switcher)
@@ -225,7 +228,9 @@ class Accounts(
                     put("saved", now)
                     put("mode", OWN)
                 }
-                tokensPrefs.edit().putString(hex, json.toString()).apply()
+                // commit(), not apply(): a rotated refresh token that is lost
+                // when the process dies is a signed-out app (or a revoked session).
+                tokensPrefs.edit().putString(hex, json.toString()).commit()
                 manager.setUserData(entry.account, own(packageName), now.toString())
             }
         }
@@ -332,7 +337,7 @@ class Accounts(
     fun discard(hex: String): Tokens? {
         if (mode !is Mode.Own) return null
         val stored = tokensPrefs.getString(hex, null) ?: return null
-        tokensPrefs.edit().remove(hex).apply()
+        tokensPrefs.edit().remove(hex).commit()
         find(hex)?.let { manager.setUserData(it.account, own(packageName), null) }
         val json = runCatching { JSONObject(stored) }.getOrNull() ?: return null
         val access = open(json.optString("token")) ?: return null
@@ -373,7 +378,7 @@ class Accounts(
                 runCatching {
                     val json = JSONObject(stored)
                     json.put("token", "")
-                    tokensPrefs.edit().putString(hex, json.toString()).apply()
+                    tokensPrefs.edit().putString(hex, json.toString()).commit()
                 }
             }
         }
@@ -384,6 +389,7 @@ class Accounts(
      * apps mark the entry when they save one); a signed-in app offers
      * handoffs only to apps that do not.
      */
+    @Deprecated("The push handoff path is replaced by the on-demand SuiteBroker; kept one release for older siblings.")
     fun holds(hex: String, target: String): Boolean {
         val entry = find(hex) ?: return false
         return manager.getUserData(entry.account, own(target)) != null
@@ -395,6 +401,7 @@ class Accounts(
      * such entry, the target is this app or the handoff has expired. The entry
      * is visible only to the apps [share] named; the code works once.
      */
+    @Deprecated("Push handoffs are replaced by the on-demand SuiteBroker (a code minted for the caller's key when it asks); kept one release for older siblings.")
     fun offer(hex: String, target: String, handoff: Handoff): Boolean {
         val entry = find(hex) ?: return false
         if (target == packageName || handoff.expired()) return false
@@ -407,7 +414,12 @@ class Accounts(
      * Takes the handoff another app left for this app on [hex] and removes it
      * from the entry: redeem it with `Aduki.redeem(code, dpop = ...)`. Null
      * when none was left or it has expired.
+     *
+     * Deleting the code before it is redeemed loses it when the redeem fails
+     * (offline, a timeout, the process killed): use [pending], redeem, then
+     * [settle].
      */
+    @Deprecated("Removes the code before it is redeemed; use pending(hex), redeem, then settle(hex, code).", ReplaceWith("pending(hex)"))
     fun claim(hex: String, now: Long = System.currentTimeMillis() / 1000): String? {
         val entry = find(hex) ?: return null
         val raw = manager.getUserData(entry.account, slot(packageName)) ?: return null
@@ -417,10 +429,48 @@ class Accounts(
     }
 
     /**
+     * The handoff an older sibling (push path) left for this app on [hex],
+     * without removing it: redeem it, then [settle] it whatever the outcome
+     * except a network failure (then it stays for the next try). Its expiry
+     * is not checked here: it was written on the sibling's view of the server
+     * clock, and Aduki ID decides (`401 auth.invalid` for an expired code).
+     */
+    fun pending(hex: String): String? {
+        val entry = find(hex) ?: return null
+        val raw = manager.getUserData(entry.account, slot(packageName)) ?: return null
+        return runCatching { JSONObject(raw).getString("code") }.getOrNull()?.ifBlank { null }
+    }
+
+    /**
+     * Removes the handoff [code] left for this app on [hex] after it was
+     * redeemed or refused. A newer code left meanwhile is kept. False when
+     * that code is no longer there.
+     */
+    fun settle(hex: String, code: String): Boolean {
+        val entry = find(hex) ?: return false
+        if (pending(hex) != code) return false
+        manager.setUserData(entry.account, slot(packageName), null)
+        return true
+    }
+
+    /**
+     * Moves this app's private tokens of [from] to [to] (the migration of an
+     * entry keyed by email to the account's real hex, `AccountDirectory.migrate`).
+     * False when nothing was stored under [from] or [to] already has tokens.
+     */
+    fun rekey(from: String, to: String): Boolean {
+        if (from == to) return false
+        val stored = tokensPrefs.getString(from, null) ?: return false
+        if (tokensPrefs.contains(to)) return false
+        return tokensPrefs.edit().putString(to, stored).remove(from).commit()
+    }
+
+    /**
      * The handoff left for [target] on [hex] and not claimed yet, without
      * claiming it: a signed-in app offers a new one only when this is null or
      * about to expire. Null too when it has expired.
      */
+    @Deprecated("Push handoffs are replaced by the on-demand SuiteBroker.")
     fun offered(hex: String, target: String, now: Long = System.currentTimeMillis() / 1000): Handoff? {
         val entry = find(hex) ?: return null
         val raw = manager.getUserData(entry.account, slot(target)) ?: return null
@@ -429,6 +479,7 @@ class Accounts(
     }
 
     /** Removes a handoff left for [target] on [hex] that was not claimed. */
+    @Deprecated("Push handoffs are replaced by the on-demand SuiteBroker.")
     fun withdraw(hex: String, target: String): Boolean {
         val entry = find(hex) ?: return false
         manager.setUserData(entry.account, slot(target), null)
@@ -614,7 +665,7 @@ class Accounts(
         const val ACCESS = "access"
 
         /** This app's private file of [Mode.Own] tokens. */
-        private const val TOKENS = "pro.aduki.account.tokens"
+        internal const val TOKENS = "pro.aduki.account.tokens"
 
         /** The marker of a [Mode.Own] copy in the private file. */
         private const val OWN = "own"

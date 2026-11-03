@@ -40,6 +40,8 @@ dependencies {
     api(project(":core"))
     api(project(":crypto"))
     api(project(":net"))
+    // AccountsCenter works on the apps' Aduki clients (sign-in, center, links, sign-out).
+    api(project(":sdk"))
     implementation(libs.kotlin.stdlib)
     implementation(libs.kotlin.coroutines.android)
     implementation(libs.okhttp)
