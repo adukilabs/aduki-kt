@@ -71,6 +71,12 @@ class Scheduling internal constructor(...) {
     suspend fun cancelBooking(hex: String, note: String = ""): BookingRecord
     suspend fun rescheduleBooking(hex: String, start: Instant, length: Int? = null): BookingRecord
     suspend fun stats(service: String, start: Instant, end: Instant): Stats
+
+    // Public holidays, online (reads never throw: null on failure)
+    suspend fun holidayRegions(): List<HolidayRegion>?
+    suspend fun holidays(start: Instant, end: Instant): List<Holiday>?
+    suspend fun followHoliday(region: String): HolidayRegion
+    suspend fun unfollowHoliday(region: String)
 }
 ```
 
@@ -173,6 +179,35 @@ client.scheduling.removeCalendar(personal.hex)
 The account's calendar collections (`GET /user/calendars`). `EventRequest.calendar`
 accepts a calendar hex to place events in a specific calendar. `client.scheduling.calendar(hex)`
 (or `client.scheduling.calendar(appointment)`) resolves the calendar record with its name and colour.
+
+### Public holidays
+
+```kotlin
+client.scheduling.followHoliday("KE")
+val regions = client.scheduling.holidayRegions()          // [HolidayRegion("KE", ...)], or null offline
+val days = client.scheduling.holidays(start, end).orEmpty()
+days.forEach { println("${it.date(ZoneId.systemDefault())} ${it.name} (${it.region})") }
+client.scheduling.unfollowHoliday("KE")
+```
+
+An account follows regions by ISO 3166-1 alpha-2 code. The server then blocks
+each public holiday of those regions as a whole local day on the account's
+schedules (in the zone of its main schedule, UTC without one), so booking pages
+are closed on those days. `holidays(start, end)` reads those blocks: the
+exceptions of source `holiday`. Each `Holiday` has its name, region (blank for
+a day the tenant added), the day's bounds, and `date(zone)`, the date of the
+middle of the day in `zone`.
+
+- The server keeps holidays from yesterday to about 400 days ahead: earlier
+  dates are not returned. A range longer than 366 days is read in parts.
+- There is no list of regions for accounts: the regions with data are
+  managed by operators. `followHoliday` fails (`AdukiException.Network`,
+  `code` 400) for a malformed code or a region without data; following a
+  region again is not an error. `unfollowHoliday` fails with `code` 404 for a
+  region not followed.
+- Observances (days that do not take time away) are not returned.
+- `holidayRegions` and `holidays` never throw: they return null when the
+  server cannot be read, and report the failure through `Faults.report`.
 
 ---
 
@@ -289,6 +324,9 @@ uses to change a service's windows.
 | `cancelBooking` | `PATCH /user/bookings/{hex}` `{state: "cancelled", note}` |
 | `rescheduleBooking` | `PATCH /user/bookings/{hex}` `{start, length?}` |
 | `stats` | `GET /user/pages/{hex}/stats?from&to` |
+| `holidayRegions` | `GET /user/holidays` |
+| `followHoliday`, `unfollowHoliday` | `PUT /user/holidays/{region}`, `DELETE /user/holidays/{region}` |
+| `holidays` | `GET /user/exceptions?from&to` (at most 366 days each), source `holiday` |
 
 ---
 
