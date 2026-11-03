@@ -46,6 +46,7 @@ class Builder {
     fun token(token: String): Builder
     fun endpoint(endpoint: String): Builder
     fun identity(identity: String): Builder
+    fun drive(drive: String): Builder
     fun dpop(key: pro.aduki.crypto.dpop.Key): Builder
     fun secure(enabled: Boolean): Builder
     fun pins(vararg pins: Pin): Builder

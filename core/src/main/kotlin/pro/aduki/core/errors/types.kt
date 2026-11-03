@@ -40,7 +40,13 @@ sealed class AdukiException(
         message: String,
         val details: String? = null,
         val retryAfter: Long? = null
-    ) : AdukiException("$kind: $message")
+    ) : AdukiException("$kind: $message") {
+        /**
+         * True for a 403 `locked`: the tenant locks profiles and the caller is
+         * not an owner, so the name and photo cannot be changed.
+         */
+        val locked: Boolean get() = status == 403 && (kind == "locked" || kind.endsWith(".locked"))
+    }
 
     /** The person refused an authorization (device grant `access_denied`). */
     class Denied(message: String, cause: Throwable? = null) :

@@ -70,7 +70,8 @@ class Whoami(
             owner = owner,
             scopes = scopes,
             tier = tier,
-            email = obj.optString("email", "")
+            email = obj.optString("email", ""),
+            name = if (obj.isNull("name")) "" else obj.optString("name", "")
         )
     }
 

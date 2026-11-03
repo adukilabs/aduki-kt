@@ -17,7 +17,11 @@ import org.json.JSONObject
 import pro.aduki.core.config.Endpoints
 import pro.aduki.core.config.Options
 import pro.aduki.core.config.Pin
+import pro.aduki.core.errors.AdukiException
 import pro.aduki.core.errors.Faults
+import pro.aduki.core.models.Avatar
+import pro.aduki.core.models.AvatarImage
+import pro.aduki.core.models.Profile
 import pro.aduki.core.models.AccountSession
 import pro.aduki.net.http.Client as HttpClient
 import pro.aduki.net.http.Dpop
@@ -25,6 +29,7 @@ import pro.aduki.net.http.Events
 import pro.aduki.net.http.Id
 import pro.aduki.net.http.Jmap
 import pro.aduki.net.http.Login
+import pro.aduki.net.http.Profiles
 import pro.aduki.net.http.Signup
 import pro.aduki.net.http.Requirements
 import pro.aduki.net.http.Enrolment
@@ -435,6 +440,132 @@ class Aduki internal constructor(
     }
 
     /**
+     * The signed-in account's [Profile] (`GET /user/profile`), or null when it
+     * cannot be read (offline, signed out, an older server). Its `storage` is
+     * the pooled total from Aduki Store (drive, mail and chat) when the
+     * account has a drive, else the mail counter (`storage.pooled` tells which).
+     * Never throws, except on cancellation.
+     */
+    suspend fun profile(): Profile? = read("profile lookup", null) {
+        val profile = Profiles.get(activeHttpClient(), options.endpoint)
+        val pooled = try {
+            if (hasRefresh()) identity { Profiles.quota(it, options.drive) } else null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Faults.report("store quota lookup", e)
+            null
+        }
+        if (pooled == null) profile else profile.copy(storage = pooled)
+    }
+
+    /**
+     * Renames the signed-in account at Aduki ID to [name] (1 to 80
+     * characters, trimmed). Returns false when this client has no Aduki ID
+     * session to rename with (an API key or a bare token). The new name
+     * reaches the mail server's profile shortly after.
+     *
+     * @throws AdukiException.Api `locked` (403, [AdukiException.Api.locked])
+     * when the tenant locks profiles, `input.invalid` (422) for a bad name.
+     */
+    suspend fun rename(name: String): Boolean = write {
+        if (!hasRefresh()) return@write false
+        val hex = account()
+        identity { it.rename(hex, name) }
+        session.forget()
+        true
+    }
+
+    /**
+     * The photo of the signed-in account, or with [hex] of that account, as
+     * bytes and their `ETag`. With [etag] the read is conditional. Null when
+     * the photo is still [etag], there is none, it is not visible, or it
+     * cannot be read: compare `Profile.avatar.hex` to tell. Never throws,
+     * except on cancellation.
+     */
+    suspend fun avatar(hex: String? = null, etag: String? = null): AvatarImage? = read("avatar download", null) {
+        Profiles.avatar(activeHttpClient(), options.endpoint, hex, etag)
+    }
+
+    /**
+     * Sets the photo to [bytes] of media [type] (`image/jpeg`, `image/png` or
+     * `image/webp`, at most 1 MiB and 1024 by 1024 pixels) and returns the
+     * new profile.
+     *
+     * @throws AdukiException.Api `locked` (403) when the tenant locks
+     * profiles, 413 when the photo is too large, 415 or 400 for anything that
+     * is not a photo.
+     */
+    suspend fun uploadAvatar(bytes: ByteArray, type: String): Profile? = write {
+        val profile = Profiles.upload(activeHttpClient(), options.endpoint, bytes, type)
+        session.forget()
+        profile
+    }
+
+    /**
+     * Removes the photo. True once it is gone.
+     *
+     * @throws AdukiException.Api `locked` (403) when the tenant locks profiles.
+     */
+    suspend fun removeAvatar(): Boolean = write {
+        Profiles.remove(activeHttpClient(), options.endpoint)
+        session.forget()
+        true
+    }
+
+    /**
+     * The photos of the accounts with [emails] that this account may see,
+     * keyed by address as the server wrote it (each with its
+     * [Avatar.account], for [avatar]). Addresses without a visible photo are
+     * absent. Asks in batches of 50. Never throws, except on cancellation:
+     * a failed batch is left out.
+     */
+    suspend fun avatars(emails: Collection<String>): Map<String, Avatar> = read("avatar lookup", emptyMap()) {
+        val found = LinkedHashMap<String, Avatar>()
+        for (batch in emails.filter { it.isNotBlank() }.distinct().chunked(Profiles.BATCH)) {
+            try {
+                found.putAll(Profiles.lookup(activeHttpClient(), options.endpoint, batch))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Faults.report("avatar lookup", e)
+            }
+        }
+        found
+    }
+
+    // The signed-in account's hex: the cached identity's, else `GET /user`.
+    private suspend fun account(): String {
+        session.identity.value?.user?.ifBlank { null }?.let { return it }
+        val resolved = Whoami.resolve(activeHttpClient(), options.endpoint)
+        session.update(resolved)
+        return resolved.user.ifBlank { throw AdukiException.Protocol("The account has no hex") }
+    }
+
+    // A read that never throws: [fallback] on failure, reported by type.
+    private suspend fun <T> read(where: String, fallback: T, block: suspend () -> T): T = try {
+        guard { block() }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Faults.report(where, e)
+        fallback
+    }
+
+    // A write that fails only with an [AdukiException] (or cancellation).
+    private suspend fun <T> write(block: suspend () -> T): T = try {
+        guard { block() }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: AdukiException) {
+        throw e
+    } catch (e: java.io.IOException) {
+        throw AdukiException.Network("Network request failed", e)
+    } catch (e: Exception) {
+        throw AdukiException.Protocol("Unexpected ${e.javaClass.simpleName}", e)
+    }
+
+    /**
      * Confirms or configures 6-digit TOTP secret for the active account.
      */
     @Deprecated("Second factors are managed in Aduki ID's Account Center; mail's /user/totp is going away.")
@@ -631,6 +762,7 @@ class Aduki internal constructor(
         private var token: String = ""
         private var endpoint: String = Endpoints.REST
         private var identity: String = Endpoints.ID
+        private var drive: String = Endpoints.STORE
         private var secure: Boolean = true
         private var pins: List<Pin> = emptyList()
         private var timeoutSeconds: Long = 15
@@ -656,6 +788,8 @@ class Aduki internal constructor(
         fun endpoint(endpoint: String) = apply { this.endpoint = endpoint }
         /** The Aduki ID base used to renew and revoke sign-ins, e.g. `https://id.aduki.pro/v1`. */
         fun identity(identity: String) = apply { this.identity = identity }
+        /** The Aduki Store base read for the pooled storage quota, e.g. `https://store.aduki.pro/v1`. */
+        fun drive(drive: String) = apply { this.drive = drive }
         /**
          * Binds sign-ins to a device key (DPoP, RFC 9449): Aduki ID and mail
          * calls carry a proof, and tokens bound to the key are sent as
@@ -743,6 +877,7 @@ class Aduki internal constructor(
             val options = Options(
                 endpoint = endpoint,
                 identity = identity,
+                drive = drive,
                 timeoutSeconds = timeoutSeconds,
                 secure = secure,
                 pins = pins

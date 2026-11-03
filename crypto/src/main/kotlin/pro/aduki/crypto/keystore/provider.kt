@@ -8,30 +8,85 @@ import javax.crypto.SecretKey
 
 /**
  * Provider abstracts hardware-backed KeyStore access (StrongBox / TEE) with JVM fallback.
+ *
+ * The loaded KeyStore and every key read from it are kept for the life of
+ * the Provider: loading the Android Keystore and looking a key up cost
+ * milliseconds each, and sealed columns are opened per field. [remove] and
+ * [forget] drop what is kept.
  */
-class Provider(private val type: String = "AndroidKeyStore") {
+class Provider internal constructor(
+    private val type: String,
+    private val loader: (String) -> KeyStore
+) {
+    constructor(type: String = "AndroidKeyStore") : this(type, ::load)
 
     companion object {
         /** Alias used for newly created master keys. */
         const val MASTER = "aduki_master"
 
         private val cache = ConcurrentHashMap<String, SecretKey>()
+
+        private fun load(type: String): KeyStore = KeyStore.getInstance(type).apply { load(null) }
+    }
+
+    private val lock = Any()
+
+    @Volatile
+    private var store: KeyStore? = null
+
+    // Keys read from or created in [store], by alias.
+    private val keys = ConcurrentHashMap<String, SecretKey>()
+
+    // The KeyStore, loaded once; throws when this platform has none.
+    private fun keystore(): KeyStore = store ?: synchronized(lock) {
+        store ?: loader(type).also { store = it }
     }
 
     /**
      * Retrieves an existing key or creates a new one.
      */
     fun get(alias: String = MASTER): SecretKey {
+        keys[alias]?.let { return it }
         return try {
-            val keyStore = KeyStore.getInstance(type).apply { load(null) }
-            if (keyStore.containsAlias(alias)) {
-                keyStore.getKey(alias, null) as SecretKey
-            } else {
-                create(alias)
+            val keyStore = keystore()
+            synchronized(lock) {
+                keys[alias] ?: (if (keyStore.containsAlias(alias)) keyStore.getKey(alias, null) as SecretKey else create(alias))
+                    .also { keys[alias] = it }
             }
         } catch (_: Exception) {
             // JVM fallback for unit tests and local execution
             cache.getOrPut(alias) { createSoftware(alias) }
+        }
+    }
+
+    /**
+     * The key [alias] if it exists, else null; never creates one. One lookup
+     * instead of [has] and [get].
+     */
+    fun find(alias: String): SecretKey? {
+        keys[alias]?.let { return it }
+        return try {
+            val keyStore = keystore()
+            synchronized(lock) {
+                keys[alias] ?: if (keyStore.containsAlias(alias)) (keyStore.getKey(alias, null) as SecretKey).also { keys[alias] = it } else null
+            }
+        } catch (_: Exception) {
+            cache[alias]
+        }
+    }
+
+    /**
+     * Drops the kept KeyStore and keys ([alias] only, when given), so the
+     * next call reads the Keystore again. Keys stay in the Keystore.
+     */
+    fun forget(alias: String? = null) {
+        synchronized(lock) {
+            if (alias == null) {
+                keys.clear()
+                store = null
+            } else {
+                keys.remove(alias)
+            }
         }
     }
 
@@ -58,9 +113,10 @@ class Provider(private val type: String = "AndroidKeyStore") {
      * Checks if a key alias exists.
      */
     fun has(alias: String): Boolean {
+        if (keys.containsKey(alias)) return true
         return try {
-            val keyStore = KeyStore.getInstance(type).apply { load(null) }
-            keyStore.containsAlias(alias)
+            val keyStore = keystore()
+            synchronized(lock) { keyStore.containsAlias(alias) }
         } catch (_: Exception) {
             cache.containsKey(alias)
         }
@@ -71,10 +127,14 @@ class Provider(private val type: String = "AndroidKeyStore") {
      */
     fun remove(alias: String) {
         cache.remove(alias)
+        keys.remove(alias)
         try {
-            val keyStore = KeyStore.getInstance(type).apply { load(null) }
-            if (keyStore.containsAlias(alias)) {
-                keyStore.deleteEntry(alias)
+            val keyStore = keystore()
+            synchronized(lock) {
+                keys.remove(alias)
+                if (keyStore.containsAlias(alias)) {
+                    keyStore.deleteEntry(alias)
+                }
             }
         } catch (_: Exception) {
             // Ignored on software fallback

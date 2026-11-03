@@ -15,6 +15,12 @@ object Endpoints {
     /** The audience Space accepts on Aduki ID tokens (DPoP-bound only). */
     const val SPACE_AUDIENCE = "space"
 
+    /** Aduki Store: drives and the pooled storage quota (`GET /quota`). */
+    const val STORE = "https://store.aduki.pro/v1"
+
+    /** The audience Store accepts on Aduki ID tokens. */
+    const val STORE_AUDIENCE = "store"
+
     /** The audience mail accepts on Aduki ID tokens. */
     const val AUDIENCE = "mail"
 }

@@ -118,7 +118,20 @@ Resolves and returns the authenticated user and tenant identity profile.
 suspend fun me(): Identity?
 ```
 
-- **Return Type**: `Identity?` — User ID hex, tenant hex, owner status, scopes, and tier. Returns cached instance from `session.identity.value` if already resolved; otherwise queries `GET /v1/user`. Scopes and tier are not part of that response and stay empty.
+- **Return Type**: `Identity?` — User ID hex, tenant hex, owner status, address, name, scopes, and tier. Returns cached instance from `session.identity.value` if already resolved; otherwise queries `GET /v1/user`. Scopes and tier are not part of that response and stay empty.
+
+### Profile
+
+```kotlin
+suspend fun profile(): Profile?
+suspend fun rename(name: String): Boolean
+suspend fun avatar(hex: String? = null, etag: String? = null): AvatarImage?
+suspend fun uploadAvatar(bytes: ByteArray, type: String): Profile?
+suspend fun removeAvatar(): Boolean
+suspend fun avatars(emails: Collection<String>): Map<String, Avatar>
+```
+
+The account's profile, name and photo. Reads never throw; writes throw only `AdukiException` (`Api.locked` when the tenant locks profiles). See [Profile](../services/profile.md).
 
 ### `totp`
 **Deprecated.** Second factors are managed in Aduki ID's Account Center; mail's `/v1/user/totp` is going away.
