@@ -2,7 +2,7 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
-## 0.7.0 (unreleased)
+## 0.7.0 (2026-11-03)
 
 Profiles: name, photo, tenant, role, plan and storage. It needs the mail server with `GET /user/profile` and the `/user/avatar` routes, and Aduki ID with `PATCH /v1/accounts/{hex}`; against older servers `profile()` returns null and the writes fail with `AdukiException.Api`.
 
