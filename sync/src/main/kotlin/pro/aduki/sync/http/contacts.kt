@@ -16,26 +16,34 @@ import pro.aduki.sync.engine.ContactDelta
 import pro.aduki.sync.engine.ContactTransport
 import pro.aduki.sync.outbox.Book
 import pro.aduki.sync.outbox.Dispatcher
+import pro.aduki.sync.outbox.Photos
 import pro.aduki.sync.outbox.Rejected
 import java.security.MessageDigest
 
 /**
- * HttpContactTransport syncs the address book over `GET /user/contacts`.
+ * HttpContactTransport syncs the address book over `GET /user/contacts/sync`.
  *
- * The server has no incremental REST route for contacts (its JMAP
- * `Contact/changes` uses ids this client does not hold), so every sync reads
- * the whole list and reconciles it: the delta says `full`, and the engine
- * removes local contacts the server no longer lists. To spare the database,
- * the "ctag" is a digest of every `hex:etag` line (the etag covers the
- * groups too); when it matches the stored one the delta is empty. The list
- * is walked with the `after` cursor (`next`), or by page number from a
- * server that answers in page mode.
+ * With no stored cursor it reads a full listing, page by page; the last
+ * page's `token` is kept, and the next sync reads only the cards changed and
+ * removed after it. Each page goes to the engine as it arrives, so a first
+ * sync shows progress and a warm one reads a page or less. A token the
+ * server no longer knows (`410 sync.reset`) or cannot read (`422`) is dropped
+ * and the listing starts over.
+ *
+ * A server without the route (`404`, `405`) is read the old way, every
+ * sync ([fetch]): the whole `GET /user/contacts` list, reconciled as a full
+ * listing. The "ctag" is then a digest of every `hex:etag` line (the etag
+ * covers the groups too); when it matches the stored one the delta is empty.
+ * That list is walked with the `after` cursor (`next`), or by page number
+ * from a server that answers in page mode. Once a server answered 404 or
+ * 405, this transport keeps to the old way.
  *
  * Every sync also reads the group list (`GET /user/contacts/groups`), which
  * names groups without members.
  *
- * Rows carry the vCard: company, notes and photo are read from it, and all
- * e-mail addresses and phones are kept.
+ * Rows carry the vCard: company, notes and an inline photo are read from
+ * it, and all e-mail addresses and phones are kept. A photo kept as a blob
+ * is named by `photoHex`.
  */
 class HttpContactTransport(
     private val api: Contacts,
@@ -43,6 +51,58 @@ class HttpContactTransport(
     private val maxPages: Int = 1000
 ) : ContactTransport {
 
+    // The server has no `/user/contacts/sync`.
+    @Volatile private var legacy = false
+
+    override suspend fun pages(tenant: String, ctag: String, apply: suspend (ContactDelta) -> Unit) {
+        if (!legacy && changes(ctag, apply)) return
+        apply(fetch(tenant, ctag))
+    }
+
+    // False when the server has no sync route: nothing was applied.
+    private suspend fun changes(ctag: String, apply: suspend (ContactDelta) -> Unit): Boolean {
+        var since = ctag.ifBlank { null }
+        var reset = false
+        var first = true
+        repeat(maxPages) {
+            val page = try {
+                withContext(Dispatchers.IO) { api.changes(since, pageSize.coerceIn(1, 500)) }
+            } catch (e: AdukiException.Network) {
+                when (e.code) {
+                    404, 405 -> if (first) {
+                        legacy = true
+                        return false
+                    } else throw e
+                    // The cursor is gone: a full listing, once.
+                    410, 422 -> if (since != null && !reset) {
+                        reset = true
+                        since = null
+                        return@repeat
+                    } else throw e
+                    else -> throw e
+                }
+            }
+            first = false
+            if (page.more && page.token == since) throw AdukiException.Protocol("Contacts sync token repeated")
+            val groups = if (page.more) null else withContext(Dispatchers.IO) { groups() }
+            apply(
+                ContactDelta(
+                    changed = page.items.map(::contact),
+                    removed = page.removed,
+                    ctag = page.token,
+                    full = page.full,
+                    groups = groups,
+                    more = page.more,
+                    total = page.total
+                )
+            )
+            if (!page.more) return true
+            since = page.token
+        }
+        throw AdukiException.Protocol("Contacts sync longer than $maxPages pages")
+    }
+
+    /** The old way: the whole list, as one full delta (empty when its digest is [ctag]). */
     override suspend fun fetch(tenant: String, ctag: String): ContactDelta =
         withContext(Dispatchers.IO) {
             val rows = all()
@@ -51,7 +111,7 @@ class HttpContactTransport(
             if (current == ctag) {
                 ContactDelta(ctag = current, groups = groups)
             } else {
-                ContactDelta(changed = rows.map(::contact), ctag = current, full = true, groups = groups)
+                ContactDelta(changed = rows.map(::contact), ctag = current, full = true, groups = groups, total = rows.size)
             }
         }
 
@@ -113,7 +173,9 @@ class HttpContactTransport(
                 groups = row.groups,
                 notes = card?.notes ?: "",
                 photo = card?.photo ?: "",
-                collected = row.collected || (card?.collected ?: false)
+                collected = row.collected || (card?.collected ?: false),
+                photoHex = row.photoHex,
+                photoUpdated = row.photoUpdated
             )
         }
     }
@@ -134,6 +196,12 @@ class HttpContactTransport(
  *   404 (one of them is gone) falls back to an update of the contact and a
  *   delete of each other one.
  * - `contact.delete`: `DELETE /user/contacts/{hex}`; a 404 completes it.
+ * - `contact.photo`: `PUT /user/contacts/{hex}/photo` with the spooled
+ *   bytes ([photos]); the photo is cached under the blob id of the reply,
+ *   [photographed] gives the contact that id, and the spool file goes. A
+ *   404 (the contact is gone, or a server without photo routes) is
+ *   [Rejected], like a refused photo (413, 415, 422).
+ * - `contact.unphoto`: `DELETE /user/contacts/{hex}/photo`; a 404 completes it.
  *
  * Writes carry a stable `Idempotency-Key` per outbox entry, so a retry after
  * a lost reply does not create a second contact. Anything else goes to
@@ -145,7 +213,11 @@ class ContactDispatcher(
     private val api: Contacts,
     /** Gives the local placeholder (old hex) the server's row. */
     private val created: (old: String, row: ContactRow) -> Unit = { _, _ -> },
-    private val fallback: Dispatcher? = null
+    private val fallback: Dispatcher? = null,
+    /** The spool and cache of photos; without it `contact.photo` is [Rejected]. */
+    private val photos: Photos? = null,
+    /** Gives the contact the server's photo (`Book.photographed`): hex, spool (null on removal), reply. */
+    private val photographed: (hex: String, spool: String?, row: ContactRow) -> Unit = { _, _, _ -> }
 ) : Dispatcher {
 
     override suspend fun dispatch(action: Outbox) {
@@ -159,7 +231,7 @@ class ContactDispatcher(
                 send(action)
             } catch (e: AdukiException.Network) {
                 val code = e.code ?: throw e
-                if (code == 404 && action.action == Book.DELETE) return@withContext
+                if (code == 404 && (action.action == Book.DELETE || action.action == Book.UNPHOTO)) return@withContext
                 if (code in 400..499 && code !in RETRYABLE) {
                     throw Rejected("Aduki rejected '${action.action}' (HTTP $code)", code, e)
                 }
@@ -188,8 +260,26 @@ class ContactDispatcher(
             Book.RENAME -> api.rename(obj.getString("group"), obj.getString("name"), key)
             Book.DISSOLVE -> api.dissolve(obj.getString("group"))
             Book.MERGE -> merge(hex, obj, key)
+            Book.PHOTO -> photo(hex, obj, key)
+            Book.UNPHOTO -> {
+                photographed(hex, null, api.removePhoto(hex, key))
+                photos?.sent()
+            }
             else -> throw Rejected("Unknown contact action '${action.action}'")
         }
+    }
+
+    private fun photo(hex: String, obj: JSONObject, key: String) {
+        val photos = photos ?: throw Rejected("No photo storage for contact.photo")
+        val spool = obj.getString("spool")
+        val bytes = photos.spooled(spool) ?: throw Rejected("The photo queued for $hex is gone")
+        val type = obj.optString("type").ifBlank { Photos.type(bytes) ?: "image/jpeg" }
+        val row = api.setPhoto(hex, bytes, type, key)
+        // The device has these bytes already: no download for its own photo.
+        runCatching { photos.cache(row.photoHex, bytes) }
+        photographed(hex, spool, row)
+        photos.release(spool)
+        photos.sent()
     }
 
     private fun merge(hex: String, obj: JSONObject, key: String) {

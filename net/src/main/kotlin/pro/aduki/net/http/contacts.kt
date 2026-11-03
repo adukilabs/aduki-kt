@@ -6,9 +6,12 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import pro.aduki.core.errors.AdukiException
+import pro.aduki.core.models.ContactChanges
+import pro.aduki.core.models.ContactPhoto
 import pro.aduki.core.models.ContactRow
 import pro.aduki.core.models.GroupRow
 import pro.aduki.core.models.ImportReport
@@ -50,6 +53,72 @@ class Contacts(
         if (!after.isNullOrBlank()) builder.addQueryParameter("after", after)
         if (page != null) builder.addQueryParameter("page", page.toString())
         return execute(Request.Builder().url(builder.build()).get().build()) { body -> Companion.page(JSONObject(body)) }
+    }
+
+    /**
+     * One page of changes (`GET /user/contacts/sync`, [limit] 1 to 500). With
+     * no [since] it is a page of a full listing; pass the reply's `token`
+     * while `more` is true, then keep the last one for the next sync, which
+     * returns only the cards changed and removed after it.
+     *
+     * A server without the route answers `404` or `405`; a token it no
+     * longer knows `410` (`sync.reset`) and a malformed one `422`: start
+     * again without [since]. Each is thrown as [AdukiException.Network]
+     * with that `code`.
+     */
+    fun changes(since: String? = null, limit: Int = 200): ContactChanges {
+        require(limit in 1..500) { "limit must be 1 to 500" }
+        val builder = url("sync").addQueryParameter("limit", limit.toString())
+        if (!since.isNullOrBlank()) builder.addQueryParameter("since", since)
+        return execute(Request.Builder().url(builder.build()).get().build()) { body -> changes(JSONObject(body)) }
+    }
+
+    /**
+     * The photo of [hex] (`GET /user/contacts/{hex}/photo`), or null when it
+     * has none or is not there (404). With [etag] (the blob hex held) a `304`
+     * returns a [ContactPhoto] with no bytes ([ContactPhoto.unchanged]).
+     */
+    fun photo(hex: String, etag: String? = null): ContactPhoto? {
+        val builder = Request.Builder().url(url(hex, "photo").build()).get()
+        if (!etag.isNullOrBlank()) builder.header("If-None-Match", "\"$etag\"")
+        val request = builder.build()
+        val response = try {
+            client.newCall(request).execute()
+        } catch (e: Exception) {
+            throw AdukiException.Network("Network request failed for ${request.url}", e)
+        }
+        response.use { resp ->
+            if (resp.code == 404) return null
+            val tag = resp.header("ETag")?.removePrefix("W/")?.trim('"').orEmpty()
+            if (resp.code == 304) return ContactPhoto(ByteArray(0), tag.ifBlank { etag.orEmpty() }, "")
+            if (!resp.isSuccessful) fail(resp, resp.body?.string().orEmpty())
+            val bytes = resp.body?.bytes() ?: ByteArray(0)
+            if (bytes.isEmpty()) throw AdukiException.Protocol("Empty photo from ${request.url.encodedPath}")
+            val type = resp.header("Content-Type")?.substringBefore(';')?.trim().orEmpty()
+            return ContactPhoto(bytes, tag, type)
+        }
+    }
+
+    /**
+     * Sets the photo of [hex] (`PUT /user/contacts/{hex}/photo`) to [bytes] of
+     * media [type] (`image/jpeg`, `image/png` or `image/webp`, at most 1 MiB
+     * and 1024 by 1024 pixels; the server answers 415, 413 or 422 otherwise).
+     * Returns the contact with its new [ContactRow.photoHex].
+     */
+    fun setPhoto(hex: String, bytes: ByteArray, type: String, key: String? = null): ContactRow {
+        val media = type.substringBefore(';').trim().lowercase()
+        require(media in PHOTO_TYPES) { "A photo is JPEG, PNG or WebP, not '$type'" }
+        require(bytes.isNotEmpty()) { "The photo is empty" }
+        val builder = Request.Builder().url(url(hex, "photo").build()).put(bytes.toRequestBody(media.toMediaType()))
+        if (!key.isNullOrBlank()) builder.header("Idempotency-Key", key)
+        return execute(builder.build()) { body -> row(JSONObject(body)) }
+    }
+
+    /** Removes the photo of [hex] (`DELETE /user/contacts/{hex}/photo`); returns the contact without it. */
+    fun removePhoto(hex: String, key: String? = null): ContactRow {
+        val builder = Request.Builder().url(url(hex, "photo").build()).delete()
+        if (!key.isNullOrBlank()) builder.header("Idempotency-Key", key)
+        return execute(builder.build()) { body -> row(JSONObject(body)) }
     }
 
     /**
@@ -174,12 +243,7 @@ class Contacts(
         }
         response.use { resp ->
             val raw = resp.body?.string() ?: ""
-            if (resp.code == 401 || resp.code == 403) {
-                throw AdukiException.Auth("Unauthorized access (${Envelope.failure(raw) ?: "HTTP ${resp.code}"})")
-            }
-            if (!resp.isSuccessful) {
-                throw AdukiException.Network("HTTP error ${resp.code}: ${Envelope.failure(raw) ?: resp.message}", code = resp.code, retryAfter = Envelope.retryAfter(resp))
-            }
+            if (!resp.isSuccessful) fail(resp, raw)
             return try {
                 transform(Envelope.data(raw))
             } catch (e: AdukiException) {
@@ -190,7 +254,32 @@ class Contacts(
         }
     }
 
+    private fun fail(resp: Response, raw: String): Nothing {
+        if (resp.code == 401 || resp.code == 403) {
+            throw AdukiException.Auth("Unauthorized access (${Envelope.failure(raw) ?: "HTTP ${resp.code}"})")
+        }
+        throw AdukiException.Network("HTTP error ${resp.code}: ${Envelope.failure(raw) ?: resp.message}", code = resp.code, retryAfter = Envelope.retryAfter(resp))
+    }
+
     companion object {
+        /** The media types `setPhoto` sends. */
+        val PHOTO_TYPES = setOf("image/jpeg", "image/png", "image/webp")
+
+        /** Parses a `/user/contacts/sync` reply; `token` is required. */
+        fun changes(obj: JSONObject): ContactChanges {
+            val token = if (obj.isNull("token")) "" else obj.optString("token")
+            if (token.isBlank()) throw AdukiException.Protocol("Contacts sync reply without a token")
+            val items = obj.optJSONArray("items") ?: JSONArray()
+            return ContactChanges(
+                items = (0 until items.length()).map { row(items.getJSONObject(it)) },
+                removed = strings(obj.optJSONArray("removed")),
+                token = token,
+                more = obj.optBoolean("more", false),
+                full = obj.optBoolean("full", false),
+                total = if (obj.has("total") && !obj.isNull("total")) obj.optInt("total") else null
+            )
+        }
+
         /** Parses a `Page<ContactRow>`. */
         fun page(obj: JSONObject): Listing<ContactRow> {
             val items = obj.optJSONArray("items") ?: JSONArray()
@@ -208,6 +297,7 @@ class Contacts(
             .getOrElse { throw IllegalArgumentException("Not a vCard 3.0 or 4.0 with a name", it) }
 
         private fun row(obj: JSONObject): ContactRow {
+            val photo = obj.optJSONObject("photo")
             val vcard = if (obj.isNull("vcard")) "" else obj.optString("vcard")
             val card = if (vcard.isNotBlank()) runCatching { Vcard.parse(vcard) }.getOrNull() else null
             return ContactRow(
@@ -226,7 +316,9 @@ class Contacts(
                 created = if (obj.isNull("created")) 0L else Mail.timestamp(obj.optString("created")),
                 uid = if (obj.isNull("uid")) "" else obj.optString("uid"),
                 vcard = vcard,
-                updated = if (obj.isNull("updated")) 0L else Mail.timestamp(obj.optString("updated"))
+                updated = if (obj.isNull("updated")) 0L else Mail.timestamp(obj.optString("updated")),
+                photoHex = photo?.let { if (it.isNull("hex")) "" else it.optString("hex") }.orEmpty(),
+                photoUpdated = photo?.let { if (it.isNull("updated")) 0L else Mail.timestamp(it.optString("updated")) } ?: 0L
             )
         }
 

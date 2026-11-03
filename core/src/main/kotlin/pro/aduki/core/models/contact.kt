@@ -52,7 +52,95 @@ data class ContactRow(
     val uid: String = "",
     val vcard: String = "",
     /** Epoch milliseconds of the last change, 0 when absent. */
-    val updated: Long = 0
+    val updated: Long = 0,
+    /**
+     * The blob id of the contact's photo (`photo.hex`, 16 hex digits), "" for
+     * none or a server without photo blobs. A card whose photo is a blob has
+     * no `PHOTO` line in [vcard]; read it with `Contacts.photo`.
+     */
+    val photoHex: String = "",
+    /** Epoch milliseconds the photo was last set (`photo.updated`), 0 when none. */
+    val photoUpdated: Long = 0
+)
+
+/**
+ * ContactChanges is one page of `GET /user/contacts/sync`: the cards changed
+ * since a token, or one page of a full listing.
+ */
+data class ContactChanges(
+    /** Cards created or changed (every card of the page in a full listing). */
+    val items: List<ContactRow> = emptyList(),
+    /** Hexes of cards deleted since the token; empty in a full listing. */
+    val removed: List<String> = emptyList(),
+    /** Opaque: pass it as `since` for the next page, or the next sync when [more] is false. */
+    val token: String,
+    /** Another page follows: ask again with [token]. */
+    val more: Boolean = false,
+    /**
+     * This page belongs to a full listing (no or an expired `since`): once
+     * [more] is false, local cards not seen on any of its pages are gone.
+     */
+    val full: Boolean = false,
+    /** How many cards the full listing has; on its first page only. */
+    val total: Int? = null
+)
+
+/**
+ * ContactPhoto is a contact's photo as `GET /user/contacts/{hex}/photo`
+ * answers it. [etag] is the blob hex; an empty [bytes] means the server
+ * answered `304 Not Modified` to the `If-None-Match` sent.
+ */
+class ContactPhoto(
+    val bytes: ByteArray,
+    val etag: String,
+    /** The media type (`image/jpeg`, `image/png`, `image/webp`), "" on a 304. */
+    val type: String
+) {
+    /** Whether the server answered `304 Not Modified`: keep the copy held. */
+    val unchanged: Boolean get() = bytes.isEmpty()
+
+    override fun equals(other: Any?): Boolean =
+        other is ContactPhoto && etag == other.etag && type == other.type && bytes.contentEquals(other.bytes)
+
+    override fun hashCode(): Int = 31 * (31 * etag.hashCode() + type.hashCode()) + bytes.contentHashCode()
+
+    override fun toString(): String = "ContactPhoto(etag=$etag, type=$type, bytes=${bytes.size})"
+}
+
+/**
+ * SyncProgress is what the address book sync is doing, for a progress bar
+ * and a status line.
+ */
+sealed class SyncProgress {
+    /** No sync has run yet in this process. */
+    object Idle : SyncProgress() {
+        override fun toString(): String = "Idle"
+    }
+
+    /**
+     * A sync is applying pages: [done] cards so far; [total] is known on a
+     * full listing from a server with `/user/contacts/sync`, null otherwise
+     * (show an indeterminate bar).
+     */
+    data class Running(val done: Int = 0, val total: Int? = null) : SyncProgress()
+
+    /** The last sync failed with [message] at [at] (epoch ms); pages applied before it are kept. */
+    data class Failed(val message: String, val at: Long) : SyncProgress()
+
+    /** The last sync finished at [at] (epoch ms) and stored or removed [changed] cards. */
+    data class Done(val at: Long, val changed: Int) : SyncProgress()
+}
+
+/**
+ * PhotoProgress counts contact photo writes (`setPhoto`, `removePhoto`)
+ * since the client was built: [queued] are waiting in the outbox, [done]
+ * reached the server, [failed] were refused for good (too big, wrong type,
+ * too many pixels) and can be retried or discarded from the outbox.
+ */
+data class PhotoProgress(
+    val queued: Int = 0,
+    val done: Int = 0,
+    val failed: Int = 0
 )
 
 /**

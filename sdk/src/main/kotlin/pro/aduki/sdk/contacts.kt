@@ -6,7 +6,13 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flowOn
@@ -14,15 +20,20 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import pro.aduki.core.errors.Faults
 import pro.aduki.core.models.Card
+import pro.aduki.core.models.PhotoProgress
+import pro.aduki.core.models.SyncProgress
 import pro.aduki.core.vcard.Vcard
 import pro.aduki.store.entities.Contact
 import pro.aduki.sync.engine.Contact as ContactEngine
 import pro.aduki.sync.outbox.Book
+import pro.aduki.sync.outbox.Manager
+import pro.aduki.sync.outbox.Photos
 import pro.aduki.sync.outbox.Worker
 import pro.aduki.state.repository.Contact as ContactRepo
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.Base64
 
 /**
  * Progress of a contact import operation.
@@ -80,10 +91,109 @@ class Contacts internal constructor(
     private val repo: ContactRepo? = null,
     private val engine: ContactEngine? = null,
     private val book: Book? = null,
-    private val worker: Worker? = null
+    private val worker: Worker? = null,
+    private val photos: Photos? = null,
+    manager: Manager? = null,
+    scope: CoroutineScope? = null
 ) {
     // Writes need the local store: without one they would vanish silently.
     private fun book(): Book = book ?: throw IllegalStateException("no local store")
+
+    /**
+     * What the address book sync is doing: `Idle` until the first sync,
+     * `Running(done, total)` while pages are applied (`total` is null when
+     * the server does not say: show an indeterminate bar), then `Done(at,
+     * changed)` or `Failed(message, at)`. [sync] and `Sync.all` drive it.
+     */
+    val progress: StateFlow<SyncProgress> = engine?.progress ?: MutableStateFlow<SyncProgress>(SyncProgress.Idle).asStateFlow()
+
+    /**
+     * Photo writes ([setPhoto], [removePhoto]): queued in the outbox, done
+     * since the client was built, and failed for good (in `Sync.failed`,
+     * where they can be retried or discarded).
+     */
+    val photoUploads: StateFlow<PhotoProgress> = if (manager != null && photos != null && scope != null) {
+        fun now(done: Int): PhotoProgress {
+            val queued = manager.pending().count { it.action in PHOTO_ACTIONS }
+            val failed = manager.failed.value.count { it.action in PHOTO_ACTIONS }
+            return PhotoProgress(queued, done, failed)
+        }
+        combine(manager.count, manager.failed, photos.done) { _, _, done -> now(done) }
+            .stateIn(scope, SharingStarted.Eagerly, now(0))
+    } else {
+        MutableStateFlow(PhotoProgress()).asStateFlow()
+    }
+
+    /**
+     * The photo of the contact [hex], or null when it has none. See
+     * `photo(contact, refresh)`; this one looks the contact up first, and
+     * without a local store reads the server (`GET /user/contacts/{hex}/photo`).
+     */
+    suspend fun photo(hex: String, refresh: Boolean = false): ByteArray? = client.io {
+        if (repo == null) return@io read { client.contactsApi.photo(hex)?.bytes }
+        val contact = repo.get(hex) ?: return@io null
+        picture(contact, refresh)
+    }
+
+    /**
+     * The photo of [contact] (JPEG, PNG or WebP bytes), or null when it has
+     * none or it cannot be read now. A photo set on this device and not yet
+     * sent comes from its spool file; a server photo from the sealed cache,
+     * keyed by its blob id ([Contact.photoHex]), else it is downloaded once
+     * and cached. With [refresh] a cached photo is checked with the server
+     * (`If-None-Match`). A photo kept in the vCard (a `data:` URI) is
+     * decoded. Never throws: a failure is null (or the cached copy),
+     * reported through `Faults.report`.
+     */
+    suspend fun photo(contact: Contact, refresh: Boolean = false): ByteArray? = client.io { picture(contact, refresh) }
+
+    private fun picture(contact: Contact, refresh: Boolean): ByteArray? {
+        val ref = contact.photoHex
+        val photos = photos
+        return when {
+            ref.startsWith(Photos.LOCAL) -> photos?.spooled(ref.removePrefix(Photos.LOCAL))
+            ref.isNotBlank() -> {
+                val cached = photos?.cached(ref)
+                if (cached != null && !refresh) return cached
+                val reply = read { client.contactsApi.photo(contact.hex, if (cached != null) ref else null) } ?: return cached
+                if (reply.unchanged) return cached
+                photos?.let { runCatching { it.cache(reply.etag.ifBlank { ref }, reply.bytes) } }
+                reply.bytes
+            }
+            else -> inline(contact.photo)
+        }
+    }
+
+    // A read that never throws: null, reported.
+    private fun <T> read(block: () -> T?): T? = try {
+        block()
+    } catch (e: Exception) {
+        Faults.report("contact photo", e)
+        null
+    }
+
+    /**
+     * Sets the photo of [hex] to [bytes]: JPEG, PNG or WebP, at most 1 MiB
+     * and 1024 by 1024 pixels (scale it on the device first, e.g. with
+     * `pro.aduki.android.photo.Thumbnails.scale` to 512 pixels). Shown at once
+     * ([photo] reads it from a sealed spool file) and queued as one
+     * `contact.photo` outbox action, sent with `PUT
+     * /user/contacts/{hex}/photo`. Needs the server's photo routes; an older
+     * server refuses it ([photoUploads] counts it failed). Throws
+     * [IllegalArgumentException] for bytes that are not such an image.
+     */
+    suspend fun setPhoto(hex: String, bytes: ByteArray): Contact = client.io {
+        val contact = book().photo(hex, bytes)
+        worker?.drain()
+        return@io contact
+    }
+
+    /** Removes the photo of [hex], queued as `contact.unphoto` (and a vCard update for a `data:` URI photo). */
+    suspend fun removePhoto(hex: String): Contact = client.io {
+        val contact = book().unphoto(hex)
+        worker?.drain()
+        return@io contact
+    }
 
     /** Groups (the server's group tags on contacts). */
     val groups = Groups(repo, book, worker)
@@ -417,6 +527,16 @@ class Contacts internal constructor(
 
     private companion object {
         val MATCHES = listOf("email", "phone", "name")
+
+        val PHOTO_ACTIONS = setOf(Book.PHOTO, Book.UNPHOTO)
+
+        // The bytes of a `data:` URI photo, or null for a URL or nothing.
+        fun inline(uri: String): ByteArray? {
+            if (!uri.startsWith("data:", ignoreCase = true)) return null
+            val comma = uri.indexOf(',')
+            if (comma < 0 || !uri.substring(0, comma).endsWith(";base64", ignoreCase = true)) return null
+            return runCatching { Base64.getMimeDecoder().decode(uri.substring(comma + 1)) }.getOrNull()?.takeIf { it.isNotEmpty() }
+        }
 
         fun emailKeys(c: Contact) = Book.card(c).emails.map { it.trim().lowercase() }.filter { it.isNotEmpty() }
 

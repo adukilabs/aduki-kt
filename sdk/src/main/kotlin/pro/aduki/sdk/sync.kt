@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import pro.aduki.core.errors.Faults
+import pro.aduki.core.models.SyncProgress
 import pro.aduki.store.entities.Outbox
 import pro.aduki.sync.engine.Contact as ContactEngine
 import pro.aduki.sync.engine.Mailbox as MailboxEngine
@@ -47,6 +48,9 @@ class Sync internal constructor(
 
     /** Running, last success and last error of [all]. */
     val state: StateFlow<SyncState> = current.asStateFlow()
+
+    /** Progress of the address book sync (the same as `Contacts.progress`). */
+    val contacts: StateFlow<SyncProgress> = contactEngine?.progress ?: MutableStateFlow<SyncProgress>(SyncProgress.Idle).asStateFlow()
 
     /** The number of queued pending outbox actions; always 0 without a local store. */
     val outbox: StateFlow<Int> = manager?.count ?: MutableStateFlow(0).asStateFlow()

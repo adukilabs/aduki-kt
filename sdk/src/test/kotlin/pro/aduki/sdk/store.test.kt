@@ -54,6 +54,8 @@ class StoreTest {
                     path.startsWith("/v1/user/mail/changes?mailbox=b-sent") -> ok(
                         """{"mailbox":"b-sent","uidvalidity":9,"modseq":3,"reset":false,"more":false,"created":[],"updated":[],"vanished":[]}"""
                     )
+                    // A server from before `/user/contacts/sync` (GET on `{hex}` is not routed).
+                    path.startsWith("/v1/user/contacts/sync") -> MockResponse().setResponseCode(405)
                     path.startsWith("/v1/user/contacts") -> ok("""{"items":[],"total":0}""")
                     path == "/v1/user/mail/send" -> ok("""{"hex":"srv1"}""")
                     else -> MockResponse().setResponseCode(404)

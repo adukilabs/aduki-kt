@@ -6,6 +6,8 @@ import okhttp3.mockwebserver.MockWebServer
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -173,5 +175,60 @@ class ContactsTest {
 
         assertEquals("/v1/user/contacts?limit=1&after=c1", server.takeRequest().path)
         assertEquals("c2", listing.next)
+    }
+
+    @Test
+    fun changesReadsAPageWithPhotoRefsAndRequiresAToken() {
+        server.enqueue(MockResponse().setBody(
+            """{"success":true,"data":{"items":[{"hex":"c1","etag":"e1","name":"Ann","vcard":"","photo":{"hex":"0123456789abcdef","updated":"2026-11-02T08:00:00Z"}}],"removed":["c9"],"token":"f.3.c1","more":true,"full":true,"total":7}}"""
+        ))
+        val page = api.changes(limit = 1)
+        val req = server.takeRequest()
+        assertEquals("/v1/user/contacts/sync?limit=1", req.path)
+        assertEquals("0123456789abcdef", page.items.single().photoHex)
+        assertTrue(page.items.single().photoUpdated > 0)
+        assertEquals(listOf("c9"), page.removed)
+        assertEquals("f.3.c1", page.token)
+        assertTrue(page.more && page.full)
+        assertEquals(7, page.total)
+
+        server.enqueue(MockResponse().setBody("""{"items":[],"removed":[],"more":false,"full":false}"""))
+        assertThrows(AdukiException.Protocol::class.java) { api.changes("d.1") }
+        assertTrue(server.takeRequest().path!!.contains("since=d.1"))
+
+        server.enqueue(MockResponse().setResponseCode(410).setBody("""{"success":false,"error":{"status":410,"kind":"sync.reset","message":"x"}}"""))
+        val gone = assertThrows(AdukiException.Network::class.java) { api.changes("d.1") }
+        assertEquals(410, gone.code)
+    }
+
+    @Test
+    fun photoIsReadConditionallyAndWritten() {
+        server.enqueue(MockResponse().setBody("img").setHeader("ETag", "\"0123456789abcdef\"").setHeader("Content-Type", "image/jpeg"))
+        val photo = api.photo("c1")!!
+        assertEquals("0123456789abcdef", photo.etag)
+        assertEquals("image/jpeg", photo.type)
+        assertFalse(photo.unchanged)
+        assertNull(server.takeRequest().getHeader("If-None-Match"))
+
+        server.enqueue(MockResponse().setResponseCode(304))
+        assertTrue(api.photo("c1", "0123456789abcdef")!!.unchanged)
+        assertEquals("\"0123456789abcdef\"", server.takeRequest().getHeader("If-None-Match"))
+
+        server.enqueue(MockResponse().setResponseCode(404))
+        assertNull(api.photo("c1"))
+        server.takeRequest()
+
+        server.enqueue(MockResponse().setBody("""{"success":true,"data":{"hex":"c1","etag":"e2","photo":{"hex":"0123456789abcdef","updated":"2026-11-02T08:00:00Z"}}}"""))
+        val row = api.setPhoto("c1", byteArrayOf(1, 2), "image/jpeg", "k1")
+        val put = server.takeRequest()
+        assertEquals("PUT /v1/user/contacts/c1/photo", "${put.method} ${put.path}")
+        assertEquals("image/jpeg", put.getHeader("Content-Type"))
+        assertEquals("k1", put.getHeader("Idempotency-Key"))
+        assertEquals("0123456789abcdef", row.photoHex)
+
+        server.enqueue(MockResponse().setBody("""{"success":true,"data":{"hex":"c1","etag":"e3","photo":null}}"""))
+        assertEquals("", api.removePhoto("c1").photoHex)
+        assertEquals("DELETE", server.takeRequest().method)
+        assertThrows(IllegalArgumentException::class.java) { api.setPhoto("c1", byteArrayOf(1), "image/gif") }
     }
 }
