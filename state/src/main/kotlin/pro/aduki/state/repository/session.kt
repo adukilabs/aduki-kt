@@ -42,6 +42,11 @@ class Session {
 
     fun refresh(): String? = _tokens.value?.refresh
 
+    /** Drops the cached identity only; the next `me()` resolves it again. */
+    fun forget() {
+        _identity.value = null
+    }
+
     fun clear() {
         _identity.value = null
         _tokens.value = null

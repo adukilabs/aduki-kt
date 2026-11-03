@@ -9,6 +9,8 @@ data class Options(
     val timeoutSeconds: Long = 15,
     val secure: Boolean = true,
     /** TLS pins for the default HTTP client; empty (the default) means no pinning. */
-    val pins: List<Pin> = emptyList()
+    val pins: List<Pin> = emptyList(),
+    /** The Aduki Store base, read for the pooled storage quota. */
+    val drive: String = Endpoints.STORE
 )
 

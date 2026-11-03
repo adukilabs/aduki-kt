@@ -2,6 +2,19 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
+## 0.7.0 (unreleased)
+
+Profiles: name, photo, tenant, role, plan and storage. It needs the mail server with `GET /user/profile` and the `/user/avatar` routes, and Aduki ID with `PATCH /v1/accounts/{hex}`; against older servers `profile()` returns null and the writes fail with `AdukiException.Api`.
+
+- `Aduki.profile(): Profile?` reads `GET /user/profile`. With an Aduki ID session its `storage` is the pooled total from Aduki Store (`GET /v1/quota`, audience `store`), else the mail counter (`Storage.pooled` tells which). Never throws.
+- `Aduki.rename(name): Boolean` renames the account at Aduki ID (`PATCH /v1/accounts/{hex}`, 1 to 80 characters); false without an Aduki ID session.
+- `Aduki.avatar(hex, etag): AvatarImage?` reads the own photo or another account's, conditionally with an `ETag`; `uploadAvatar(bytes, type): Profile?` and `removeAvatar(): Boolean` change the own photo; `avatars(emails): Map<String, Avatar>` looks photos up by address in batches of 50.
+- Writes throw only `AdukiException`. `AdukiException.Api.locked` is true for a `403 locked`: the tenant locks profiles and the caller is not an owner. The cached identity is cleared after each write.
+- New models in `pro.aduki.core.models`: `Profile` (with `Profile.Kind`), `Avatar`, `AvatarImage`, `TenantInfo`, `Role`, `Plan`, `Storage`. `Identity.name` (from `GET /user`), defaulted.
+- `pro.aduki.net.http.Profiles` (`get`, `avatar`, `upload`, `remove`, `lookup`, `quota`) and `Id.rename(hex, name)`.
+- `Endpoints.STORE` and `Endpoints.STORE_AUDIENCE`, `Options.drive` and `Builder.drive(base)` for the Aduki Store base. `Session.forget()` drops the cached identity only.
+- See `docs/services/profile.md`.
+
 ## 0.6.3 (2026-11-02)
 
 Safer imports and network calls, and the mail thread reader.

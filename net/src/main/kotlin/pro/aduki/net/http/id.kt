@@ -249,6 +249,35 @@ class Id(
         }
     }
 
+    /**
+     * Renames the signed-in account [hex] (`PATCH /v1/accounts/{hex}`
+     * `{name}`): 1 to 80 characters, trimmed. Returns the name Aduki ID
+     * stored. A tenant that locks profiles refuses a member with
+     * [AdukiException.Api] `locked` (403); an invalid name is a 400 `Api`.
+     */
+    fun rename(hex: String, name: String): String {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty() || trimmed.codePointCount(0, trimmed.length) > 80) {
+            throw AdukiException.Api(400, "input.invalid", "A name is 1 to 80 characters")
+        }
+        if (hex.isBlank() || hex.contains('/')) throw AdukiException.Api(400, "input.invalid", "An account hex is required")
+        val body = JSONObject().put("name", trimmed).toString()
+        val response = call("id") { token ->
+            Request.Builder()
+                .url(url("accounts/$hex"))
+                .header("Authorization", "Bearer $token")
+                .patch(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .build()
+        }
+        return response.use { resp ->
+            val raw = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) Profiles.fail(resp, raw)
+            val data = runCatching { JSONObject(Envelope.data(raw)) }.getOrNull()
+                ?: throw AdukiException.Protocol("Unexpected rename response")
+            data.optString("name").ifBlank { trimmed }
+        }
+    }
+
     private fun url(path: String) = "${base.trimEnd('/')}/$path"
 }
 

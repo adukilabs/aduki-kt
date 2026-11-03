@@ -33,7 +33,10 @@ sealed class AdukiException(
         message: String,
         val details: String? = null,
         val retryAfter: Long? = null
-    ) : AdukiException("$kind: $message")
+    ) : AdukiException("$kind: $message") {
+        /** A 403 `locked`: the tenant locks profiles and the caller is not an owner. */
+        val locked: Boolean
+    }
 
     /** The user refused an authorization (device grant access_denied). */
     class Denied(message: String, cause: Throwable? = null) :
@@ -65,7 +68,7 @@ sealed class AdukiException(
 | :--- | :--- | :--- |
 | `Unauthorized` | Aduki ID refused a sign-in, refresh or unlock (wrong password, missing or wrong second factor, spent, expired or revoked refresh token); a signed-out `Id` has no refresh token; an OIDC error such as `invalid_grant` | sign in again |
 | `Auth` | the mail or scheduling API answered `401`/`403`; an API key was refused; an Aduki ID `2xx` lacked a required field (`refresh` then holds the rotated token, if any) | renew the token (`client.refresh()`), or fix the account's rights |
-| `Api` | An Aduki service returned a failure envelope with an HTTP status, stable dotted `kind` (e.g. `entity.conflict`, `rate.limited`, `sod.refused`), raw `details` JSON, and optional `retryAfter` | branch on `e.kind`; wait `e.retryAfter` seconds if rate limited; refresh on `409 entity.conflict` |
+| `Api` | An Aduki service returned a failure envelope with an HTTP status, stable dotted `kind` (e.g. `entity.conflict`, `rate.limited`, `sod.refused`), raw `details` JSON, and optional `retryAfter` | branch on `e.kind`; wait `e.retryAfter` seconds if rate limited; refresh on `409 entity.conflict`; `e.locked` for a `403 locked` profile write |
 | `Denied` | The person refused an authorization (OAuth/device authorization grant `access_denied`) | user opted out; abort flow |
 | `Expired` | A device code or authorization expired (`expired_token` or local deadline) | start a new authorization flow |
 | `Network` | transport failure (timeout, DNS, TLS), or an HTTP error not covered above; `code` holds the status when there was a response (e.g. `429`), `retryAfter` the server's `Retry-After` seconds | retry later, not before `retryAfter`; the outbox does this for queued changes |

@@ -10,6 +10,8 @@ data class Identity(
     val scopes: List<String> = emptyList(),
     val tier: String = "",
     /** The account's address (`email` of `GET /user`). */
-    val email: String = ""
+    val email: String = "",
+    /** The account's display name (`name` of `GET /user`), blank when unknown. */
+    val name: String = ""
 )
 
