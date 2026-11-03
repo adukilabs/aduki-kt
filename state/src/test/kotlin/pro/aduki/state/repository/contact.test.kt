@@ -4,6 +4,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -14,8 +16,9 @@ class ContactTest {
 
     private class TestContactSource : ContactSource {
         val flow = MutableStateFlow<List<ContactEntity>>(emptyList())
+        var subscriptions = 0
 
-        override fun contacts(): Flow<List<ContactEntity>> = flow
+        override fun contacts(): Flow<List<ContactEntity>> = flow.also { subscriptions++ }
         override fun get(hex: String): ContactEntity? = flow.value.firstOrNull { it.hex == hex }
         override fun all(): List<ContactEntity> = flow.value
 
@@ -143,5 +146,32 @@ class ContactTest {
         assertEquals(1, manual.size)
         assertEquals("Manual One", manual[0].name)
     }
-}
 
+    @Test
+    fun searchesAndGroupsShareOneSubscription() = runBlocking {
+        val source = TestContactSource()
+        val repo = Contact(source = source, scope = CoroutineScope(Dispatchers.Unconfined))
+        source.flow.value = listOf(
+            ContactEntity(hex = "c1", name = "Ann", groups = listOf("work")),
+            ContactEntity(hex = "c2", name = "Bob", collected = true)
+        )
+
+        repeat(50) { repo.search("a$it"); repo.group("g$it") }
+        val work = repo.group("work")
+        val ann = repo.search("ann")
+        repo.collected()
+        repo.manual()
+        repo.groups()
+
+        assertEquals("one subscription to the stored contacts", 1, source.subscriptions)
+        assertEquals(listOf("c1"), work.value.map { it.hex })
+        assertEquals(listOf("c1"), ann.value.map { it.hex })
+
+        source.flow.value = source.flow.value + ContactEntity(hex = "c3", name = "Annie", groups = listOf("work"))
+
+        assertEquals("value follows the source without a collector", listOf("c1", "c3"), ann.value.map { it.hex })
+        val collected = withTimeout(2_000) { work.first { it.size == 2 } }
+        assertEquals(listOf("Ann", "Annie"), collected.map { it.name })
+        assertEquals(1, source.subscriptions)
+    }
+}

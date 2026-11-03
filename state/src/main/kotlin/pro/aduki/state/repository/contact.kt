@@ -2,16 +2,19 @@ package pro.aduki.state.repository
 
 import io.objectbox.BoxStore
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import java.util.concurrent.ConcurrentHashMap
 import pro.aduki.store.entities.Contact as ContactEntity
 import pro.aduki.store.box.Sealing
 import pro.aduki.store.entities.Contact_
@@ -93,6 +96,9 @@ class Contact(
         scope = scope
     )
 
+    // The one subscription to the stored contacts: every flow below derives
+    // from it, so a change reads and opens (unseals) the book once, not once
+    // per flow, search or group.
     private val contactsFlow: StateFlow<List<ContactEntity>> by lazy {
         source.contacts()
             .map { list -> list.sortedBy { it.name } }
@@ -103,13 +109,10 @@ class Contact(
             )
     }
 
-    private val searchCache = ConcurrentHashMap<String, StateFlow<List<ContactEntity>>>()
-    private val groupCache = ConcurrentHashMap<String, StateFlow<List<ContactEntity>>>()
-
     // Group names are the tags on contacts plus the stored groups (which
     // keep a group without members listed).
     private val groupsFlow: StateFlow<List<String>> by lazy {
-        combine(source.contacts(), source.groups()) { list, names -> merge(list.flatMap { it.groups } + names) }
+        combine(contactsFlow, source.groups()) { list, names -> merge(list.flatMap { it.groups } + names) }
             .stateIn(scope = scope, started = SharingStarted.Eagerly, initialValue = emptyList())
     }
 
@@ -121,15 +124,11 @@ class Contact(
     fun observe(): StateFlow<List<ContactEntity>> = contactsFlow
 
     private val collectedFlow: StateFlow<List<ContactEntity>> by lazy {
-        source.contacts()
-            .map { list -> list.filter { it.collected }.sortedBy { it.name } }
-            .stateIn(scope = scope, started = SharingStarted.Eagerly, initialValue = emptyList())
+        Derived(contactsFlow) { list -> list.filter { it.collected } }
     }
 
     private val manualFlow: StateFlow<List<ContactEntity>> by lazy {
-        source.contacts()
-            .map { list -> list.filterNot { it.collected }.sortedBy { it.name } }
-            .stateIn(scope = scope, started = SharingStarted.Eagerly, initialValue = emptyList())
+        Derived(contactsFlow) { list -> list.filterNot { it.collected } }
     }
 
     /** Hot StateFlow of automatically collected contacts, sorted by name. */
@@ -139,42 +138,30 @@ class Contact(
     fun manual(): StateFlow<List<ContactEntity>> = manualFlow
 
     /**
-     * Hot StateFlow of contacts matching a search prefix or substring.
+     * StateFlow of contacts matching a search prefix or substring, sorted by
+     * name. It is derived from [observe] (no subscription of its own) and its
+     * `value` is always current.
      */
     fun search(query: String): StateFlow<List<ContactEntity>> {
         val q = query.trim().lowercase()
-        return searchCache.getOrPut(q) {
-            source.contacts()
-                .map { list ->
-                    if (q.isEmpty()) {
-                        list.sortedBy { it.name }
-                    } else {
-                        list.filter { c ->
-                            c.name.lowercase().contains(q) ||
-                                c.company.lowercase().contains(q) ||
-                                c.email.lowercase().contains(q) ||
-                                c.phone.lowercase().contains(q) ||
-                                c.notes.lowercase().contains(q) ||
-                                c.emails.any { it.lowercase().contains(q) } ||
-                                c.phones.any { it.lowercase().contains(q) } ||
-                                c.groups.any { it.lowercase().contains(q) }
-                        }.sortedBy { it.name }
-                    }
-                }
-                .stateIn(
-                    scope = scope,
-                    started = SharingStarted.Eagerly,
-                    initialValue = emptyList()
-                )
+        if (q.isEmpty()) return contactsFlow
+        return Derived(contactsFlow) { list ->
+            list.filter { c ->
+                c.name.lowercase().contains(q) ||
+                    c.company.lowercase().contains(q) ||
+                    c.email.lowercase().contains(q) ||
+                    c.phone.lowercase().contains(q) ||
+                    c.notes.lowercase().contains(q) ||
+                    c.emails.any { it.lowercase().contains(q) } ||
+                    c.phones.any { it.lowercase().contains(q) } ||
+                    c.groups.any { it.lowercase().contains(q) }
+            }
         }
     }
 
-    /** Hot StateFlow of the members of [group], sorted by name. */
-    fun group(group: String): StateFlow<List<ContactEntity>> = groupCache.getOrPut(group) {
-        source.contacts()
-            .map { list -> list.filter { group in it.groups }.sortedBy { it.name } }
-            .stateIn(scope = scope, started = SharingStarted.Eagerly, initialValue = emptyList())
-    }
+    /** StateFlow of the members of [group], sorted by name; derived from [observe] like [search]. */
+    fun group(group: String): StateFlow<List<ContactEntity>> =
+        Derived(contactsFlow) { list -> list.filter { group in it.groups } }
 
     /** Hot StateFlow of the group names (in use, or kept without members), sorted. */
     fun groups(): StateFlow<List<String>> = groupsFlow
@@ -198,4 +185,34 @@ class Contact(
 }
 
 typealias ContactRepository = Contact
+
+/**
+ * A StateFlow that is [transform] of [source]: no coroutine of its own, its
+ * `value` computed on read (kept until [source] changes), and collecting it
+ * collects [source].
+ */
+@OptIn(ExperimentalForInheritanceCoroutinesApi::class)
+private class Derived<T, R>(
+    private val source: StateFlow<T>,
+    private val transform: (T) -> R
+) : StateFlow<R> {
+    private class Memo<T, R>(val from: T, val to: R)
+
+    @Volatile
+    private var memo: Memo<T, R>? = null
+
+    private fun of(from: T): R {
+        memo?.let { if (it.from === from) return it.to }
+        return transform(from).also { memo = Memo(from, it) }
+    }
+
+    override val value: R get() = of(source.value)
+
+    override val replayCache: List<R> get() = listOf(value)
+
+    override suspend fun collect(collector: FlowCollector<R>): Nothing {
+        source.map { of(it) }.distinctUntilChanged().collect(collector)
+        awaitCancellation()
+    }
+}
 

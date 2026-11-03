@@ -125,9 +125,23 @@ class Vault(
         return next
     }
 
+    // Keys come from the Provider, which keeps the loaded Keystore and each
+    // key it read, so a field costs one cipher operation. A kept key that no
+    // longer works (deleted or invalidated behind the Provider's back) is
+    // dropped and read again once.
+
     fun seal(plain: ByteArray): ByteArray {
         val id = current
-        val body = Envelope.encrypt(plain, provider.get(alias(id)))
+        val name = alias(id)
+        val key = provider.get(name)
+        val body = try {
+            Envelope.encrypt(plain, key)
+        } catch (e: Exception) {
+            provider.forget(name)
+            val fresh = provider.get(name)
+            if (fresh === key) throw e
+            Envelope.encrypt(plain, fresh)
+        }
         return ByteBuffer.allocate(HEADER + body.size)
             .put(MAGIC0).put(MAGIC1).put(VERSION).putInt(id).put(body).array()
     }
@@ -137,11 +151,21 @@ class Vault(
         if (!isSealed(sealed)) throw SealException("Not a sealed value")
         if (sealed[2] != VERSION) throw SealException("Unsupported sealed version ${sealed[2]}")
         val id = ByteBuffer.wrap(sealed, 3, 4).int
-        if (id !in 1..MAX_KEYS || !provider.has(alias(id))) throw SealException("Unknown key id $id")
+        if (id !in 1..MAX_KEYS) throw SealException("Unknown key id $id")
+        val name = alias(id)
+        val key = provider.find(name) ?: throw SealException("Unknown key id $id")
+        val body = sealed.copyOfRange(HEADER, sealed.size)
         return try {
-            Envelope.decrypt(sealed.copyOfRange(HEADER, sealed.size), provider.get(alias(id)))
+            Envelope.decrypt(body, key)
         } catch (e: Exception) {
-            throw SealException("Sealed value failed authentication", e)
+            provider.forget(name)
+            val fresh = provider.find(name)
+            if (fresh == null || fresh === key) throw SealException("Sealed value failed authentication", e)
+            try {
+                Envelope.decrypt(body, fresh)
+            } catch (again: Exception) {
+                throw SealException("Sealed value failed authentication", again)
+            }
         }
     }
 

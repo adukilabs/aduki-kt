@@ -10,7 +10,9 @@ class Provider(private val type: String = "AndroidKeyStore") {
     fun get(alias: String = MASTER): SecretKey
     fun create(alias: String): SecretKey
     fun has(alias: String): Boolean
+    fun find(alias: String): SecretKey?
     fun remove(alias: String)
+    fun forget(alias: String? = null)
 }
 ```
 
@@ -19,13 +21,20 @@ class Provider(private val type: String = "AndroidKeyStore") {
 | `get` | returns the key under `alias`, creating it if missing |
 | `create` | generates a new AES-256 key (`GCM`, no padding, encrypt and decrypt purposes) |
 | `has` | whether the alias exists |
+| `find` | the key under `alias`, or null; never creates one |
 | `remove` | deletes the alias |
+| `forget` | drops the kept key of `alias` (or everything kept, with the loaded Keystore); the key stays in the Keystore |
 
 ## Behaviour
 
 - On Android the key is generated with `KeyGenParameterSpec` (reached by
   reflection, so the module also loads on a plain JVM). It does not ask for
   StrongBox; whether the key is hardware-backed depends on the device.
+- The provider loads the Keystore once and keeps every key it read or
+  created, so repeated `get`, `find` and `has` calls make no Keystore call.
+  `remove` and `forget` drop what is kept. `Vault` opens each sealed field
+  with the kept key and, if that key no longer works (deleted or invalidated
+  outside the provider), reads it again once.
 - Where the Android Keystore is not available (unit tests, a plain JVM), the
   provider falls back to an in-process software key cached by alias. Such a
   key does not survive the process, so data encrypted with it cannot be read

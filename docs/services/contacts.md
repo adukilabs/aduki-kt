@@ -95,7 +95,9 @@ e-mail address and phone is kept. The list is walked with the `after` cursor
 - `observe()`: every contact, sorted by name, as a hot `StateFlow`.
 - `observe(group)`: the members of one group.
 - `search(query)`: case-insensitive substring match across name, company,
-  every e-mail address and phone, notes and group names.
+  every e-mail address and phone, notes and group names. Searches and groups
+  are derived from the one `observe()` flow: they add no store subscription
+  and their `value` is current without a collector.
 - `hit(contact, query)`: returns `SearchHit(contact, field, range)` naming the
   matched property and its character offset range for search highlighting.
 - `get(hex)`: one contact from the local store.

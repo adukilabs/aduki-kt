@@ -15,6 +15,11 @@ Profiles: name, photo, tenant, role, plan and storage. It needs the mail server 
 - `Endpoints.STORE` and `Endpoints.STORE_AUDIENCE`, `Options.drive` and `Builder.drive(base)` for the Aduki Store base. `Session.forget()` drops the cached identity only.
 - See `docs/services/profile.md`.
 
+Faster sealed reads:
+
+- `Provider` keeps the loaded Keystore and each key it read or created, so opening a sealed field is one cipher operation with no Keystore load or lookup. Before, every sealed column of every row loaded the Android Keystore twice (`has` then `get`): on a device, reading 600 sealed contacts (`box.all`) took 38 to 45 s, about 2.8 ms per `openText`. A JVM test with a counting Keystore checks that opening 600 values makes no load or lookup; the on-device time after the change has not been measured yet. New `Provider.find(alias)` (one lookup, never creates) and `Provider.forget(alias)`. A kept key that stops working is read again once. The sealed format is unchanged.
+- The contact repository subscribes to the stored contacts once: `search(query)`, `group(name)`, `collected()` and `manual()` derive from `observe()` instead of each running its own query (each change unsealed the whole book once per flow), and they are no longer cached per query for the life of the client. Their `value` is current without a collector.
+
 ## 0.6.3 (2026-11-02)
 
 Safer imports and network calls, and the mail thread reader.
