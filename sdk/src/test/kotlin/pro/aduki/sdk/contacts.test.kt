@@ -29,6 +29,7 @@ class ContactsSyncTest {
                 return when {
                     request.path == "/v1/user" ->
                         MockResponse().setBody("""{"success":true,"data":{"hex":"u1","tenant":"t1","email":"a@aduki.pro","owner":false}}""")
+                    request.path!!.startsWith("/v1/user/contacts/sync") -> MockResponse().setResponseCode(405)
                     request.path!!.startsWith("/v1/user/contacts") ->
                         MockResponse().setBody("""{"success":true,"data":{"items":[{"hex":"c1","etag":"e1","name":"Ada","emails":["ada@example.com"],"phones":null,"groups":null,"created":"2026-09-26T09:02:20"}],"total":1}}""")
                     else -> MockResponse().setResponseCode(404)

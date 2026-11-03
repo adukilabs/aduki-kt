@@ -125,9 +125,15 @@ data class Contact(
     var company: String = "",
     var vcard: String = "",
     var ctag: String = "",
-    var updated: Long = 0
+    var updated: Long = 0,
+    // ... sealed lists, notes, photo (data: URI) ...
+    var photoHex: String = "",     // clear: photo blob id, local:<spool> while an upload waits
+    var photoUpdated: Long = 0
 )
 ```
+
+The contact sync reads only `hex` and `ctag` (clear columns, property
+queries) to decide which rows changed; only those are opened and written.
 
 ### `Group`
 

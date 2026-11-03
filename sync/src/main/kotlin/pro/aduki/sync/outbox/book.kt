@@ -27,6 +27,10 @@ import java.util.UUID
  * - `contact.merge`: `{others, vcard}`, the others merged into the contact
  *   and deleted, in one server call.
  * - `contact.delete`: `{}`.
+ * - `contact.photo`: `{spool, type}`, a photo whose bytes wait in a sealed
+ *   spool file ([Photos]); the contact's `photoHex` is `local:<spool>`
+ *   until [photographed] gives it the server's blob id.
+ * - `contact.unphoto`: `{}`, the photo removed.
  *
  * The three group-wide actions have no hex: a contact sync waits while one
  * is queued. Groups created here are kept as `Group` rows until a sync
@@ -35,7 +39,12 @@ import java.util.UUID
  * The vCard is always written as 4.0, keeping the unmodelled properties of
  * the card's source vCard.
  */
-class Book(private val store: BoxStore, private val manager: Manager) {
+class Book(
+    private val store: BoxStore,
+    private val manager: Manager,
+    /** Where photos wait for upload; without it [photo] throws. */
+    private val photos: Photos? = null
+) {
     private val box = store.boxFor(Contact::class.java)
     private val groupBox = store.boxFor(Group::class.java)
 
@@ -166,6 +175,67 @@ class Book(private val store: BoxStore, private val manager: Manager) {
     }
 
     /**
+     * Sets the photo of [hex] to [bytes] (JPEG, PNG or WebP by its magic
+     * bytes, at most 1 MiB; the server also refuses more than 1024 by 1024
+     * pixels, so scale it on the device first). The bytes wait in a sealed
+     * spool file and the upload is queued as `contact.photo`; until it is
+     * sent, the contact's `photoHex` is `local:<spool>`.
+     */
+    fun photo(hex: String, bytes: ByteArray): Contact {
+        val photos = photos ?: throw IllegalStateException("no photo storage")
+        val type = Photos.type(bytes) ?: throw IllegalArgumentException("A photo is JPEG, PNG or WebP")
+        require(bytes.size <= Photos.LIMIT) { "The photo is larger than 1 MiB" }
+        val name = photos.spool(bytes)
+        return try {
+            store.callInTx {
+                val contact = find(hex)
+                contact.photoHex = Photos.LOCAL + name
+                contact.photoUpdated = System.currentTimeMillis()
+                box.put(contact)
+                manager.enqueue(PHOTO, JSONObject().put("spool", name).put("type", type).toString().toByteArray(), hex)
+                contact
+            }
+        } catch (e: Exception) {
+            photos.release(name)
+            throw e
+        }
+    }
+
+    /**
+     * Removes the photo of [hex] and queues `contact.unphoto`. A photo kept
+     * in the vCard (a `data:` URI from before photo blobs) goes too, with a
+     * `contact.update` of the vCard.
+     */
+    fun unphoto(hex: String): Contact = store.callInTx {
+        val contact = find(hex)
+        contact.photoHex = ""
+        contact.photoUpdated = System.currentTimeMillis()
+        if (contact.photo.isNotBlank()) {
+            fill(contact, card(contact).copy(photo = ""))
+            manager.enqueue(UPDATE, payload(contact.vcard, contact.groups), hex)
+        }
+        box.put(contact)
+        manager.enqueue(UNPHOTO, "{}".toByteArray(), hex)
+        contact
+    }
+
+    /**
+     * Gives [hex] the photo the server stored ([row], its reply to a photo
+     * write sent from [spool], null for a removal), unless a later photo
+     * write changed it here meanwhile.
+     */
+    fun photographed(hex: String, spool: String?, row: ContactRow) {
+        store.runInTx {
+            val contact = box.query(Contact_.hex.equal(hex)).build().use { it.findFirst() } ?: return@runInTx
+            val current = if (spool == null) contact.photoHex.isEmpty() else contact.photoHex == Photos.LOCAL + spool
+            if (!current) return@runInTx
+            contact.photoHex = row.photoHex
+            contact.photoUpdated = row.photoUpdated.takeIf { it > 0 } ?: contact.photoUpdated
+            box.put(contact)
+        }
+    }
+
+    /**
      * Gives the placeholder [old] the server's [row] after its creation, and
      * points actions queued on [old] at the new hex.
      */
@@ -212,6 +282,8 @@ class Book(private val store: BoxStore, private val manager: Manager) {
         const val RENAME = "contact.rename"
         const val DISSOLVE = "contact.dissolve"
         const val DELETE = "contact.delete"
+        const val PHOTO = "contact.photo"
+        const val UNPHOTO = "contact.unphoto"
 
         /** Hex prefix of a contact the server has not created yet. */
         const val PLACEHOLDER = "contact_"

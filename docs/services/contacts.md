@@ -20,6 +20,8 @@ package pro.aduki.sdk
 
 class Contacts internal constructor(...) {
     val groups: Groups
+    val progress: StateFlow<SyncProgress>
+    val photoUploads: StateFlow<PhotoProgress>
 
     suspend fun sync(tenant: String = ""): Boolean
     fun observe(): StateFlow<List<Contact>>?
@@ -32,6 +34,11 @@ class Contacts internal constructor(...) {
     suspend fun create(card: Card): Contact
     suspend fun update(hex: String, card: Card): Contact
     suspend fun delete(hex: String)
+
+    suspend fun photo(hex: String, refresh: Boolean = false): ByteArray?
+    suspend fun photo(contact: Contact, refresh: Boolean = false): ByteArray?
+    suspend fun setPhoto(hex: String, bytes: ByteArray): Contact
+    suspend fun removePhoto(hex: String): Contact
 
     suspend fun import(vcf: InputStream): Imported
     fun export(hexes: List<String>? = null, version: String = Vcard.V4): String
@@ -62,34 +69,84 @@ It needs a storage: `Aduki.builder().store(...)`, `contactStorage(storage)`
 (with ObjectBox, `pro.aduki.sync.engine.Contact.storage(boxStore)`), or your
 own engine with `engines(...)`. Without one it returns `false`.
 
-The server has no incremental contacts route over REST, so the transport
-(`pro.aduki.sync.http.HttpContactTransport`) reads `GET /v1/user/contacts`
-200 rows at a time and reconciles the whole list:
+The transport (`pro.aduki.sync.http.HttpContactTransport`) reads
+`GET /v1/user/contacts/sync` (scope `contacts:read`), 200 cards a page:
 
-- the sync token is a digest of every `hex:etag` line (the etag covers the
-  groups too); if it equals the stored one no contact is touched;
-- otherwise every row is merged and local contacts the server no longer lists
-  are removed;
-- the group list (`GET /v1/user/contacts/groups`) is read on every sync and
-  replaces the stored groups, so groups without members show up too;
+- with no stored token it is a full listing (`full: true` on every page,
+  `total` on the first). Each page is applied in its own transaction as it
+  arrives; once the last page (`more: false`) is in, local contacts not on
+  any page of the listing are removed, and its `token` is stored. A pass that
+  fails half way keeps the pages it applied and removes nothing;
+- the next sync sends `since=<token>` and gets only the cards changed
+  (`items`) and deleted (`removed`) after it, paged the same way;
+- a `410` (`sync.reset`, the token is too old) or `422` (not a token) drops
+  the token and starts a full listing;
+- a server without the route (`404`, `405`) is read the old way, every sync:
+  all of `GET /v1/user/contacts`, 200 rows at a time, reconciled as a full
+  listing; the token is then a digest of every `hex:etag` line, and when it
+  equals the stored one no contact is touched. The transport keeps to the old
+  way for its lifetime;
+- a row whose etag is the stored one is not written again; only rows that
+  changed are opened, merged and sealed. Removals go by id;
+- the group list (`GET /v1/user/contacts/groups`) is read with the last page
+  and replaces the stored groups, so groups without members show up too;
 - contacts with a queued write are left as they are locally until the write
-  is sent, and a queued group create, rename or delete holds the whole sync
-  back.
-
-Rows carry the vCard: company, notes and photo are read from it, and every
-e-mail address and phone is kept. The list is walked with the `after` cursor
-(each page's `next`, null on the last); a server answering in page mode
-(`page`, `pages`) is walked by page number.
+  is sent (the token is then not kept, so the next sync reads them again),
+  and a queued group create, rename or delete holds the whole sync back.
 
 ```json
-{"success": true, "data": {"items": [
-  {"hex": "8d012b837f9fbbaf", "uid": "01a16e92-...", "etag": "7e29...",
-   "vcard": "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Ann Lee\r\n...END:VCARD\r\n",
-   "name": "Ann Lee", "emails": ["ann@example.com"], "phones": ["+15550001"],
-   "groups": ["friends"], "meta": {}, "version": "4.0", "size": 134,
-   "created": "2026-10-24T15:40:42.574184Z", "updated": "2026-10-24T15:42:29.310916Z"}
-], "total": 1, "next": null}}
+{"success": true, "data": {
+  "items": [{"hex": "8d012b837f9fbbaf", "uid": "01a16e92-...", "etag": "7e29...",
+    "vcard": "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Ann Lee\r\n...END:VCARD\r\n",
+    "name": "Ann Lee", "emails": ["ann@example.com"], "phones": ["+15550001"],
+    "groups": ["friends"], "meta": {}, "version": "4.0", "size": 134,
+    "created": "2026-10-24T15:40:42.574184Z", "updated": "2026-10-24T15:42:29.310916Z",
+    "photo": {"hex": "0123456789abcdef", "updated": "2026-10-24T15:42:29Z"}}],
+  "removed": ["2f1c0d9e8b7a6c5d"], "token": "d.4182", "more": false, "full": false}}
 ```
+
+Rows carry the vCard: company, notes and an inline photo are read from it,
+and every e-mail address and phone is kept. A photo kept as a blob (`photo`
+above, `null` for none) has no `PHOTO` line in the vCard; it is
+`Contact.photoHex` (see Photos).
+
+### `progress`
+`StateFlow<SyncProgress>` (`pro.aduki.core.models`), also `client.sync.contacts`:
+
+- `Idle`: no sync has run in this process;
+- `Running(done, total)`: `done` cards applied so far; `total` is the size of
+  a full listing when the server says it, else null (show an indeterminate bar);
+- `Done(at, changed)`: finished at `at` (epoch ms), `changed` cards stored or removed;
+- `Failed(message, at)`: the last sync failed; `sync` threw the error.
+
+### Photos
+- `photo(hex, refresh)` / `photo(contact, refresh)`: the photo bytes, or null.
+  A photo set on this device and not sent yet comes from its spool file; a
+  server photo from the sealed cache, keyed by its blob id, else it is
+  downloaded once (`GET /v1/user/contacts/{hex}/photo`) and cached. With
+  `refresh` a cached photo is checked with `If-None-Match` (a `304` keeps
+  it). A `data:` URI photo in the vCard is decoded. Never throws: a failure
+  is null (or the cached copy), reported through `Faults.report`. Without a
+  store `photo(hex)` reads the server each time.
+- `setPhoto(hex, bytes)`: JPEG, PNG or WebP (by magic bytes), at most 1 MiB;
+  the server also refuses more than 1024 by 1024 pixels. Scale it first: on
+  Android `pro.aduki.android.photo.Thumbnails.scale(bytes)` writes a JPEG of
+  at most 512 pixels. It is shown at once (`photoHex` is `local:<spool>`) and
+  queued as `contact.photo`: `PUT /v1/user/contacts/{hex}/photo` with the
+  bytes. The reply's blob id replaces `photoHex`, and the bytes are cached
+  under it, so the device never downloads its own upload.
+- `removePhoto(hex)`: queued as `contact.unphoto` (`DELETE
+  /v1/user/contacts/{hex}/photo`); a `data:` URI photo is removed from the
+  vCard too, with a `contact.update`.
+- `photoUploads`: `PhotoProgress(queued, done, failed)`: photo writes waiting
+  in the outbox, sent since the client was built, and refused for good (413,
+  415, 422, or 404 from a server without photo routes); those stay in
+  `client.sync.failed` to retry or discard.
+
+Photos are files sealed with the store's vault, in `photos` inside the
+`store(dir)` directory or `Aduki.Builder.photos(dir)`. With
+`store(BoxStore)` and no `photos(dir)` they are kept in memory: an upload
+still queued when the process ends is then refused on the next flush.
 
 ### `observe`, `search`, `get`, `card`
 - `observe()`: every contact, sorted by name, as a hot `StateFlow`.
@@ -296,7 +353,9 @@ data class Contact(
     var phones: List<String>,        // sealed
     var groups: List<String>,        // sealed
     var notes: String = "",          // sealed
-    var photo: String = ""           // sealed, data: URI or URL
+    var photo: String = "",          // sealed, data: URI or URL from the vCard
+    var photoHex: String = "",       // clear: the photo blob id, local:<spool> while queued, "" for none
+    var photoUpdated: Long = 0       // when the photo was set, epoch ms
 )
 ```
 

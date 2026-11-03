@@ -37,6 +37,14 @@ data class Contact(
     @Convert(converter = SealedList::class, dbType = String::class) var phones: List<String> = emptyList(),
     @Convert(converter = SealedList::class, dbType = String::class) var groups: List<String> = emptyList(),
     @Convert(converter = SealedText::class, dbType = String::class) var notes: String = "",
-    /** A `data:` URI or a URL; "" for none. */
-    @Convert(converter = SealedText::class, dbType = String::class) var photo: String = ""
+    /** A `data:` URI or a URL from the vCard's `PHOTO`; "" for none (or a photo kept as a blob, see [photoHex]). */
+    @Convert(converter = SealedText::class, dbType = String::class) var photo: String = "",
+    /**
+     * The server's photo blob id (16 hex digits), `local:<id>` while a photo
+     * set on this device waits in the outbox, "" for none. Clear: it names
+     * the blob, not its content.
+     */
+    var photoHex: String = "",
+    /** Epoch milliseconds the photo was last set, 0 when none. */
+    var photoUpdated: Long = 0
 )

@@ -22,7 +22,8 @@ import pro.aduki.store.entities.Outbox
  * notes, organizer, attendees and iCalendar object; mailbox and service names
  * and descriptions; cached message bodies and attachment lists) and the outbox
  * payload (through the outbox storage, not a converter: the ObjectBox
- * generator cannot convert a byte-array column). Clear: ids, hexes, uids,
+ * generator cannot convert a byte-array column), and the photo files (`Files`).
+ * Clear: ids, hexes, uids, photo blob ids,
  * flags, keywords, timestamps, counters, sequence numbers, roles, statuses,
  * recurrence rules, reminder offsets and tenant/calendar/service ids. Contacts also
  * carry keyed blind indexes of e-mail and phone for exact lookups.

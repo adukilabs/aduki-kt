@@ -11,6 +11,7 @@ package pro.aduki.sdk
 
 class Sync internal constructor(...) {
     val state: StateFlow<SyncState>
+    val contacts: StateFlow<SyncProgress>   // the address book sync, as Contacts.progress
     val outbox: StateFlow<Int>
     val failed: StateFlow<List<Outbox>>
 

@@ -65,6 +65,7 @@ class BookTest {
                 if (status != 200) return MockResponse().setResponseCode(status)
                 val path = request.path.orEmpty()
                 return when {
+                    path.startsWith("/v1/user/contacts/sync") -> MockResponse().setResponseCode(405)
                     path.startsWith("/v1/user/contacts/group/") && request.method == "PATCH" ->
                         MockResponse().setBody("""{"success":true,"data":{"group":"close","changed":2}}""")
                     path.startsWith("/v1/user/contacts/group/") && request.method == "DELETE" ->

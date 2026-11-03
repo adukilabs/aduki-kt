@@ -156,7 +156,7 @@
     },
     {
       "id": "2:8280994424801829309",
-      "lastPropertyId": "18:6631041924827236901",
+      "lastPropertyId": "20:904389961879133522",
       "name": "Contact",
       "properties": [
         {
@@ -259,6 +259,16 @@
           "indexId": "31:283361709677764290",
           "type": 1,
           "flags": 8
+        },
+        {
+          "id": "19:5557535840708854463",
+          "name": "photoHex",
+          "type": 9
+        },
+        {
+          "id": "20:904389961879133522",
+          "name": "photoUpdated",
+          "type": 6
         }
       ],
       "relations": []

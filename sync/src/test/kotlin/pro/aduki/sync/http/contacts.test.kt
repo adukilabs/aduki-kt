@@ -37,6 +37,9 @@ class HttpContactTransportTest {
 
     private val replies = LinkedBlockingQueue<MockResponse>()
 
+    // What `GET /user/contacts/sync` answers, in order; 405 (an older server) when empty.
+    private val sync = LinkedBlockingQueue<MockResponse>()
+
     // What `GET /user/contacts/groups` answers; list pages come from [reply].
     @Volatile private var groups: MockResponse = MockResponse().setBody("""{"success":true,"data":{"items":[{"name":"friends","count":3},{"name":"empty","count":0}]}}""")
 
@@ -50,6 +53,7 @@ class HttpContactTransportTest {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse =
                 if (request.path!!.startsWith("/v1/user/contacts/groups")) groups
+                else if (request.path!!.startsWith("/v1/user/contacts/sync")) sync.poll() ?: MockResponse().setResponseCode(405)
                 else replies.poll(5, TimeUnit.SECONDS) ?: MockResponse().setResponseCode(500)
         }
         server.start()

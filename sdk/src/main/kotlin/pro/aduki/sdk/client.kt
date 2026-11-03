@@ -45,6 +45,7 @@ import pro.aduki.sync.engine.Contact as ContactEngine
 import pro.aduki.sync.engine.Mailbox as MailboxEngine
 import pro.aduki.sync.engine.Schedule as ScheduleEngine
 import pro.aduki.sync.outbox.Book
+import pro.aduki.sync.outbox.Photos
 import pro.aduki.sync.outbox.Manager
 import pro.aduki.sync.outbox.Worker
 import pro.aduki.state.repository.Contact as ContactRepo
@@ -64,6 +65,7 @@ import pro.aduki.sync.http.ScheduleDispatcher
 import pro.aduki.sync.outbox.Dispatcher
 import pro.aduki.sync.outbox.Rejected
 import pro.aduki.store.box.Factory
+import pro.aduki.store.box.Files
 import pro.aduki.store.entities.Outbox
 import java.io.File
 
@@ -93,7 +95,9 @@ class Aduki internal constructor(
     /** Whether [close] closes [store] (it was opened by `Builder.store(dir)`). */
     private val owned: Boolean = false,
     rejected: (Outbox, Rejected) -> Unit = { _, _ -> },
-    val tokenStore: TokenStore? = null
+    val tokenStore: TokenStore? = null,
+    /** Where contact photos are cached and spooled, sealed; null keeps them in memory. */
+    photoDir: File? = null
 ) {
     init {
         tokenStore?.load()?.let { stored ->
@@ -355,8 +359,11 @@ class Aduki internal constructor(
     // initializers run in order).
     private val outbox: Manager? = manager ?: store?.let(::Manager)
 
+    // Contact photos: the sealed cache and the upload spool.
+    private val photos: Photos? = store?.let { Photos(Files(photoDir)) }
+
     // Contact writes: applied to the store, journaled in the outbox.
-    private val book: Book? = store?.let { s -> outbox?.let { Book(s, it) } }
+    private val book: Book? = store?.let { s -> outbox?.let { Book(s, it, photos) } }
 
     private val scheduleSync: ScheduleEngine? = scheduleEngine
         ?: store?.let { s -> outbox?.let { ScheduleEngine(s, schedulingApi, it) } }
@@ -364,7 +371,15 @@ class Aduki internal constructor(
     // Outbox dispatchers after mail's, in order: each sends its own actions
     // and hands anything else to the next.
     private val dispatchers: List<(Dispatcher?) -> Dispatcher?> = listOf(
-        { next -> ContactDispatcher(contactsApi, { old, row -> book?.created(old, row) }, next) },
+        { next ->
+            ContactDispatcher(
+                contactsApi,
+                { old, row -> book?.created(old, row) },
+                next,
+                photos,
+                { hex, spool, row -> book?.photographed(hex, spool, row) }
+            )
+        },
         { next -> scheduleSync?.let { ScheduleDispatcher(schedulingApi, it, next) } ?: next }
     )
 
@@ -390,7 +405,7 @@ class Aduki internal constructor(
     private val bodies: ContentEngine? = store?.let { ContentEngine(it, JmapContentTransport(jmap)) }
 
     val mail = Mail(this, outbox, mailRepo ?: store?.let { MailRepo(it, outbox, work) }, outboxWorker, bodies)
-    val contacts = Contacts(this, contactRepo ?: store?.let { ContactRepo(it, work) }, contactSync, book, outboxWorker)
+    val contacts = Contacts(this, contactRepo ?: store?.let { ContactRepo(it, work) }, contactSync, book, outboxWorker, photos, outbox, work)
     val sync = Sync(this, mailboxSync, contactSync, outboxWorker, outbox)
     val scheduling = Scheduling(
         this,
@@ -403,6 +418,17 @@ class Aduki internal constructor(
     val settings = Settings(this)
 
     init {
+        // Spooled photos of outbox entries that are gone (sent, discarded).
+        if (photos != null && outbox != null) {
+            try {
+                val live = (outbox.pending() + outbox.failed()).filter { it.action == Book.PHOTO }
+                    .mapNotNull { runCatching { JSONObject(String(it.payload, Charsets.UTF_8)).optString("spool") }.getOrNull() }
+                    .toSet()
+                photos.sweep(live)
+            } catch (e: Exception) {
+                Faults.report("photo spool sweep", e)
+            }
+        }
         lifecycle.listen { active ->
             if (active) {
                 work.launch {
@@ -780,6 +806,7 @@ class Aduki internal constructor(
         private var secureStore: pro.aduki.crypto.keystore.Provider? = null
         private var store: BoxStore? = null
         private var directory: File? = null
+        private var photoDir: File? = null
         private var rejected: (Outbox, Rejected) -> Unit = { _, _ -> }
         private var tokenStore: TokenStore? = null
 
@@ -851,6 +878,15 @@ class Aduki internal constructor(
             this.store = null
         }
 
+        /**
+         * Where contact photos are kept, sealed: the cache of server photos
+         * and the spool of uploads waiting in the outbox. By default
+         * `photos` inside the `store(dir)` directory; with `store(BoxStore)`
+         * and no [dir] they are kept in memory, and an upload queued when the
+         * process ends is lost (refused on the next flush).
+         */
+        fun photos(dir: File) = apply { this.photoDir = dir }
+
         /** Told about each outbox action the server refused for good (e.g. an invalid recipient). */
         fun rejected(callback: (Outbox, Rejected) -> Unit) = apply { this.rejected = callback }
 
@@ -900,7 +936,8 @@ class Aduki internal constructor(
                 store = local,
                 owned = store == null && local != null,
                 rejected = rejected,
-                tokenStore = tokenStore
+                tokenStore = tokenStore,
+                photoDir = photoDir ?: directory?.let { File(it, "photos") }
             )
         }
     }

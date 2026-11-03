@@ -2,6 +2,20 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
+## Unreleased
+
+Fast, observable contacts sync, and contact photos. It uses the mail server's `GET /user/contacts/sync` and `/user/contacts/{hex}/photo` routes; against older servers the sync reads the whole list as before and photo writes are refused.
+
+- `HttpContactTransport` reads `GET /user/contacts/sync`: a full listing the first time, then only the cards changed and removed since the stored token. Pages are applied as they arrive, one transaction each. `410`/`422` start a full listing again; `404`/`405` fall back to the full `GET /user/contacts` walk.
+- The contact engine makes one pass: it reads only `hex` and `ctag` (clear columns) to find changed rows, writes only those, removes by id, and sweeps contacts missing from a full listing only after its last page. Before, every sync read and unsealed the whole book three times and rewrote every row.
+- `Contacts.progress: StateFlow<SyncProgress>` (also `Sync.contacts`): `Idle`, `Running(done, total)`, `Failed(message, at)`, `Done(at, changed)`.
+- Photos: `Contacts.photo(hex, refresh)` and `photo(contact, refresh)` (sealed file cache by blob id, `If-None-Match`, `data:` URIs decoded), `setPhoto(hex, bytes)` and `removePhoto(hex)` (local at once, queued as `contact.photo` / `contact.unphoto`, bytes in a sealed spool file), `photoUploads: StateFlow<PhotoProgress>`. `Aduki.Builder.photos(dir)` sets where photos are kept (default `photos` in the `store(dir)` directory).
+- `pro.aduki.android.photo.Thumbnails.scale(bytes, size = 512)` scales a photo to a JPEG before upload.
+- `Contact.photoHex` and `photoUpdated` (clear columns; the ObjectBox model gains two properties), `ContactRow.photoHex` and `photoUpdated`. New models in `pro.aduki.core.models`: `ContactChanges`, `ContactPhoto`, `SyncProgress`, `PhotoProgress`.
+- `pro.aduki.net.http.Contacts.changes(since, limit)`, `photo(hex, etag)`, `setPhoto(hex, bytes, type, key)`, `removePhoto(hex, key)`. `ContactTransport.pages` and new `ContactStorage` reads (`unchanged`, `hexes`, `find`) have defaults, so existing implementations keep working.
+- `pro.aduki.store.box.Files`: sealed files by name. `pro.aduki.sync.outbox.Photos`: the photo cache and spool.
+- See `docs/services/contacts.md`.
+
 ## 0.7.1 (2026-11-04)
 
 Public holidays. It needs the mail server with `GET /user/holidays`, `PUT|DELETE /user/holidays/{region}` and `GET /user/exceptions`.
