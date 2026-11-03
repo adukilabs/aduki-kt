@@ -56,7 +56,7 @@ try {
 
 `rename` sends `PATCH /v1/accounts/{hex}` `{name}` to Aduki ID with an `id`
 audience token. The name is trimmed and must be 1 to 80 characters; anything
-else fails with `Api` `input.invalid` (400) before a request is made. It
+else fails with `Api` `input.invalid` (422, as Aduki ID answers) before a request is made. It
 returns false when the client has no Aduki ID session (an API key or a bare
 token). The mail server's profile shows the new name shortly after, once it
 has followed Aduki ID's `id.account.updated` event.

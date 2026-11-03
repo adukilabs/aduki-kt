@@ -256,9 +256,25 @@ class ProfilesTest {
     @Test
     fun renameRefusesABadNameLocally() {
         val id = Id(http, server.url("/id/v1").toString())
-        assertThrows(AdukiException.Api::class.java) { id.rename("00000000000000a1", "   ") }
+        assertEquals(422, assertThrows(AdukiException.Api::class.java) { id.rename("00000000000000a1", "   ") }.status)
         assertThrows(AdukiException.Api::class.java) { id.rename("00000000000000a1", "x".repeat(81)) }
         assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun renameRefusalsFromAdukiIdAreApi() {
+        val id = Id(http, server.url("/id/v1").toString())
+        id.adopt(Tokens("eyJ.id", "rt_1", "600", "00000000000000ab"), "id")
+        server.enqueue(MockResponse().setResponseCode(422).setBody("""{"success":false,"error":{"status":422,"kind":"input.invalid","message":"name"}}"""))
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"success":false,"error":{"status":404,"kind":"entity.missing","message":"no"}}"""))
+
+        val invalid = assertThrows(AdukiException.Api::class.java) { id.rename("00000000000000a1", "Ada") }
+        assertEquals(422, invalid.status)
+        assertEquals("input.invalid", invalid.kind)
+        assertFalse(invalid.locked)
+        val missing = assertThrows(AdukiException.Api::class.java) { id.rename("00000000000000a1", "Ada") }
+        assertEquals(404, missing.status)
+        assertEquals("entity.missing", missing.kind)
     }
 
     @Test
@@ -269,6 +285,7 @@ class ProfilesTest {
 
         val e = assertThrows(AdukiException.Api::class.java) { id.rename("00000000000000a1", "Ada") }
         assertTrue(e.locked)
+        assertEquals(403, e.status)
     }
 
     @Test

@@ -466,7 +466,7 @@ class Aduki internal constructor(
      * reaches the mail server's profile shortly after.
      *
      * @throws AdukiException.Api `locked` (403, [AdukiException.Api.locked])
-     * when the tenant locks profiles, `input.invalid` (400) for a bad name.
+     * when the tenant locks profiles, `input.invalid` (422) for a bad name.
      */
     suspend fun rename(name: String): Boolean = write {
         if (!hasRefresh()) return@write false
