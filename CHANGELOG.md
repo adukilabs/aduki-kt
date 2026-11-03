@@ -16,7 +16,7 @@ Fast, observable contacts sync, and contact photos. It uses the mail server's `G
 - `pro.aduki.store.box.Files`: sealed files by name. `pro.aduki.sync.outbox.Photos`: the photo cache and spool.
 - See `docs/services/contacts.md`.
 
-## 0.7.1 (unreleased)
+## 0.7.1 (2026-11-04)
 
 Public holidays. It needs the mail server with `GET /user/holidays`, `PUT|DELETE /user/holidays/{region}` and `GET /user/exceptions`.
 
