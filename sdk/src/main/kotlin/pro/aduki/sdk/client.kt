@@ -23,6 +23,9 @@ import pro.aduki.core.models.Avatar
 import pro.aduki.core.models.AvatarImage
 import pro.aduki.core.models.Profile
 import pro.aduki.core.models.AccountSession
+import pro.aduki.core.models.AccountProfile
+import pro.aduki.core.models.CenterView
+import pro.aduki.core.models.SignedIn
 import pro.aduki.net.http.Client as HttpClient
 import pro.aduki.net.http.Dpop
 import pro.aduki.net.http.Events
@@ -211,6 +214,26 @@ class Aduki internal constructor(
 
     private val renewal = Any()
 
+    // Serialises every refresh-token rotation of one session in this process,
+    // across `Aduki` instances (a sign-in client and a redeem client sharing
+    // one TokenStore): the process-wide lock of the session first, then this
+    // instance's. Taken in that order everywhere.
+    private inline fun <T> serial(block: () -> T): T {
+        val key = (session.tokens.value?.session?.ifBlank { null }
+            ?: try { tokenStore?.load()?.session } catch (_: Exception) { null }).orEmpty()
+        val shared = if (key.isBlank()) renewal else Renewals.lock(key)
+        return synchronized(shared) { synchronized(renewal) { block() } }
+    }
+
+    // Saves a rotated pair durably (TokenStore.saveNow) before it is used.
+    private fun persist(tokens: Tokens) {
+        try {
+            tokenStore?.saveNow(tokens)
+        } catch (e: Exception) {
+            Faults.report("token store save", e)
+        }
+    }
+
     // The Aduki ID client (K2) owns renewal: one serialized refresh rotation,
     // a spent refresh token is dropped and never presented again. `session`
     // stays the observable copy and the source of truth for sign-ins adopted
@@ -225,7 +248,13 @@ class Aduki internal constructor(
     /**
      * Renews the access token unless another caller already replaced [stale].
      */
-    private fun renew(stale: String?): String? = synchronized(renewal) {
+    private fun renew(stale: String?): String? = serial { renewNow(stale) }
+
+    // [renew] under [serial]. Tokens are dropped only when Aduki ID says the
+    // session is over (AdukiException.Unauthorized.ended); a refused proof
+    // (auth.dpop, auth.nonce), a second factor or epoch answer, a network
+    // failure or a 5xx keeps them for the next try.
+    private fun renewNow(stale: String?): String? {
         var current = session.tokens.value ?: try { tokenStore?.load() } catch (e: Exception) {
             Faults.report("token store load", e)
             null
@@ -253,23 +282,24 @@ class Aduki internal constructor(
         align(current)
 
         val presented = current.refresh
-        try {
+        return try {
             val fresh = id.rotate(Endpoints.AUDIENCE, current.token.ifBlank { null })
             val updated = fresh.copy(session = current.session)
+            persist(updated)
             session.update(updated)
-            try { tokenStore?.save(updated) } catch (_: Exception) {}
             fresh.token
         } catch (e: pro.aduki.core.errors.AdukiException.Auth) {
             // A 2xx that failed validation spent the refresh token: keep the
             // rotated one if it came back, else drop it (reuse revokes the session).
             session.update(current.copy(refresh = e.refresh))
             if (e.refresh.isNotBlank()) {
-                try { tokenStore?.save(current.copy(refresh = e.refresh)) } catch (_: Exception) {}
+                persist(current.copy(refresh = e.refresh))
             } else {
                 try { tokenStore?.clear() } catch (_: Exception) {}
             }
             null
         } catch (e: pro.aduki.core.errors.AdukiException.Unauthorized) {
+            if (!e.ended) return null // not a verdict on the session: keep it
             if (tokenStore != null) {
                 val stored = try { tokenStore.load() } catch (_: Exception) { null }
                 if (stored != null && stored.refresh.isNotBlank() && stored.refresh != presented) {
@@ -287,10 +317,11 @@ class Aduki internal constructor(
                     try {
                         val fresh = id.rotate(Endpoints.AUDIENCE, adopted.token.ifBlank { null })
                         val updated = fresh.copy(session = adopted.session)
+                        persist(updated)
                         session.update(updated)
-                        try { tokenStore.save(updated) } catch (_: Exception) {}
                         return fresh.token
                     } catch (e2: pro.aduki.core.errors.AdukiException.Unauthorized) {
+                        if (!e2.ended) return null
                         session.update(adopted.copy(refresh = ""))
                         try { tokenStore.clear() } catch (_: Exception) {}
                         return null
@@ -496,7 +527,7 @@ class Aduki internal constructor(
      */
     suspend fun rename(name: String): Boolean = write {
         if (!hasRefresh()) return@write false
-        val hex = account()
+        val hex = accountHex()
         identity { it.rename(hex, name) }
         session.forget()
         true
@@ -561,7 +592,7 @@ class Aduki internal constructor(
     }
 
     // The signed-in account's hex: the cached identity's, else `GET /user`.
-    private suspend fun account(): String {
+    private suspend fun accountHex(): String {
         session.identity.value?.user?.ifBlank { null }?.let { return it }
         val resolved = Whoami.resolve(activeHttpClient(), options.endpoint)
         session.update(resolved)
@@ -666,7 +697,7 @@ class Aduki internal constructor(
      * `false` and keeps the session (with the rotated refresh token) so a
      * later call can retry; `session.clear()` forgets it locally instead.
      */
-    suspend fun logout(): Boolean = guard { synchronized(renewal) {
+    suspend fun logout(): Boolean = guard { serial {
         watcher?.stop()
         watcher = null
         val current = session.tokens.value
@@ -681,7 +712,7 @@ class Aduki internal constructor(
             // Still signed in remotely: keep the retry credential.
             val retained = current.copy(refresh = id.refreshToken())
             session.update(retained)
-            try { tokenStore?.save(retained) } catch (_: Exception) {}
+            persist(retained)
         } else {
             session.clear()
             try { tokenStore?.clear() } catch (_: Exception) {}
@@ -701,7 +732,7 @@ class Aduki internal constructor(
     suspend fun revoke(hex: String): Boolean = guard {
         val revoked = identity { it.revoke(hex) }
         if (revoked && session.tokens.value?.session == hex) {
-            synchronized(renewal) {
+            serial {
                 watcher?.stop()
                 watcher = null
                 id.clear()
@@ -715,18 +746,99 @@ class Aduki internal constructor(
     /**
      * A single-use [Handoff] with which the app [target] (its package name)
      * opens its own session of this account, bound to its own key, without a
-     * password or second factor ([Aduki.redeem]). Leave it for that app with
-     * `Accounts.offer` on Android. [ttl] is in seconds, 60 to 86400.
+     * password or second factor ([Aduki.exchange]). [ttl] is in seconds, 30
+     * to 86400. Pass the receiving app's DPoP key thumbprint as [jkt] (the
+     * Android broker does) so the code works only with that key.
      */
-    suspend fun handoff(target: String, ttl: Long = Handoff.TTL): Handoff =
-        guard { identity { it.handoff(target, ttl) } }
+    suspend fun handoff(target: String, ttl: Long = Handoff.TTL, jkt: String? = null): Handoff =
+        guard { identity { it.handoff(target, ttl, jkt) } }
+
+    @Volatile
+    private var profileCache: AccountProfile? = null
+
+    /**
+     * The signed-in account's profile from Aduki ID (`GET /v1/me`): real hex,
+     * handle, name, kind, tenant with name and role, photo tag, center,
+     * unlock, and this session's device group. Cached for the life of the
+     * client unless [refresh]; null when it cannot be read (offline, signed
+     * out, an older server). Never throws, except on cancellation.
+     */
+    suspend fun account(refresh: Boolean = false): AccountProfile? {
+        if (!refresh) profileCache?.let { return it }
+        return read("account profile", null) { identity { it.me() } }?.also { profileCache = it }
+    }
+
+    /**
+     * The signed-in account's Account Center with every account's profile
+     * (`GET /v1/center`): an account in no center is listed alone.
+     *
+     * @throws AdukiException on failure.
+     */
+    suspend fun center(): CenterView = write { identity { it.center() } }
+
+    /**
+     * Adds the account a link [ticket] names to this account's Account Center
+     * (`POST /v1/links {ticket}`). The ticket is from [signIn] with `link =
+     * true` in this app, with the same DPoP key as this client.
+     *
+     * @throws AdukiException.Network with code 403 (the tenant forbids links)
+     * or 409 (a second personal account); [AdukiException.Unauthorized] for a
+     * spent or expired ticket; [AdukiException.Proof] when this session is not
+     * bound to the ticket's key.
+     */
+    suspend fun link(ticket: String): CenterView = write { identity { it.link(ticket) } }.also { profileCache = null }
+
+    /**
+     * Unlinks this account from its Account Center (`DELETE /v1/links`); [code]
+     * is a fresh authenticator code. False when it was in no center.
+     */
+    suspend fun unlink(code: String): Boolean = write { identity { it.unlink(code) } }.also { profileCache = null }
+
+    /**
+     * Signs out of every Aduki app on this device for this account: ends the
+     * session's device group at Aduki ID (`DELETE /v1/sessions?group=`), then
+     * forgets this client's tokens. False when the group is unknown (an older
+     * server, or the profile could not be read); the tokens are kept then.
+     *
+     * @throws AdukiException when Aduki ID refused or could not be reached
+     * (the tokens are kept).
+     */
+    suspend fun endDevice(): Boolean = write {
+        val group = account()?.group ?: return@write false
+        val ended = identity { it.endGroup(group) }
+        if (ended == 0) return@write false // not this session's group: keep the tokens
+        serial {
+            watcher?.stop()
+            watcher = null
+            id.clear()
+            session.clear()
+            try { tokenStore?.clear() } catch (_: Exception) {}
+        }
+        profileCache = null
+        true
+    }
+
+    /**
+     * Removes another account of this account's Account Center from this
+     * device: [account] is its hex and [group] its device group on this
+     * device (from the directory, `GET /v1/me` of its own session). Its
+     * sessions of that group end (`DELETE /v1/sessions?group=&account=`); it
+     * stays linked. Returns how many sessions ended, 0 when none was live
+     * (`404`, also for an account outside this center). To remove the
+     * signed-in account itself use [endDevice].
+     *
+     * @throws AdukiException on failure.
+     */
+    suspend fun removeFromDevice(account: String, group: String): Int = write {
+        identity { it.endGroup(group, account) }
+    }
 
     // Runs [block] against Aduki ID with the `id` audience. Getting that token
     // rotates the refresh token, so this holds [renewal] like [renew] does
     // (a concurrent renew would otherwise present the spent token and Aduki
     // ID would end the session) and saves the rotated token, even when
     // [block] fails after the rotation.
-    private fun <T> identity(block: (Id) -> T): T = synchronized(renewal) {
+    private fun <T> identity(block: (Id) -> T): T = serial {
         val current = session.tokens.value ?: tokenStore?.load()?.also(session::update)
         if (current != null) align(current)
         try {
@@ -735,8 +847,8 @@ class Aduki internal constructor(
             val now = id.refreshToken()
             if (current != null && now.isNotBlank() && now != current.refresh) {
                 val updated = current.copy(refresh = now)
+                persist(updated)
                 session.update(updated)
-                try { tokenStore?.save(updated) } catch (_: Exception) {}
             }
         }
     }
@@ -823,6 +935,14 @@ class Aduki internal constructor(
          * `Authorization: DPoP`. Hardware keys must be P-256 (`ES256`).
          */
         fun dpop(key: pro.aduki.crypto.dpop.Key) = apply { this.dpop = Dpop(key) }
+
+        /**
+         * Like `dpop(key)`, with the key read from [source] when the first
+         * proof is signed (and again while that fails) instead of now: a
+         * Keystore that fails once at start does not leave the client without
+         * its key. Pass e.g. `{ AndroidKey.open() }`.
+         */
+        fun dpop(source: () -> pro.aduki.crypto.dpop.Key) = apply { this.dpop = Dpop.lazy(source) }
         fun secure(enabled: Boolean) = apply { this.secure = enabled }
         /**
          * Pins the TLS public keys of the given hosts on the default HTTP
@@ -1001,6 +1121,50 @@ class Aduki internal constructor(
             open(tokens, endpoint, identity, dpop, pins, tokenStore)
         }
 
+        /**
+         * [login] with the whole sign-in: the client, the session's device
+         * group and, with [link] true, the single-use link ticket that adds
+         * this account to the Account Center of the account this app is
+         * already signed in to (`active.link(ticket)`, or `AccountsCenter.add`
+         * on Android). [link] needs [dpop]: the ticket is bound to the key.
+         */
+        suspend fun signIn(
+            handle: String,
+            password: String,
+            code: String? = null,
+            endpoint: String = Endpoints.REST,
+            identity: String = Endpoints.ID,
+            backup: String? = null,
+            dpop: pro.aduki.crypto.dpop.Key? = null,
+            pins: List<Pin> = emptyList(),
+            tokenStore: TokenStore? = null,
+            device: String? = null,
+            link: Boolean = false
+        ): Opened = guard {
+            require(!link || dpop != null) { "link needs a DPoP key: the ticket is bound to it" }
+            val opened = Login.signIn(signing(dpop, pins), identity, handle, password, code, backup, Endpoints.AUDIENCE, device, link)
+            Opened(open(opened.tokens, endpoint, identity, dpop, pins, tokenStore), opened.group, opened.ticket)
+        }
+
+        /**
+         * [redeem] with the whole answer: the client and the device group the
+         * new session joined. Redeem a code from a sibling app (the Android
+         * `SuiteBroker`) with this app's own [dpop] key; a code bound to
+         * another key is refused with [AdukiException.Proof] and stays usable.
+         */
+        suspend fun exchange(
+            handoff: String,
+            endpoint: String = Endpoints.REST,
+            identity: String = Endpoints.ID,
+            dpop: pro.aduki.crypto.dpop.Key? = null,
+            pins: List<Pin> = emptyList(),
+            tokenStore: TokenStore? = null,
+            device: String? = null
+        ): Opened = guard {
+            val opened = Login.open(signing(dpop, pins), identity, handoff, Endpoints.AUDIENCE, device)
+            Opened(open(opened.tokens, endpoint, identity, dpop, pins, tokenStore), opened.group, null)
+        }
+
         // An unauthenticated client for Aduki ID; with [dpop] the session it opens is bound to that key.
         private fun signing(dpop: pro.aduki.crypto.dpop.Key?, pins: List<Pin>): okhttp3.OkHttpClient =
             identityHttp(15, pro.aduki.crypto.tls.Pinning.pinner(pins)).let { base ->
@@ -1016,7 +1180,7 @@ class Aduki internal constructor(
             pins: List<Pin>,
             tokenStore: TokenStore?
         ): Aduki {
-            try { tokenStore?.save(tokens) } catch (_: Exception) {}
+            try { tokenStore?.saveNow(tokens) } catch (e: Exception) { Faults.report("token store save", e) }
             val client = builder()
                 .apply { if (dpop != null) dpop(dpop) }
                 .apply { if (tokenStore != null) tokens(tokenStore) }
@@ -1103,3 +1267,16 @@ class Aduki internal constructor(
     }
 }
 
+/**
+ * A session just opened at Aduki ID ([Aduki.signIn], [Aduki.exchange]): the
+ * [client], the session's device [group] (null from an older server) and,
+ * for a sign-in with `link = true`, the single-use link [ticket].
+ */
+class Opened(val client: Aduki, val group: String?, val ticket: String?)
+
+/** Process-wide locks, one per Aduki ID session, for refresh-token rotation. */
+internal object Renewals {
+    private val locks = java.util.concurrent.ConcurrentHashMap<String, Any>()
+
+    fun lock(session: String): Any = locks.computeIfAbsent(session) { Any() }
+}

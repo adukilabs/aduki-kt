@@ -9,6 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import pro.aduki.core.config.Endpoints
 import pro.aduki.core.errors.AdukiException
+import pro.aduki.core.models.SignedIn
 import pro.aduki.core.models.Tokens
 import java.io.IOException
 import java.time.Instant
@@ -127,12 +128,28 @@ object Passkeys {
         credentialJson: String,
         audience: String = Endpoints.AUDIENCE,
         device: String? = null
-    ): Tokens {
+    ): Tokens = signIn(client, identity, challenge, credentialJson, audience, device).tokens
+
+    /**
+     * [finishSignIn] with the whole answer: the device group and, with [link]
+     * true (a DPoP-signing [client] is needed), a single-use link ticket for
+     * adding this account to the Account Center of the account the app is
+     * signed in to (`Center.link(ticket)`).
+     */
+    fun signIn(
+        client: OkHttpClient,
+        identity: String,
+        challenge: Challenge,
+        credentialJson: String,
+        audience: String = Endpoints.AUDIENCE,
+        device: String? = null,
+        link: Boolean = false
+    ): SignedIn {
         val body = JSONObject().put("credential", credential(credentialJson, registration = false)).put("audience", audience)
         if (!device.isNullOrBlank()) body.put("device", device)
+        if (link) body.put("link", true)
         val data = call(client, post(identity, "passkeys/signins/${challenge.ceremony}/verifications", null, body), "Passkey sign-in")
-        fun need(field: String) = data.optString(field).ifBlank { throw AdukiException.Auth("Missing $field in passkey sign-in response") }
-        return Tokens(token = need("access"), refresh = need("refresh"), expires = data.optLong("expires", 0).toString(), session = need("session"))
+        return Login.opened(data, "passkey sign-in")
     }
 
     /** The caller's passkeys. */
@@ -199,7 +216,7 @@ object Passkeys {
         val kind = error?.optString("kind").orEmpty()
         val message = error?.optString("message").orEmpty().ifBlank { "HTTP ${response.code}" }
         val text = if (kind.isBlank()) message else "$kind: $message"
-        if (response.code == 401) throw AdukiException.Unauthorized(text)
+        if (response.code == 401) Failures.raise(response, body, what)
         throw AdukiException.Network("$what failed: $text", code = response.code)
     }
 

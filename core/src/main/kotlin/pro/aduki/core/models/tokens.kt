@@ -41,4 +41,13 @@ interface TokenStore {
     fun load(): Tokens?
     fun save(tokens: Tokens)
     fun clear() {}
+
+    /**
+     * Saves [tokens] durably before returning (a rotated refresh token must
+     * survive the process being killed right after). The SDK calls this after
+     * every rotation; the default calls [save], so a store whose [save] is
+     * already synchronous needs nothing more. A store backed by
+     * `SharedPreferences` should `commit()` here, not `apply()`.
+     */
+    fun saveNow(tokens: Tokens) = save(tokens)
 }

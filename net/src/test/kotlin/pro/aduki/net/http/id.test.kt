@@ -114,7 +114,7 @@ class IdTest {
         now += 600_000
         id.enqueue(
             MockResponse().setResponseCode(401).setBody(
-                """{"success":false,"error":{"status":401,"kind":"auth.refresh","message":"spent"}}"""
+                """{"success":false,"error":{"status":401,"kind":"auth.reused","message":"spent"}}"""
             )
         )
         assertThrows(AdukiException.Unauthorized::class.java) { subject.token() }

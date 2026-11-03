@@ -131,7 +131,7 @@ class SigninTest {
     fun refusedRefreshIsDroppedAndNeverSentAgain() = runBlocking {
         val client = client()
         server.enqueue(MockResponse().setResponseCode(401)) // mail refuses the token
-        server.enqueue(MockResponse().setResponseCode(401)) // Aduki ID refuses the refresh
+        server.enqueue(MockResponse().setResponseCode(401).setBody(ENDED)) // Aduki ID refuses the refresh
         assertNull(client.me())
         assertEquals("", client.session.refresh())
         val before = server.requestCount
@@ -301,7 +301,7 @@ class SigninTest {
         // 1. Mail rejects stale access token
         server.enqueue(MockResponse().setResponseCode(401))
         // 2. Aduki ID rejects rt_1 because it was already spent
-        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"success":false,"error":"token_revoked"}"""))
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"success":false,"error":{"status":401,"kind":"auth.reused","message":"spent"}}"""))
         // 3. Client catches 401, re-checks store, sees rt_2, rotates rt_2 -> rt_3
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
@@ -337,7 +337,7 @@ class SigninTest {
         // Mail rejects token
         server.enqueue(MockResponse().setResponseCode(401))
         // Aduki ID rejects refresh token
-        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"success":false,"error":"unauthorized"}"""))
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"success":false,"error":{"status":401,"kind":"auth.revoked","message":"ended"}}"""))
 
         val id = client.me()
         assertNull(id)
@@ -486,5 +486,9 @@ class SigninTest {
         val req2 = server.takeRequest()
         assertEquals("/v1/user", req2.path)
         assertEquals("Bearer eyJ.recovered", req2.getHeader("Authorization"))
+    }
+
+    private companion object {
+        const val ENDED = """{"success":false,"error":{"status":401,"kind":"auth.invalid","message":"invalid credentials"}}"""
     }
 }

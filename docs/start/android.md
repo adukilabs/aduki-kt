@@ -79,6 +79,8 @@ accounts.share(listOf("pro.aduki.calendar", "pro.aduki.contacts"))
 
 ### Handoffs: a companion app opens its own session
 
+> **0.8.0:** the push path below (`offer`, `claim`, `offered`, `withdraw`, `holds`) is deprecated. A companion app now asks a signed-in sibling **on demand** through `SuiteBroker`, for a code bound to its own key (see [Suite sign-in & Accounts Center](../auth/suite.md)). Keep the push path one release for older siblings. To take a code an old sibling left, call `pending(hex)`, redeem it, then `settle(hex, code)` (`claim` deletes the code before redeeming it). `Accounts.save` now writes with `commit()`.
+
 A signed-in app (A) lets a companion app (B) of the same publisher open **its own** session of the account, bound to B's own DPoP key, without a password or second factor. Only a single-use code crosses apps; no token does.
 
 1. A asks Aduki ID for a handoff for B's package and leaves it in the account entry:

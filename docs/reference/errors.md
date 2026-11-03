@@ -21,7 +21,14 @@ sealed class AdukiException(
     class Auth(message: String, cause: Throwable? = null, val refresh: String = "") :
         AdukiException(message, cause)
 
-    class Unauthorized(message: String, cause: Throwable? = null) :
+    class Unauthorized(message: String, cause: Throwable?, val kind: String) :
+        AdukiException(message, cause) {
+        constructor(message: String, cause: Throwable? = null)
+        val ended: Boolean // auth.invalid, auth.reused, auth.revoked, auth.expired (a 401 with no kind keeps the tokens)
+    }
+
+    /** A refused DPoP proof: auth.dpop, or auth.nonce after the one retry. Tokens are kept. */
+    class Proof(message: String, val kind: String, val nonce: String? = null, cause: Throwable? = null) :
         AdukiException(message, cause)
 
     /**
@@ -66,7 +73,8 @@ sealed class AdukiException(
 
 | Exception | Raised when | Typical recovery |
 | :--- | :--- | :--- |
-| `Unauthorized` | Aduki ID refused a sign-in, refresh or unlock (wrong password, missing or wrong second factor, spent, expired or revoked refresh token); a signed-out `Id` has no refresh token; an OIDC error such as `invalid_grant` | sign in again |
+| `Unauthorized` | Aduki ID refused a sign-in, refresh or unlock (wrong password, missing or wrong second factor, spent, expired or revoked refresh token); a signed-out `Id` has no refresh token; an OIDC error such as `invalid_grant`. `kind` is the server's error kind; `ended` is true for `auth.invalid`, `auth.reused`, `auth.revoked`, `auth.expired` | `ended`: sign in again; otherwise (`auth.factor`, `auth.stale`) keep the tokens |
+| `Proof` (0.8.0) | Aduki ID refused the DPoP proof: `401 auth.dpop` (invalid, mismatched or missing for a bound session; a handoff code or link ticket bound to another key) or `auth.nonce` still after the one retry | keep the tokens; check the key and retry later. Never sign out for it |
 | `Auth` | the mail or scheduling API answered `401`/`403`; an API key was refused; an Aduki ID `2xx` lacked a required field (`refresh` then holds the rotated token, if any) | renew the token (`client.refresh()`), or fix the account's rights |
 | `Api` | An Aduki service returned a failure envelope with an HTTP status, stable dotted `kind` (e.g. `entity.conflict`, `rate.limited`, `sod.refused`), raw `details` JSON, and optional `retryAfter` | branch on `e.kind`; wait `e.retryAfter` seconds if rate limited; refresh on `409 entity.conflict`; `e.locked` for a `403 locked` profile write |
 | `Denied` | The person refused an authorization (OAuth/device authorization grant `access_denied`) | user opted out; abort flow |

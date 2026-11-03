@@ -1,5 +1,6 @@
 package pro.aduki.net.http
 
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
@@ -13,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Dpop signs DPoP proofs (RFC 9449; ADK-KT-003 K5, ADK-AUTH-001 §9) with a
- * device [key] and is an OkHttp application interceptor that applies them.
+ * device key and is an OkHttp application interceptor that applies them.
  *
  * - A request with no `Authorization` (sign-in, refresh) gets a proof without
  *   `ath`; Aduki ID then binds the session to the key.
@@ -21,19 +22,39 @@ import java.util.concurrent.ConcurrentHashMap
  *   key's thumbprint) is sent as `Authorization: DPoP <token>` with a proof
  *   carrying `ath`.
  * - Any other credential (API key, unbound token) is left untouched.
- * - A `DPoP-Nonce` from the server is remembered per host; a 401 or 400
- *   carrying a fresh nonce is retried once with it.
+ * - The `DPoP-Nonce` of every answer is remembered per origin (shared by every
+ *   [Dpop] of the process) and put in the next proofs, so a phone whose clock
+ *   is wrong is not refused. An answer `401 auth.nonce` (or OAuth `400
+ *   use_dpop_nonce`) is retried once with the fresh nonce; no other failure
+ *   is retried here.
+ *
+ * The key is read when a proof is signed, not when the client is built
+ * ([lazy]): a Keystore that fails once at start does not leave the process
+ * without a key (and a bound session refused at every refresh).
  *
  * Every proof has a new random `jti` and the current `iat`; proofs are single
  * use at the server. The private key is never read: [Key] only signs.
  */
-class Dpop(
-    private val key: Key,
-    private val clock: () -> Long = System::currentTimeMillis,
-    private val random: SecureRandom = SecureRandom()
+class Dpop private constructor(
+    private val source: () -> Key,
+    private val clock: () -> Long,
+    private val random: SecureRandom
 ) : Interceptor {
 
-    private val nonces = ConcurrentHashMap<String, String>()
+    constructor(
+        key: Key,
+        clock: () -> Long = System::currentTimeMillis,
+        random: SecureRandom = SecureRandom()
+    ) : this({ key }, clock, random)
+
+    @Volatile
+    private var opened: Key? = null
+
+    // The key, opened on first use and kept once it worked.
+    private val key: Key
+        get() = opened ?: source().also { opened = it }
+
+    private val nonces get() = NONCES
 
     /** The key's thumbprint, as stored by Aduki ID in `cnf.jkt`. */
     fun thumbprint(): String = key.thumbprint()
@@ -63,7 +84,7 @@ class Dpop(
      * Returns [request] with its DPoP header and scheme applied by the rules
      * above (also usable to re-sign a request an authenticator rebuilt).
      */
-    fun apply(request: Request, nonce: String? = nonces[request.url.host]): Request {
+    fun apply(request: Request, nonce: String? = nonces[origin(request)]): Request {
         val sent = request.header("Authorization")
         val token = sent?.substringAfter(' ', "")?.takeIf { sent.startsWith("Bearer ") || sent.startsWith("DPoP ") }
         val url = request.url.toString()
@@ -82,21 +103,33 @@ class Dpop(
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         val response = chain.proceed(signed(request))
-        val nonce = response.header("DPoP-Nonce")
-        if (nonce != null) nonces[request.url.host] = nonce
-        if (nonce == null || (response.code != 401 && response.code != 400)) return response
-        // Retry once, with the nonce the server just handed out.
+        val nonce = response.header("DPoP-Nonce")?.ifBlank { null }
+        if (nonce != null) nonces[origin(request)] = nonce
+        if (response.code != 401 && response.code != 400) return response
+        // Only a nonce challenge is retried: a refresh refused as reused or
+        // revoked must not be sent twice.
+        val body = runCatching { response.peekBody(PEEK).string() }.getOrDefault("")
+        val challenge = response.headers("WWW-Authenticate").any { it.contains("use_dpop_nonce") }
+        if (Failures.kind(body) !in Failures.NONCE && !challenge) return response
+        val fresh = nonce ?: Failures.nonce(response, body) ?: return response
+        nonces[origin(request)] = fresh
         response.close()
-        val retry = chain.proceed(signed(request, nonce))
-        retry.header("DPoP-Nonce")?.let { nonces[request.url.host] = it }
+        val retry = chain.proceed(signed(request, fresh))
+        retry.header("DPoP-Nonce")?.ifBlank { null }?.let { nonces[origin(request)] = it }
         return retry
     }
+
+    /** The nonce last received from the origin of [url] (`host:port`), or null. */
+    fun nonce(url: String): String? = url.toHttpUrlOrNull()?.let { nonces["${it.host}:${it.port}"] }
+
+    // Nonces are kept per origin: one server, one nonce.
+    private fun origin(request: Request): String = "${request.url.host}:${request.url.port}"
 
     // [apply] for the interceptor. A key that cannot sign (a Keystore key
     // invalidated or busy) throws a runtime or security exception; OkHttp
     // expects interceptors to fail with an IOException, which callers handle
     // (an asynchronous call would otherwise crash its dispatcher thread).
-    private fun signed(request: Request, nonce: String? = nonces[request.url.host]): Request = try {
+    private fun signed(request: Request, nonce: String? = nonces[origin(request)]): Request = try {
         apply(request, nonce)
     } catch (e: IOException) {
         throw e
@@ -118,4 +151,28 @@ class Dpop(
     private fun jti(): String = ByteArray(16).also(random::nextBytes).let(::b64)
 
     private fun b64(bytes: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+
+    companion object {
+        // Server nonces by origin (host:port), for every Dpop of the process (RFC 9449 §8:
+        // a nonce belongs to the server, not to a key).
+        private val NONCES = ConcurrentHashMap<String, String>()
+
+        // How much of a 400/401 body is read to find its kind.
+        private const val PEEK = 16_384L
+
+        /**
+         * A [Dpop] whose key is read from [source] when the first proof is
+         * signed, and again on the next request while it fails (a Keystore
+         * that is busy or not unlocked yet). A failure to read it fails that
+         * request with an IOException: tokens are kept.
+         */
+        fun lazy(
+            source: () -> Key,
+            clock: () -> Long = System::currentTimeMillis,
+            random: SecureRandom = SecureRandom()
+        ): Dpop = Dpop(source, clock, random)
+
+        /** Forgets every remembered nonce (tests). */
+        fun forgetNonces() = NONCES.clear()
+    }
 }

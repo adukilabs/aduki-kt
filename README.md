@@ -50,13 +50,13 @@ dependencyResolutionManagement {
 ```kotlin
 // build.gradle.kts
 // Maven Central / GitHub Packages:
-implementation("pro.aduki:sdk:0.7.1")
-implementation("pro.aduki:android:0.7.1") // Android-specific features
+implementation("pro.aduki:sdk:0.8.0")
+implementation("pro.aduki:android:0.8.0") // Android-specific features
 implementation("io.objectbox:objectbox-android:5.4.2")
 
 // Or JitPack:
-// implementation("com.github.adukilabs.aduki-kt:sdk:v0.7.1")
-// implementation("com.github.adukilabs.aduki-kt:android:v0.7.1")
+// implementation("com.github.adukilabs.aduki-kt:sdk:v0.8.0")
+// implementation("com.github.adukilabs.aduki-kt:android:v0.8.0")
 
 // Sign in at Aduki ID; the 10-minute token is renewed automatically
 val client = Aduki.login(handle = "ada@aduki.me", password = password, code = code)
@@ -90,8 +90,10 @@ see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 ## Modules
 
 `core`, `crypto`, `store`, `net`, `sync`, `state`, `sdk` (the `Aduki` facade),
-and `android` (Keystore keys, account authenticator, Custom Tabs sign-in,
-passkeys).
+and `android` (Keystore keys, the device account directory, the suite
+sign-in broker and Accounts Center, Custom Tabs sign-in, passkeys). Since
+0.8.0 `android` depends on `sdk`. See
+[Suite sign-in & Accounts Center](docs/auth/suite.md).
 
 ## License
 

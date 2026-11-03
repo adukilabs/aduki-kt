@@ -8,6 +8,7 @@ import okhttp3.Response
 import org.json.JSONObject
 import pro.aduki.core.config.Endpoints
 import pro.aduki.core.errors.AdukiException
+import pro.aduki.core.models.SignedIn
 import java.io.IOException
 
 /**
@@ -56,7 +57,30 @@ object Login {
         backup: String? = null,
         audience: String = Endpoints.AUDIENCE,
         device: String? = null
-    ): Tokens {
+    ): Tokens = signIn(client, identity, handle, password, code, backup, audience, device).tokens
+
+    /**
+     * [submit] with the whole answer: the tokens, the session's device group
+     * and, with [link] true, a single-use link ticket (`adkl_...`, 10 minutes)
+     * with which the account already signed in on this app adds this one to
+     * its Account Center (`Center.link(ticket)`). [link] needs a DPoP-signing
+     * [client]: the ticket is bound to its key (`422 input.invalid` otherwise).
+     *
+     * @throws AdukiException.Unauthorized on a wrong password, a missing or
+     * wrong second factor (`auth.factor`), or an inactive account.
+     * @throws AdukiException.Proof when the DPoP proof was refused.
+     */
+    fun signIn(
+        client: OkHttpClient,
+        identity: String,
+        handle: String,
+        password: String,
+        code: String? = null,
+        backup: String? = null,
+        audience: String = Endpoints.AUDIENCE,
+        device: String? = null,
+        link: Boolean = false
+    ): SignedIn {
         val root = JSONObject().apply {
             put("handle", handle)
             put("password", password)
@@ -64,6 +88,7 @@ object Login {
             if (!backup.isNullOrBlank()) put("backup", backup.trim())
             put("audience", audience)
             device?.trim()?.take(DEVICE)?.ifBlank { null }?.let { put("device", it) }
+            if (link) put("link", true)
         }
         val request = Request.Builder()
             .url(url(identity, "sessions"))
@@ -71,15 +96,25 @@ object Login {
             .build()
 
         client.newCall(request).execute().use { response ->
-            val data = data(response, "Sign-in")
-            return Tokens(
-                token = access(data, "sign-in"),
-                refresh = required(data, "refresh", "sign-in"),
-                expires = data.optLong("expires", 0).toString(),
-                session = required(data, "session", "sign-in")
-            )
+            return opened(data(response, "Sign-in"), "sign-in")
         }
     }
+
+    /** The [SignedIn] of a sign-in or redeem answer. */
+    internal fun opened(data: JSONObject, what: String): SignedIn = SignedIn(
+        tokens = Tokens(
+            token = access(data, what),
+            refresh = required(data, "refresh", what),
+            expires = data.optLong("expires", 0).toString(),
+            session = required(data, "session", what)
+        ),
+        group = text(data, "group"),
+        ticket = text(data, "ticket")
+    )
+
+    /** A string field, null when absent, JSON null or blank. */
+    internal fun text(data: JSONObject, field: String): String? =
+        if (data.isNull(field)) null else data.optString(field).ifBlank { null }
 
     /**
      * Exchanges a refresh token for a new access token and a rotated refresh
@@ -134,9 +169,9 @@ object Login {
         if (session.isBlank() || refreshToken.isBlank()) return Signout(false, refreshToken)
         val own = try {
             refresh(client, identity, refreshToken, "id")
-        } catch (_: AdukiException.Unauthorized) {
+        } catch (e: AdukiException.Unauthorized) {
             // Spent, expired or revoked: the session is already unusable.
-            return Signout(false, "")
+            return Signout(false, if (e.ended) "" else refreshToken)
         } catch (e: AdukiException.Auth) {
             // A 2xx that failed validation: Aduki ID rotated the token, so the
             // old one is spent. Keep the new one if the answer carried it.
@@ -210,7 +245,24 @@ object Login {
         handoff: String,
         audience: String = Endpoints.AUDIENCE,
         device: String? = null
-    ): Tokens {
+    ): Tokens = open(client, identity, handoff, audience, device).tokens
+
+    /**
+     * [redeem] with the whole answer: the tokens and the device group the new
+     * session joined (the group of the session that asked for the code).
+     *
+     * @throws AdukiException.Unauthorized (`auth.invalid`) when the code is
+     * unknown, used, expired or its issuing session has ended.
+     * @throws AdukiException.Proof (`auth.dpop`) when the code is bound to a
+     * key and [client] did not prove it: the code stays usable.
+     */
+    fun open(
+        client: OkHttpClient,
+        identity: String,
+        handoff: String,
+        audience: String = Endpoints.AUDIENCE,
+        device: String? = null
+    ): SignedIn {
         val root = JSONObject().apply {
             put("handoff", handoff.trim())
             put("audience", audience)
@@ -221,28 +273,14 @@ object Login {
             .post(root.toString().toRequestBody(JSON))
             .build()
         client.newCall(request).execute().use { response ->
-            val data = data(response, "Handoff")
-            return Tokens(
-                token = access(data, "handoff"),
-                refresh = required(data, "refresh", "handoff"),
-                expires = data.optLong("expires", 0).toString(),
-                session = required(data, "session", "handoff")
-            )
+            return opened(data(response, "Handoff"), "handoff")
         }
     }
 
     internal fun data(response: Response, what: String): JSONObject {
         val body = response.body?.string().orEmpty()
+        if (!response.isSuccessful) Failures.raise(response, body, what)
         val json = runCatching { JSONObject(body) }.getOrNull()
-        if (!response.isSuccessful) {
-            val error = json?.optJSONObject("error")
-            val kind = error?.optString("kind").orEmpty()
-            val message = error?.optString("message").orEmpty().ifBlank { "HTTP ${response.code}" }
-            if (response.code == 401) {
-                throw AdukiException.Unauthorized(if (kind.isBlank()) message else "$kind: $message")
-            }
-            throw AdukiException.Network("$what failed: $message", code = response.code)
-        }
         return json?.optJSONObject("data") ?: throw AdukiException.Network("Empty response from $what")
     }
 

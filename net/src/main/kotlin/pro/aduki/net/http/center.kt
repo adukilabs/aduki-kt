@@ -9,7 +9,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import pro.aduki.core.config.Endpoints
 import pro.aduki.core.errors.AdukiException
+import pro.aduki.core.models.AccountProfile
+import pro.aduki.core.models.CenterView
 import pro.aduki.core.models.Linked
+import pro.aduki.core.models.Tenancy
 import pro.aduki.core.models.Switcher
 import pro.aduki.core.models.Tokens
 import pro.aduki.core.models.Unlocked
@@ -63,6 +66,95 @@ object Center {
         client.newCall(request).execute().use { return switcher(data(it, "Link")) }
     }
 
+    /**
+     * Links the account a link [ticket] names (from a sign-in of it with
+     * `link: true` in this app) to the signed-in one: `POST /v1/links
+     * {ticket}`. [client] must sign DPoP proofs with the key the ticket and
+     * the [bearer]'s session are bound to.
+     *
+     * @throws AdukiException.Network with code 403 when a tenant forbids
+     * links, 409 when the center would hold two personal accounts.
+     * @throws AdukiException.Unauthorized for an unknown, used or expired ticket.
+     * @throws AdukiException.Proof when the session is not bound to the
+     * ticket's key (the ticket stays usable).
+     */
+    fun link(client: OkHttpClient, identity: String, bearer: String, ticket: String): CenterView {
+        require(ticket.isNotBlank()) { "ticket is required" }
+        val request = Request.Builder()
+            .url(url(identity, "links"))
+            .header("Authorization", "Bearer $bearer")
+            .post(JSONObject().put("ticket", ticket.trim()).toString().toRequestBody(JSON))
+            .build()
+        client.newCall(request).execute().use { return view(data(it, "Link")) }
+    }
+
+    /**
+     * The signed-in account's center with every account's profile
+     * (`GET /v1/center`). An account in no center gets itself alone with
+     * [CenterView.center] null; an older server's `404` reads the same way
+     * with no accounts.
+     */
+    fun view(client: OkHttpClient, identity: String, bearer: String): CenterView {
+        val request = Request.Builder()
+            .url(url(identity, "center"))
+            .header("Authorization", "Bearer $bearer")
+            .get()
+            .build()
+        client.newCall(request).execute().use {
+            if (it.code == 404) return CenterView(null, "", 0, emptyList())
+            return view(data(it, "Center"))
+        }
+    }
+
+    /** The [CenterView] of a center answer (`{center, token, expires, accounts}`). */
+    fun view(data: JSONObject): CenterView {
+        val token = data.optString("token")
+        val listed = data.optJSONArray("accounts")
+        val accounts = if (listed != null) {
+            (0 until listed.length()).mapNotNull { listed.optJSONObject(it)?.let(::profile) }
+        } else {
+            // An older server: the accounts only in the token.
+            accounts(token).map {
+                AccountProfile(it.hex, it.handle, kind = if (it.personal) AccountProfile.Kind.Personal else AccountProfile.Kind.Member, unlock = it.unlock)
+            }
+        }
+        return CenterView(
+            center = Login.text(data, "center"),
+            token = token,
+            expires = data.optLong("expires", 0),
+            accounts = accounts
+        )
+    }
+
+    /**
+     * One account of a center answer, or the `GET /v1/me` answer: `hex`,
+     * `handle`, `name`, `kind` (or the token's `knd`), `tenant`, `photo`,
+     * `center`, `unlock`, `links`, `session`, `group`.
+     */
+    fun profile(o: JSONObject): AccountProfile {
+        val tenant = o.optJSONObject("tenant")?.let { t ->
+            Tenancy(
+                hex = t.optString("hex"),
+                name = t.optString("name"),
+                role = Login.text(t, "role"),
+                owner = t.optBoolean("owner", false)
+            )
+        }
+        return AccountProfile(
+            hex = o.optString("hex"),
+            handle = o.optString("handle"),
+            name = Login.text(o, "name").orEmpty(),
+            kind = AccountProfile.Kind.of(Login.text(o, "kind") ?: Login.text(o, "knd") ?: if (tenant != null) "member" else null),
+            tenant = tenant,
+            photo = Login.text(o, "photo"),
+            center = Login.text(o, "center"),
+            unlock = Login.text(o, "unlock") ?: "self",
+            links = Login.text(o, "links") ?: "allow",
+            session = Login.text(o, "session"),
+            group = Login.text(o, "group")
+        )
+    }
+
     /** The signed-in account's center, or `null` when it is in none. */
     fun fetch(client: OkHttpClient, identity: String, bearer: String): Switcher? {
         val request = Request.Builder()
@@ -72,7 +164,10 @@ object Center {
             .build()
         client.newCall(request).execute().use {
             if (it.code == 404) return null
-            return switcher(data(it, "Center"))
+            val data = data(it, "Center")
+            // Aduki ID answers `center: null` (one account) where it said 404 before.
+            if (Login.text(data, "center") == null) return null
+            return switcher(data)
         }
     }
 
@@ -266,7 +361,7 @@ object Center {
     internal fun switcher(data: JSONObject): Switcher {
         val token = data.optString("token")
         return Switcher(
-            center = data.optString("center"),
+            center = Login.text(data, "center").orEmpty(),
             token = token,
             expires = data.optLong("expires", 0),
             accounts = accounts(token)
@@ -295,17 +390,8 @@ object Center {
 
     private fun envelope(response: Response, what: String): JSONObject {
         val body = response.body?.string().orEmpty()
-        val json = runCatching { JSONObject(body) }.getOrNull()
-        if (!response.isSuccessful) {
-            val error = json?.optJSONObject("error")
-            val kind = error?.optString("kind").orEmpty()
-            val message = error?.optString("message").orEmpty().ifBlank { "HTTP ${response.code}" }
-            if (response.code == 401) {
-                throw AdukiException.Unauthorized(if (kind.isBlank()) message else "$kind: $message")
-            }
-            throw AdukiException.Network("$what failed: $message", code = response.code)
-        }
-        return json ?: throw AdukiException.Network("Empty response from $what")
+        if (!response.isSuccessful) Failures.raise(response, body, what)
+        return runCatching { JSONObject(body) }.getOrNull() ?: throw AdukiException.Network("Empty response from $what")
     }
 
     private fun data(response: Response, what: String): JSONObject =
