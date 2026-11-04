@@ -65,4 +65,37 @@ class SecureStoreTest {
         Aduki.builder().key("k").secureStore(pro.aduki.crypto.keystore.Provider()).build()
         org.junit.Assert.assertNotNull(pro.aduki.store.box.Sealing.vault())
     }
+
+    @Test
+    fun aLaterClientKeepsTheInstalledVaultAndItsIndexKeys() {
+        val dir = java.nio.file.Files.createTempDirectory("vault").toFile()
+        try {
+            val store = pro.aduki.store.box.Factory.build(dir, pro.aduki.crypto.cipher.Vault(pro.aduki.crypto.keystore.Provider()))
+            val installed = pro.aduki.store.box.Sealing.vault()!!
+            org.junit.Assert.assertTrue(pro.aduki.store.box.Sealing.indexed())
+            // What Android does for every build: a platform vault is at hand.
+            val fresh = pro.aduki.crypto.cipher.Vault(pro.aduki.crypto.keystore.Provider())
+            org.junit.Assert.assertNull(Aduki.vault(null, installed) { fresh })
+            Aduki.builder().key("k").build()
+            org.junit.Assert.assertSame(installed, pro.aduki.store.box.Sealing.vault())
+            org.junit.Assert.assertTrue(pro.aduki.store.box.Sealing.indexed())
+            store.close()
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun thePlatformVaultIsInstalledWhenNoneIs() {
+        val fresh = pro.aduki.crypto.cipher.Vault(pro.aduki.crypto.keystore.Provider())
+        org.junit.Assert.assertSame(fresh, Aduki.vault(null, null) { fresh })
+    }
+
+    @Test
+    fun anExplicitSecureStoreStillReplacesTheInstalledVault() {
+        val installed = pro.aduki.crypto.cipher.Vault(pro.aduki.crypto.keystore.Provider())
+        val chosen = Aduki.vault(pro.aduki.crypto.keystore.Provider(), installed) { null }
+        org.junit.Assert.assertNotNull(chosen)
+        org.junit.Assert.assertNotSame(installed, chosen)
+    }
 }

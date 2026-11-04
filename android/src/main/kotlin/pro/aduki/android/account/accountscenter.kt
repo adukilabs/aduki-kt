@@ -213,6 +213,13 @@ class AccountsCenter(
      * its directory entry goes. It stays linked on the server. The app also
      * drops what it keeps per account (the phone book of that account, ...).
      *
+     * The siblings are told while the entry still exists, so they can find
+     * which of their accounts the group belongs to (told after, they find no
+     * entry and keep their sessions): the group signed out
+     * ([SuiteBrokerService.signedOut]), then the account was removed
+     * ([SuiteBrokerService.removed]), which also reaches a sibling's session
+     * of it in another device group. Each sibling is waited for.
+     *
      * @throws AdukiException when Aduki ID refused or could not be reached;
      * the entry is kept then.
      */
@@ -227,9 +234,9 @@ class AccountsCenter(
                 .firstNotNullOfOrNull { other -> sessions.client(other.hex) }
                 ?.removeFromDevice(hex, group)
         }
+        tell(hex, group)
         directory.remove(hex)
         if (active() == hex) prefs.edit().remove(KEY).commit()
-        group?.let { attempt { broker?.signedOut(it) } }
         reload()
         return true
     }
@@ -254,7 +261,8 @@ class AccountsCenter(
      * group ends and its entry goes), or with no argument for every account
      * (every group this app can reach ends and the directory is cleared).
      * Returns how many accounts' groups ended at Aduki ID. Linked accounts
-     * stay linked.
+     * stay linked. The siblings are told of each account as by
+     * [removeFromDevice], before its entry goes.
      */
     suspend fun signOutDevice(hex: String? = null): Int {
         val targets = directory.list().filter { hex == null || it.hex == hex }
@@ -262,7 +270,7 @@ class AccountsCenter(
         for (account in targets) {
             val done = attempt { sessions.client(account.hex)?.endDevice() == true }.getOrDefault(false)
             if (done) ended++
-            account.profile.group?.let { attempt { broker?.signedOut(it) } }
+            tell(account.hex, account.profile.group)
             if (hex != null) directory.remove(account.hex)
         }
         if (hex == null) directory.clear()
@@ -285,6 +293,12 @@ class AccountsCenter(
             return directory.find(hex)?.profile ?: fresh
         }
         return directory.find(hex)?.profile
+    }
+
+    // Tells the siblings, before the entry goes, that [group] signed out and [hex] left this device.
+    private suspend fun tell(hex: String, group: String?) {
+        group?.let { attempt { broker?.signedOut(it) } }
+        attempt { broker?.removed(hex) }
     }
 
     private fun snapshot(list: List<DeviceAccount> = directory.list()): List<CenterAccount> {

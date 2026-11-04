@@ -5,6 +5,7 @@ import pro.aduki.core.errors.AdukiException
 import pro.aduki.core.errors.Faults
 import pro.aduki.core.retry.Jitter
 import pro.aduki.store.entities.Outbox
+import java.io.IOException
 
 /**
  * Dispatcher sends outbox actions over the network.
@@ -88,8 +89,11 @@ class Worker(
     }
 
     // The backoff before the next attempt: jittered, and never sooner than
-    // the server's Retry-After (429, 503), capped at [MAX_WAIT].
+    // the server's Retry-After (429, 503), capped at [MAX_WAIT]. None when the
+    // server was not reached (no network): the next drain, e.g. when the
+    // network returns, tries again at once instead of waiting out a backoff.
     private fun delay(action: Outbox, e: Exception): Long {
+        if (unreached(e)) return 0L
         val backoff = jitter.next(action.attempts)
         val seconds = when (e) {
             is AdukiException.Network -> e.retryAfter
@@ -102,6 +106,19 @@ class Worker(
     private companion object {
         /** The longest a Retry-After may hold the queue back, ms (one hour). */
         const val MAX_WAIT = 3_600_000L
+
+        // True when no answer came from the server: an I/O failure (no network,
+        // DNS, refused or reset connection, timeout) with no HTTP status.
+        fun unreached(e: Throwable): Boolean {
+            if (e is AdukiException.Network && e.code != null) return false
+            if (e is AdukiException.Api) return false
+            var cause: Throwable? = e
+            repeat(8) {
+                if (cause is IOException) return true
+                cause = cause?.cause ?: return false
+            }
+            return false
+        }
     }
 
     // The messages an action touched: its own hex, or the payload's `hex` or `hexes`.
