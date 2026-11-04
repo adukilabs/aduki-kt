@@ -166,8 +166,10 @@ class PairLiveTest {
     }
 
     /**
-     * suite#288 Calendar: Ada invites Bob; Bob accepts, then declines, and
-     * Ada sees each answer; Ada reschedules and cancels, and Bob is told.
+     * suite#288 Calendar: Ada invites Bob; Bob finds the invitation in his
+     * mail (iMIP, also for an account on the same server), files it and
+     * accepts, then declines, and Ada sees each answer on her event; Ada
+     * reschedules and cancels, and Bob's mail brings each change to his copy.
      */
     @Test
     fun invitationAnsweredByTheOtherAccount() = runBlocking<Unit> {
@@ -179,6 +181,18 @@ class PairLiveTest {
         val bobAddress = bob.me()!!.email
         val start = Instant.now().plus(Duration.ofDays(21)).truncatedTo(ChronoUnit.HOURS)
         var adaHex: String? = null
+        // Bob's mail about the event, each message filed once.
+        val filed = mutableSetOf<String>()
+        val subjects = mutableListOf<String>()
+        suspend fun mail(): List<String> {
+            val rows = bob.mailApi.search(tag, limit = 100).items.filter { it.hex !in filed && !it.subject.startsWith("Response") }
+            for (row in rows) {
+                bob.scheduling.invitation(row.hex)
+                filed += row.hex
+                subjects += row.subject
+            }
+            return subjects
+        }
         try {
             val made = ada.scheduling.create(
                 EventRequest(title = "Invite $tag", start = start, end = start.plusSeconds(1800), attendees = listOf(bobAddress)),
@@ -190,20 +204,15 @@ class PairLiveTest {
                 ada.scheduling.sync()
                 ada.schedulingApi.events().firstOrNull { it.uid == made.uid }?.hex
             }
-
             assertEquals("Ada organizes it", ada.me()!!.email.lowercase(), ada.schedulingApi.events().first { it.uid == made.uid }.organizer.lowercase())
-            // Aduki Mail files an invitation to an account of its own in the CalDAV scheduling inbox only
-            // (calendar.inbox): no event and no message reach the invitee over REST, and nothing applies a
-            // REPLY to the organizer's event. Until the server does, the rest cannot run.
-            val invited = try {
-                waitFor("Bob gets the invitation", rounds = 8) {
-                    bob.scheduling.sync()
-                    bob.scheduling.appointments!!.value.firstOrNull { it.uid == made.uid && !it.local() }
-                }
-            } catch (e: AssertionError) {
-                assumeTrue("the server does not file invitations between its own accounts (see the 0.8.1 notes)", false)
-                error("unreachable")
+
+            // The invitation reaches Bob as an email (Aduki Mail sends iMIP to its own accounts too).
+            val invited = waitFor("Bob gets the invitation by mail") {
+                mail()
+                bob.scheduling.appointments!!.value.firstOrNull { it.uid == made.uid && !it.local() }
             }
+            assertTrue("the mail names the event: $subjects", subjects.any { it == "Invitation: Invite $tag" })
+            assertEquals(ada.me()!!.email.lowercase(), invited.organizer.lowercase())
             for ((answer, partstat) in listOf(Response.Accepted to "ACCEPTED", Response.Declined to "DECLINED")) {
                 bob.scheduling.respond(invited.hex, answer, address = bobAddress)
                 assertEquals(0, bob.sync.pending())
@@ -216,15 +225,16 @@ class PairLiveTest {
             ada.scheduling.reschedule(adaHex, start.plusSeconds(3600), start.plusSeconds(5400), notify = true)
             assertEquals(0, ada.sync.pending())
             waitFor("Bob sees the new time") {
-                bob.scheduling.sync()
+                mail()
                 bob.scheduling.appointments!!.value.firstOrNull { it.uid == made.uid && it.start == start.plusSeconds(3600).toEpochMilli() }
             }
             ada.scheduling.cancel(adaHex, "live $tag", notify = true)
             assertEquals(0, ada.sync.pending())
             waitFor("Bob sees it cancelled") {
-                bob.scheduling.sync()
+                mail()
                 bob.scheduling.appointments!!.value.firstOrNull { it.uid == made.uid && it.status == "cancelled" }
             }
+            assertTrue("one mail per change: $subjects", subjects.count { it == "Invitation: Invite $tag" } >= 3)
         } finally {
             adaHex?.let { runCatching { ada.scheduling.remove(it, notify = true) } }
             ada.sync.flush()
@@ -234,6 +244,8 @@ class PairLiveTest {
             bob.scheduling.appointments?.value.orEmpty().filter { it.title.contains(tag) }.forEach { runCatching { bob.scheduling.remove(it.hex) } }
             bob.sync.flush()
             runCatching { bob.schedulingApi.events().filter { it.title.contains(tag) }.forEach { bob.schedulingApi.removeEvent(it.hex) } }
+            // The CANCEL of the removal may still be on its way: let it land, then purge.
+            Thread.sleep(5_000)
             purge(bob, tag)
             purge(ada, tag)
             ada.close()
