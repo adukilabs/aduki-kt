@@ -75,8 +75,11 @@ class Broker : SuiteBrokerService() {
         sessions.client(hex)?.handoff(target, Handoff.BROKER_TTL, jkt)   // ttl 120, bound to the caller's key
     override suspend fun signedOut(group: String) { /* end this app's session of that group */ }
     override suspend fun activate(hex: String) { /* "use in all apps": switch on resume */ }
+    override suspend fun removed(hex: String) { /* 0.8.1: end this app's own session of hex, forget it */ }
 }
 ```
+
+When an account leaves the device (`AccountsCenter.removeFromDevice`, `signOutDevice`), the siblings are told before its entry goes, and each is waited for: `signedOut(group)`, then `removed(hex)` (0.8.1). `removed` also reaches a sibling whose session of the account is in another device group (it signed in with a password). `SuiteBroker.removed(hex)` returns the siblings that confirmed; a sibling on 0.8.0 does not know the call and is left out, so the app may tell it another way.
 
 ```xml
 <permission android:name="pro.aduki.permission.ACCOUNT_ACCESS" android:protectionLevel="signature" />
