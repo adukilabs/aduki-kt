@@ -32,8 +32,15 @@ class Session {
         _identity.value = identity
     }
 
+    /**
+     * Holds [tokens]. Tokens of another session than the one held (another
+     * account, handed to a running client on a switch) drop the cached
+     * identity, so the next `me()` reads the account behind them.
+     */
     fun update(tokens: Tokens) {
+        val held = _tokens.value
         _tokens.value = tokens
+        if (held != null && held.session != tokens.session) _identity.value = null
     }
 
     fun updateIdentity(newIdentity: Identity) = update(newIdentity)

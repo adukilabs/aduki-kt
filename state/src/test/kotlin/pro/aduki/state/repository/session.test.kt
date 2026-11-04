@@ -3,6 +3,7 @@ package pro.aduki.state.repository
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import pro.aduki.core.models.Tokens
 
 class SessionTest {
 
@@ -22,6 +23,19 @@ class SessionTest {
         assertEquals(id, repo.identity.value)
 
         repo.clear()
+        assertNull(repo.identity.value)
+    }
+
+    @Test
+    fun anotherSessionDropsTheCachedIdentity() {
+        val repo = SessionRepository()
+        repo.update(Tokens(token = "a1", refresh = "r1", session = "s1"))
+        repo.update(Identity(user = "ada"))
+
+        repo.update(Tokens(token = "a2", refresh = "r2", session = "s1"))
+        assertEquals("a renewal of the same session keeps it", "ada", repo.identity.value?.user)
+
+        repo.update(Tokens(token = "b1", refresh = "q1", session = "s2"))
         assertNull(repo.identity.value)
     }
 }

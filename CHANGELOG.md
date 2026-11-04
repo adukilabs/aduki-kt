@@ -5,6 +5,7 @@ The SDK is 0.x: breaking changes can land in a minor release. The version is set
 ## 0.8.1 (unreleased)
 
 - `AccountsCenter.removeFromDevice` tells the siblings (`SuiteBrokerService.signedOut(group)`) before it removes the account's entry. Before, the entry was already gone when a sibling looked up which of its accounts the group belonged to, so the siblings kept their sessions and the account stayed signed in there.
+- `Session.update(tokens)` drops the cached identity when the tokens are another session than the one held. A client handed another account's tokens (an in-process account switch) kept the previous account's identity, so `me()`, `Contacts.sync()` with no tenant and `Sync.all()` used the previous account's tenant.
 - `Aduki.account()` reads `GET /v1/me` again when the client's session changed since the cached read. A client handed another account's tokens (`session.update`, as an app does when it switches accounts in process) returned the previous account's profile, and `endDevice()` then asked to end that account's device group with the new account's session, which ended nothing.
 
 ## 0.8.0 (2026-11-04)
