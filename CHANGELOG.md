@@ -4,7 +4,7 @@ The SDK is 0.x: breaking changes can land in a minor release. The version is set
 
 ## 0.8.0 (unreleased)
 
-The suite sign-in protocol: one account directory per device, per-app sessions opened on demand from a signed-in sibling, and the Accounts Center. It needs Aduki ID with handoff `jkt`/`expires_in`, device groups, `GET /v1/me`, link tickets, the rich `GET /v1/center` and DPoP nonces (adukilabs/id#62). This is a minor release because sign-in, token clearing and reconcile change in substance. The public types change additively, with these source breaks: a new `AdukiException.Proof` subclass (an exhaustive `when` needs a branch) and `pro.aduki:android` now depends on `pro.aduki:sdk`. See `docs/auth/suite.md`.
+The suite sign-in protocol: one account directory per device, per-app sessions opened on demand from a signed-in sibling, and the Accounts Center. It needs Aduki ID with handoff `jkt`/`expires_in`, device groups, `GET /v1/me`, link tickets, the rich `GET /v1/center` and DPoP nonces (adukilabs/id#62). This is a minor release because sign-in, token clearing and reconcile change in substance. Source breaks: a new `AdukiException.Proof` subclass (an exhaustive `when` needs a branch), `pro.aduki:android` now depends on `pro.aduki:sdk`, and the old account calls are removed (see Removed below). See `docs/auth/suite.md`.
 
 Sessions are no longer wiped by mistake:
 
@@ -14,7 +14,6 @@ Sessions are no longer wiped by mistake:
 - Rotated tokens are saved with the new `TokenStore.saveNow` (the default calls `save`) before they are used. `Accounts.save` (`Mode.Own`) and `Accounts.discard` write with `commit()`, not `apply()`.
 - Renewals are serialised by a process-wide lock per Aduki ID session, across `Aduki` instances: two clients of one session in one process rotate it once.
 - `Handoff.expires` is on the phone's clock: Aduki ID's `expires_in` is added to the local time. Before, the server's absolute time was compared with a clock that may be wrong.
-- `Center.fetch` reads `center: null` as "in no center" (it used to return a center named `"null"`).
 
 New API:
 
@@ -30,7 +29,18 @@ New API:
 - Android, `AccountsCenter`: `accounts` (`StateFlow`), `watch`, `refresh`, `add(active, opened)` and `switch(hex, allApps)`. `add` links with the ticket; on 403/409 the account is kept device-only with `Refusal.TenantDenies` or `SecondPersonal`. Also `signOut(hex)` (this app), `removeFromDevice(hex)`, `unlink(hex, code)`, `signOutDevice(hex?)` and `profile(hex)`.
 - `Accounts.pending(hex)` and `settle(hex, code)` replace `claim`: the code is removed only after it was redeemed, and its expiry is left to the server. `Accounts.rekey(from, to)` is new.
 
-Deprecated, still working: `Accounts.offer`, `claim`, `offered`, `withdraw` and `holds` (the push path, kept one release for older siblings), `Accounts.reconcile` and `refresh` (they drop entries), `SwitcherState` (`SwitcherState.of(center.accounts.value)` maps the new rows), and `Linked`.
+### Removed
+
+The old account calls are removed, not deprecated. Each has a replacement:
+
+- `SwitcherState` and its `of(...)` mappers: use `AccountsCenter.accounts` (`CenterAccount` rows with the profile, `locked`, `state` and `active`). For "instant" and "sign in again", `Accounts.fresh(hex)` and `needsSignIn(hex)` remain.
+- `Linked`, `Switcher` and `Center.fetch`: use `AccountProfile`, `CenterView` and `Center.view` (or `Aduki.center()`). `Center.link(..., handle, password, code)` now returns a `CenterView`. An older server's center token is read straight into `AccountProfile`s.
+- `Accounts.add(linked, tokens)`: write the entry with `AccountDirectory.upsert(profile)`, then `Accounts.save(hex, tokens)`.
+- `Accounts.reconcile(switcher)` and `Accounts.refresh(...)`, with `Accounts.Change`: use `AccountsCenter.refresh()` or `AccountDirectory.reconcile(view, current)`, which never drop an account.
+- `Accounts.centerToken()` and the center-token part of `CenterStore` (`save`, `id`, `token`, `clearCenter`): only `reconcile` stored that token. `CenterStore` keeps the device credential; `clear()` also removes a token an older SDK left.
+- The push handoff path, `Accounts.offer`, `claim`, `offered`, `withdraw` and `holds`: a sibling asks on demand with `SuiteBroker.open(hex, key) { code -> ... }`, served by `SuiteBrokerService`. A code an older (0.7.x) sibling still leaves is taken with `Accounts.pending(hex)`, redeemed, then `settle(hex, code)`.
+
+`Accounts` still marks the entry when it saves this app's tokens (`own.<package>`), so 0.7.x siblings stop pushing codes to an app that has its own session.
 
 Fast, observable contacts sync, and contact photos. It uses the mail server's `GET /user/contacts/sync` and `/user/contacts/{hex}/photo` routes; against older servers the sync reads the whole list as before and photo writes are refused.
 

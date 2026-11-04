@@ -17,7 +17,8 @@ android { defaultConfig { manifestPlaceholders["adukiRedirectScheme"] = "com.exa
 | Part | Class | What it does |
 | :--- | :--- | :--- |
 | Device key | `keystore.AndroidKey` | non-extractable P-256 key in the Android Keystore; implements the `Key` of [DPoP](../auth/dpop.md) (`ES256`) |
-| Accounts | `account.Accounts`, `AdukiAuthenticator`, `SwitcherState` | the linked accounts of an [Account Center](../auth/center.md) as `pro.aduki.account` entries in `AccountManager`; reconcile with the center; sealed tokens |
+| Accounts | `account.AccountDirectory`, `AccountsCenter`, `Accounts`, `AdukiAuthenticator` | the device's accounts as `pro.aduki.account` entries in `AccountManager` with their profile and [Account Center](../auth/center.md) link state; this app's sealed tokens |
+| Suite broker | `account.SuiteBroker`, `SuiteBrokerService` | a sibling app opens its own session from a signed-in one ([Suite sign-in](../auth/suite.md)) |
 | Sign-in | `signin.SignIn`, `PendingStore`, `RedirectActivity` | [Sign in with Aduki](../auth/oidc.md) through a Custom Tab, redirect handling |
 | Passkeys | `passkey.PasskeyFlow`, `CredentialManagerAuthenticator` | the [passkey](../auth/passkeys.md) ceremonies through Credential Manager |
 
@@ -34,7 +35,7 @@ key.extractable()                           // false
 
 ## Accounts
 
-`Accounts.reconcile(switcher)` makes the entries of a center match what Aduki ID lists: new accounts are added, accounts the center no longer lists (a tenant `links = deny`, a forced unlink, the person's own unlink) are removed together with their tokens. `Accounts.refresh(client, identity, bearer, current)` does `Center.fetch` and reconciles. The center token is kept in its own sealed file and is never put in an account entry. `SwitcherState.of(accounts, active)` gives the rows a switcher shows (lock for `unlock = self`, "sign in again", instant switch).
+`AccountDirectory` writes the entries (one per account, with its profile, device group and link state) and `AccountsCenter` keeps them in step with Aduki ID: `accounts` is the list a switcher shows, `refresh()` merges `GET /v1/center` without dropping device-only accounts. See [Suite sign-in & Accounts Center](../auth/suite.md). `Accounts` keeps this app's tokens next to those entries: `save`, `read`, `forget`, `fresh(hex)` (switching needs no network) and `needsSignIn(hex)`.
 
 ### Where tokens live: `Accounts.Mode`
 
@@ -79,31 +80,9 @@ accounts.share(listOf("pro.aduki.calendar", "pro.aduki.contacts"))
 
 ### Handoffs: a companion app opens its own session
 
-> **0.8.0:** the push path below (`offer`, `claim`, `offered`, `withdraw`, `holds`) is deprecated. A companion app now asks a signed-in sibling **on demand** through `SuiteBroker`, for a code bound to its own key (see [Suite sign-in & Accounts Center](../auth/suite.md)). Keep the push path one release for older siblings. To take a code an old sibling left, call `pending(hex)`, redeem it, then `settle(hex, code)` (`claim` deletes the code before redeeming it). `Accounts.save` now writes with `commit()`.
+A companion app (B) of the same publisher opens **its own** session of an account, bound to B's own DPoP key, without a password or second factor. B asks a signed-in sibling on demand through `SuiteBroker.open(hex, key) { code -> Aduki.exchange(code, ...) }`; the sibling's `SuiteBrokerService` mints a single-use code bound to B's key. Only that code crosses apps; no token does. See [Suite sign-in & Accounts Center](../auth/suite.md).
 
-A signed-in app (A) lets a companion app (B) of the same publisher open **its own** session of the account, bound to B's own DPoP key, without a password or second factor. Only a single-use code crosses apps; no token does.
-
-1. A asks Aduki ID for a handoff for B's package and leaves it in the account entry:
-   ```kotlin
-   // A, signed in, Mode.Own
-   for (peer in listOf("pro.aduki.calendar", "pro.aduki.contacts")) {
-       if (!accounts.holds(hex, peer)) accounts.offer(hex, peer, aduki.handoff(peer))
-   }
-   ```
-   `Aduki.handoff(target, ttl = 3600)` is `POST /v1/handoffs {target, ttl}` with an `id` audience token (the SDK gets it by rotating the refresh token under its renewal lock and saves the rotated token). A handoff works once, lives `ttl` seconds (60 to 86400), is replaced by a newer one for the same target, and dies with A's session.
-2. B, finding the account in `accounts.list()` with nothing stored (`read(hex) == Stored.Missing`), claims and redeems it:
-   ```kotlin
-   // B, Mode.Own
-   val code = accounts.claim(hex)                 // removes it from the entry; null when none or expired
-   if (code != null) {
-       val aduki = Aduki.redeem(code, dpop = AndroidKey.open(), tokenStore = store, device = "Calendar on Pixel 9")
-       accounts.save(hex, aduki.session.tokens.value!!)
-   }
-   ```
-   `Aduki.redeem` is `POST /v1/handoffs/redeem {handoff, audience, device}` with B's DPoP proof: Aduki ID opens a new session of the same account at tier 1. A used, expired or orphaned code is `AdukiException.Unauthorized`; B then signs in normally.
-3. `accounts.offered(hex, target)` returns the handoff waiting for `target` without claiming it (null when none or expired): offer a new one only when it is null or about to expire. `accounts.withdraw(hex, target)` removes a handoff that was not claimed. `accounts.holds(hex, target)` tells whether `target` saved its own session (A offers only to apps that did not).
-
-The handoff sits in `AccountManager` user data, readable by the apps `share` named, until claimed; it is a bearer code for one new session, so keep `ttl` short when B is expected to open soon.
+An older sibling (0.7.x) may still leave a code in the account entry for B. Take it with `accounts.pending(hex)`, redeem it with `Aduki.redeem(code, dpop = AndroidKey.open(), tokenStore = store, device = ...)`, then `accounts.settle(hex, code)` unless the redeem failed on the network. A used or expired code is `AdukiException.Unauthorized`; settle it and fall back to the broker.
 
 ### Device unlock
 

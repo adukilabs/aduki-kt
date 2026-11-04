@@ -11,6 +11,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -21,8 +22,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import pro.aduki.android.softVault
 import pro.aduki.core.errors.AdukiException
-import pro.aduki.core.models.Linked
-import pro.aduki.core.models.Switcher
+import pro.aduki.core.models.AccountProfile
+import pro.aduki.core.models.Tenancy
 import pro.aduki.core.models.Tokens
 import pro.aduki.crypto.dpop.Software
 
@@ -33,9 +34,9 @@ class AccountsTest {
     private lateinit var manager: AccountManager
     private lateinit var accounts: Accounts
     private val vault = softVault()
-    private val ada = Linked("a1b2", "ada@aduki.me", true, null, "center")
-    private val work = Linked("c3d4", "ada@adalabs.dev", false, "t1", "self")
-    private val contoso = Linked("e5f6", "ada@contoso.com", false, "t2", "self")
+    private val ada = AccountProfile("a1b2", "ada@aduki.me", unlock = "center")
+    private val work = AccountProfile("c3d4", "ada@adalabs.dev", kind = AccountProfile.Kind.Member, tenant = Tenancy("t1", "Ada Labs"))
+    private val contoso = AccountProfile("e5f6", "ada@contoso.com", kind = AccountProfile.Kind.Member, tenant = Tenancy("t2", "Contoso"))
 
     @Before fun setup() {
         context = ApplicationProvider.getApplicationContext()
@@ -43,55 +44,24 @@ class AccountsTest {
         accounts = Accounts(context, Accounts.Mode.Own(vault), manager)
     }
 
-    private fun center(vararg list: Linked, id: String = "c1", token: String = "center-token") =
-        Switcher(id, token, 4_000_000_000L, list.toList())
+    // The entries are written by AccountDirectory; Accounts keeps the tokens next to them.
+    private fun put(vararg list: AccountProfile) {
+        val directory = AccountDirectory(context, manager = manager)
+        list.forEach { directory.upsert(it) }
+    }
 
-    @Test fun reconcileAddsAccountsUnderTheOneType() {
-        val change = accounts.reconcile(center(ada, work, contoso))
-        assertEquals(listOf("a1b2", "c3d4", "e5f6"), change.added)
+    @Test fun entriesTheDirectoryWritesAreListedPersonalFirst() {
+        put(contoso, work, ada)
         assertEquals(3, manager.getAccountsByType("pro.aduki.account").size)
         val list = accounts.list()
         assertEquals("personal first, then by handle", listOf("ada@aduki.me", "ada@adalabs.dev", "ada@contoso.com"), list.map { it.handle })
         assertEquals(listOf("center", "self", "self"), list.map { it.unlock })
-        assertEquals(setOf("c1"), list.map { it.center }.toSet())
         assertEquals("t1", list[1].tenant)
-    }
-
-    @Test fun reconcileIsIdempotentAndKeepsTokens() {
-        accounts.reconcile(center(ada, work))
-        accounts.save("a1b2", Tokens("acc", "ref", "600", "s1"))
-        val again = accounts.reconcile(center(ada, work))
-        assertTrue(again.added.isEmpty() && again.removed.isEmpty() && again.updated.isEmpty())
-        assertEquals("ref", accounts.tokens("a1b2")!!.refresh)
-    }
-
-    @Test fun anAccountThePolicyUnlinksIsRemovedWithItsTokens() {
-        accounts.reconcile(center(ada, contoso))
-        accounts.save("e5f6", Tokens("acc", "ref", "600", "s"))
-        val change = accounts.reconcile(center(ada))
-        assertEquals(listOf("e5f6"), change.removed)
-        assertNull(accounts.find("e5f6"))
-        assertNull(accounts.tokens("e5f6"))
-        assertEquals(1, manager.getAccountsByType("pro.aduki.account").size)
-    }
-
-    @Test fun otherCentersAreLeftAlone() {
-        accounts.reconcile(center(ada, id = "c1"))
-        accounts.reconcile(center(work, id = "c2"))
-        assertEquals(2, accounts.list().size)
-        accounts.reconcile(center(id = "c2"))
-        assertEquals(listOf("a1b2"), accounts.list().map { it.hex })
-    }
-
-    @Test fun unlockPolicyChangeUpdatesTheEntry() {
-        accounts.reconcile(center(ada, work))
-        val change = accounts.reconcile(center(ada, work.copy(unlock = "center")))
-        assertEquals(listOf("c3d4"), change.updated)
-        assertEquals("center", accounts.find("c3d4")!!.unlock)
+        assertTrue(list[0].personal && !list[1].personal)
     }
 
     @Test fun ownTokensAreSealedInThePrivateStoreOnlyAndRoundTrip() {
-        accounts.reconcile(center(ada))
+        put(ada)
         accounts.save("a1b2", Tokens("adka_secret_access", "adkr_secret_refresh", "600", "s1"))
         val entry = accounts.find("a1b2")!!
         assertNull("no copy in the shared entry", manager.getPassword(entry.account))
@@ -99,28 +69,11 @@ class AccountsTest {
         val raw = context.getSharedPreferences("pro.aduki.account.tokens", Context.MODE_PRIVATE).getString("a1b2", "")!!
         assertFalse("sealed at rest", raw.contains("adkr_secret_refresh") || raw.contains("adka_secret_access"))
         assertEquals(Tokens("adka_secret_access", "adkr_secret_refresh", "600", "s1"), accounts.tokens("a1b2"))
-        assertTrue(accounts.holds("a1b2", context.packageName))
-    }
-
-    @Test fun theCenterTokenIsNeverInAnAccountEntryOrAnAccessToken() {
-        accounts.reconcile(center(ada, work, token = "CENTER-TOKEN-VALUE"))
-        accounts.save("a1b2", Tokens("adka_x", "adkr_x", "600", "s1"))
-        val entry = accounts.find("a1b2")!!
-        for (account in manager.getAccountsByType("pro.aduki.account")) {
-            for (key in listOf("hex", "center", "personal", "tenant", "unlock", "expires", "session", "saved")) {
-                assertFalse(manager.getUserData(account, key).orEmpty().contains("CENTER-TOKEN-VALUE"))
-            }
-            assertFalse(manager.getPassword(account).orEmpty().contains("CENTER-TOKEN-VALUE"))
-        }
-        assertFalse(accounts.tokens(entry.hex)!!.token.contains("CENTER-TOKEN-VALUE"))
-        assertEquals("CENTER-TOKEN-VALUE", accounts.centerToken(now = 1))
-        assertNull("expired center token is not returned", accounts.centerToken(now = 4_000_000_001L))
-        val raw = context.getSharedPreferences("pro.aduki.center", Context.MODE_PRIVATE).getString("token", "")!!
-        assertFalse("sealed at rest", raw.contains("CENTER-TOKEN-VALUE"))
+        assertNotNull("this app marks the entry", manager.getUserData(entry.account, "own.${context.packageName}"))
     }
 
     @Test fun freshnessDrivesInstantSwitching() {
-        accounts.reconcile(center(ada, work))
+        put(ada, work)
         accounts.save("a1b2", Tokens("acc", "ref", "600", "s"), now = 1_000_000)
         assertTrue(accounts.fresh("a1b2", now = 1_000_000 + 500_000))
         assertFalse("inside the 30 s skew", accounts.fresh("a1b2", now = 1_000_000 + 575_000))
@@ -130,47 +83,8 @@ class AccountsTest {
         assertFalse(accounts.needsSignIn("a1b2"))
     }
 
-    @Test fun switcherStateShowsLocksSignInAgainAndRemovals() {
-        accounts.reconcile(center(ada, work))
-        accounts.save("a1b2", Tokens("acc", "ref", "600", "s"), now = 1_000_000)
-        val state = SwitcherState.of(accounts, active = "a1b2", removed = listOf("ada@contoso.com"), now = 1_100_000)
-        val personal = state.rows[0]
-        assertTrue(personal.active && personal.personal && !personal.locked && personal.instant && !personal.signInAgain)
-        val member = state.rows[1]
-        assertTrue(member.locked && member.signInAgain && !member.instant && !member.active)
-        assertEquals(listOf("ada@contoso.com"), state.removed)
-    }
-
-    @Test fun refreshWithNoCenterKeepsTheSignedInAccountAndDropsLinkedOnes() {
-        accounts.reconcile(center(ada, work))
-        MockWebServer().use { server ->
-            server.enqueue(MockResponse().setResponseCode(404).setBody("""{"kind":"entity.missing","message":"none"}"""))
-            val change = accounts.refresh(OkHttpClient(), server.url("/v1").toString(), "bearer", current = "a1b2")
-            assertEquals(listOf("c3d4"), change.removed)
-        }
-        assertEquals(listOf("a1b2"), accounts.list().map { it.hex })
-        assertEquals("", accounts.find("a1b2")!!.center)
-    }
-
-    @Test fun aTenantLinksDenyRemovesTheMemberWithinOneSecond() {
-        accounts.reconcile(center(ada, work, contoso))
-        accounts.save("e5f6", Tokens("acc", "ref", "600", "s"))
-        // the id server now answers with the center without the denied tenant's member
-        val body = centerBody(ada, work)
-        MockWebServer().use { server ->
-            server.enqueue(MockResponse().setBody(body))
-            val started = System.nanoTime()
-            val change = accounts.refresh(OkHttpClient(), server.url("/v1").toString(), "bearer", current = "a1b2")
-            val ms = (System.nanoTime() - started) / 1_000_000
-            assertEquals(listOf("e5f6"), change.removed)
-            assertTrue("removal took $ms ms", ms < 1000)
-        }
-        assertNull(accounts.find("e5f6"))
-        assertNull(accounts.tokens("e5f6"))
-    }
-
     @Test fun shareSetsAccountVisibilityOnAndroid8Plus() {
-        accounts.reconcile(center(ada, work))
+        put(ada, work)
         val shared = accounts.share(listOf("pro.aduki.suite.mail", "pro.aduki.suite.calendar"))
         assertEquals(2, shared)
 
@@ -187,7 +101,7 @@ class AccountsTest {
     @Test fun sharedModeKeepsOneCopyInTheEntryAndEveryAppReadsIt() {
         val mail = Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Shared, manager)
         val calendar = Accounts(AppContext(context, "pro.aduki.calendar"), Accounts.Mode.Shared, manager)
-        mail.reconcile(center(ada))
+        put(ada)
         mail.save("a1b2", Tokens("access_1", "refresh_1", "600", "sess_1"))
         assertEquals("refresh_1", calendar.tokens("a1b2")?.refresh)
 
@@ -199,7 +113,7 @@ class AccountsTest {
     @Test fun sharedModeDropsAStalePrivateCopyAnOlderSdkLeft() {
         val calContext = AppContext(context, "pro.aduki.calendar")
         val calendar = Accounts(calContext, Accounts.Mode.Shared, manager)
-        calendar.reconcile(center(ada))
+        put(ada)
         calendar.save("a1b2", Tokens("fresh_access", "fresh_refresh", "600", "s"))
         // what 0.5.4 left in the app's own preferences
         calContext.getSharedPreferences("pro.aduki.account.tokens", Context.MODE_PRIVATE).edit()
@@ -210,7 +124,7 @@ class AccountsTest {
 
     @Test fun readTellsMissingFromSealed() {
         val mail = Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Own(softVault()), manager)
-        mail.reconcile(center(ada))
+        put(ada)
         assertEquals(Accounts.Stored.Missing, mail.read("a1b2"))
         mail.save("a1b2", Tokens("a", "r", "600", "s"))
         assertTrue(mail.read("a1b2") is Accounts.Stored.Found)
@@ -228,7 +142,7 @@ class AccountsTest {
 
     @Test fun ownModeNeverAdoptsTheSharedEntry() {
         val shared = Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Shared, manager)
-        shared.reconcile(center(ada))
+        put(ada)
         shared.save("a1b2", Tokens("plain_access", "plain_refresh", "600", "s"))
         val own = Accounts(AppContext(context, "pro.aduki.calendar"), Accounts.Mode.Own(softVault()), manager)
         assertEquals(Accounts.Stored.Missing, own.read("a1b2"))
@@ -240,7 +154,7 @@ class AccountsTest {
         val mailVault = softVault()
         val mailContext = AppContext(context, "pro.aduki.mail")
         val mail = Accounts(mailContext, Accounts.Mode.Own(mailVault), manager)
-        mail.reconcile(center(ada))
+        put(ada)
         val entry = mail.find("a1b2")!!
         // what 0.5.3 wrote: sealed with this app's vault, in the entry
         manager.setPassword(entry.account, mailVault.sealText("old_refresh"))
@@ -252,63 +166,49 @@ class AccountsTest {
         assertNull("the entry no longer holds it", manager.getPassword(entry.account))
     }
 
-    @Test fun aHandoffIsOfferedToOnePeerAndClaimedOnce() {
+    @Test fun aCodeAnOlderSiblingLeftIsKeptUntilSettled() {
         val mail = Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Own(softVault()), manager)
         val calendar = Accounts(AppContext(context, "pro.aduki.calendar"), Accounts.Mode.Own(softVault()), manager)
         val contacts = Accounts(AppContext(context, "pro.aduki.contacts"), Accounts.Mode.Own(softVault()), manager)
-        mail.reconcile(center(ada))
+        put(ada)
         mail.save("a1b2", Tokens("mail_access", "mail_refresh", "600", "s"))
-        assertFalse(mail.holds("a1b2", "pro.aduki.calendar"))
-        val later = System.currentTimeMillis() / 1000 + 3600
-        assertTrue(mail.offer("a1b2", "pro.aduki.calendar", pro.aduki.net.http.Handoff("adkh_cal", later)))
-        assertFalse("not to itself", mail.offer("a1b2", "pro.aduki.mail", pro.aduki.net.http.Handoff("adkh_x", later)))
+        // what a 0.7 sibling's push offer leaves in the entry
+        val entry = mail.find("a1b2")!!
+        manager.setUserData(entry.account, "handoff.pro.aduki.calendar", JSONObject().put("code", "adkh_cal").put("expires", 1L).toString())
 
-        // nothing of Mail's session is readable by the peers
+        // nothing of Mail's session is readable by the peers; the code is only for Calendar
         assertNull(calendar.tokens("a1b2"))
-        assertNull(contacts.claim("a1b2"))
-        assertEquals("adkh_cal", calendar.claim("a1b2"))
-        assertNull("single use", calendar.claim("a1b2"))
-        for (key in listOf("handoff.pro.aduki.calendar", "handoff.pro.aduki.contacts")) {
-            assertNull(manager.getUserData(mail.find("a1b2")!!.account, key))
-        }
+        assertNull(contacts.pending("a1b2"))
+        assertEquals("expiry is left to Aduki ID", "adkh_cal", calendar.pending("a1b2"))
+        assertEquals("still there after a failed redeem", "adkh_cal", calendar.pending("a1b2"))
+        assertFalse("another code is not settled", calendar.settle("a1b2", "adkh_other"))
+        assertTrue(calendar.settle("a1b2", "adkh_cal"))
+        assertNull(calendar.pending("a1b2"))
+        assertFalse(calendar.settle("a1b2", "adkh_cal"))
 
         // Calendar redeems it at Aduki ID with its own key and saves its own session
         calendar.save("a1b2", Tokens("cal_access", "cal_refresh", "600", "s2"))
-        assertTrue(mail.holds("a1b2", "pro.aduki.calendar"))
         assertEquals("mail_refresh", mail.tokens("a1b2")?.refresh)
-    }
-
-    @Test fun expiredOrWithdrawnHandoffsAreNotClaimed() {
-        val mail = Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Own(softVault()), manager)
-        val calendar = Accounts(AppContext(context, "pro.aduki.calendar"), Accounts.Mode.Own(softVault()), manager)
-        mail.reconcile(center(ada))
-        val now = System.currentTimeMillis() / 1000
-        assertFalse("already expired", mail.offer("a1b2", "pro.aduki.calendar", pro.aduki.net.http.Handoff("adkh_old", now - 1)))
-        assertTrue(mail.offer("a1b2", "pro.aduki.calendar", pro.aduki.net.http.Handoff("adkh_1", now + 60)))
-        assertNull("expired by the time it is claimed", calendar.claim("a1b2", now = now + 61))
-        assertTrue(mail.offer("a1b2", "pro.aduki.calendar", pro.aduki.net.http.Handoff("adkh_2", now + 60)))
-        assertTrue(mail.withdraw("a1b2", "pro.aduki.calendar"))
-        assertNull(calendar.claim("a1b2"))
     }
 
     @Test fun shareGrantsVisibilityAndHandsOverNoTokens() {
         val mail = Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Own(softVault()), manager)
-        mail.reconcile(center(ada))
+        put(ada)
         mail.save("a1b2", Tokens("acc", "ref", "600", "s"))
         mail.share(listOf("pro.aduki.calendar"))
         val calendar = Accounts(AppContext(context, "pro.aduki.calendar"), Accounts.Mode.Own(softVault()), manager)
         assertEquals("a1b2", calendar.list().single().hex)
         assertEquals(Accounts.Stored.Missing, calendar.read("a1b2"))
-        assertNull(calendar.claim("a1b2"))
+        assertNull(calendar.pending("a1b2"))
     }
 
     @Test fun forgetEndsThisAppsSessionAndKeepsTheEntry() {
         val mail = Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Own(softVault()), manager)
-        mail.reconcile(center(ada))
+        put(ada)
         mail.save("a1b2", Tokens("acc", "ref", "600", "s"))
         mail.forget("a1b2")
         assertEquals(Accounts.Stored.Missing, mail.read("a1b2"))
-        assertFalse(mail.holds("a1b2", "pro.aduki.mail"))
+        assertNull(manager.getUserData(mail.find("a1b2")!!.account, "own.pro.aduki.mail"))
         assertEquals("a1b2", mail.find("a1b2")?.hex)
 
         val shared = Accounts(context, Accounts.Mode.Shared, manager)
@@ -320,7 +220,7 @@ class AccountsTest {
     @Test fun aSharedInstanceLeavesAnOwnAppsSessionAlone() {
         val ctx = AppContext(context, "pro.aduki.mail")
         val own = Accounts(ctx, Accounts.Mode.Own(softVault()), manager)
-        own.reconcile(center(ada))
+        put(ada)
         own.save("a1b2", Tokens("own_access", "own_refresh", "600", "s"))
         val shared = Accounts(ctx, Accounts.Mode.Shared, manager)
         shared.read("a1b2")
@@ -330,28 +230,15 @@ class AccountsTest {
         // an unmarked, unsealed 0.5.x copy is still dropped
         ctx.getSharedPreferences("pro.aduki.account.tokens", Context.MODE_PRIVATE).edit()
             .putString("e5f6", JSONObject().put("token", "old").put("refresh", "spent").toString()).commit()
-        own.reconcile(center(ada, contoso))
+        put(ada, contoso)
         shared.read("e5f6")
         assertNull(ctx.getSharedPreferences("pro.aduki.account.tokens", Context.MODE_PRIVATE).getString("e5f6", null))
-    }
-
-    @Test fun anOfferedHandoffCanBeReadWithoutClaimingIt() {
-        val mail = Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Own(softVault()), manager)
-        val calendar = Accounts(AppContext(context, "pro.aduki.calendar"), Accounts.Mode.Own(softVault()), manager)
-        mail.reconcile(center(ada))
-        val now = System.currentTimeMillis() / 1000
-        assertNull(mail.offered("a1b2", "pro.aduki.calendar"))
-        mail.offer("a1b2", "pro.aduki.calendar", pro.aduki.net.http.Handoff("adkh_1", now + 600))
-        assertEquals(pro.aduki.net.http.Handoff("adkh_1", now + 600), mail.offered("a1b2", "pro.aduki.calendar"))
-        assertNull("expired", mail.offered("a1b2", "pro.aduki.calendar", now = now + 601))
-        assertEquals("still there to claim", "adkh_1", calendar.claim("a1b2"))
-        assertNull(mail.offered("a1b2", "pro.aduki.calendar"))
     }
 
     @Test fun discardReturnsAndDropsThisAppsTokensAfterTheEntryIsGone() {
         val ctx = AppContext(context, "pro.aduki.calendar")
         val calendar = Accounts(ctx, Accounts.Mode.Own(softVault()), manager)
-        calendar.reconcile(center(ada))
+        put(ada)
         calendar.save("a1b2", Tokens("cal_access", "cal_refresh", "600", "s9"))
         Accounts(AppContext(context, "pro.aduki.mail"), Accounts.Mode.Own(softVault()), manager).remove("a1b2")
         assertNull(calendar.find("a1b2"))
@@ -372,7 +259,7 @@ class AccountsTest {
         }
 
         val testAccounts = Accounts(context, Accounts.Mode.Own(vault), manager, visibility = customVisibility)
-        testAccounts.reconcile(center(ada))
+        put(ada)
         testAccounts.share("a1b2", listOf("pro.aduki.calendar"))
 
         assertEquals(1, recorded.size)
@@ -387,7 +274,7 @@ class AccountsTest {
         val calContext = AppContext(context, "pro.aduki.calendar")
 
         val mailAccounts = Accounts(mailContext, Accounts.Mode.Shared, manager)
-        mailAccounts.reconcile(center(ada))
+        put(ada)
         mailAccounts.save("a1b2", Tokens("acc", "ref", "600", "s"))
         mailAccounts.share(listOf("pro.aduki.calendar"))
 
@@ -428,7 +315,7 @@ class AccountsTest {
 
     @Test fun unlockWithDeviceSignsChallengeAndSavesTokens() {
         val key = Software.p256()
-        accounts.reconcile(center(ada, work))
+        put(ada, work)
 
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setResponseCode(201).setBody("""{"success":true,"data":{"credential":"cred_dev_1","trust_days":60,"alg":"ES256"}}"""))
@@ -551,15 +438,6 @@ class AccountsTest {
         assertNull(accounts.credential())
         val ok = accounts.revokeDevice(OkHttpClient(), "http://localhost", "bearer_tok")
         assertFalse(ok)
-    }
-
-    private fun centerBody(vararg list: Linked): String {
-        val acc = list.joinToString(",", "[", "]") {
-            """{"hex":"${it.hex}","handle":"${it.handle}","knd":"${if (it.personal) "p" else "m"}",${it.tenant?.let { t -> """"ten":"$t",""" } ?: ""}"unlock":"${it.unlock}"}"""
-        }
-        val b64 = java.util.Base64.getUrlEncoder().withoutPadding()
-        val token = "h." + b64.encodeToString("""{"acc":$acc}""".toByteArray()) + ".s"
-        return """{"data":{"center":"c1","token":"$token","expires":4000000000}}"""
     }
 
     @After fun clear() = accounts.clear()

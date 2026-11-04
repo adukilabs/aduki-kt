@@ -202,10 +202,6 @@ class SignInProtocolTest {
         assertNull(view.accounts[0].tenant)
         assertNull(view.accounts[0].photo)
         assertEquals("Ada", view.accounts[0].name)
-
-        // The old switcher reads it as "in no center", not as a center named "null".
-        server.enqueue(ok("""{"center":null,"token":"t","expires":9,"accounts":[]}"""))
-        assertNull(Center.fetch(http, base, "tok"))
     }
 
     @Test

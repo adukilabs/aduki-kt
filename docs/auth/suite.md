@@ -49,7 +49,7 @@ Entries keep the handle as the account name (shown in Settings > Accounts). The 
 
 Each app also keeps a private mirror. When entries vanish (the system purges them when the app owning the authenticator is uninstalled), use `orphans()` to list them, check with Aduki ID, then call `restore(hex)` or `forget(hex)`. An entry missing on its own does not mean the account signed out.
 
-`reconcile(view, current)` merges `GET /v1/center` and never drops an account. Accounts in the center become linked. Accounts it no longer lists are kept as device-only (`linked = false`, `refusal = Unlinked`), with `removedBy` set to the tenant's name when a tenant removed a member. The deprecated `Accounts.reconcile` and `Accounts.refresh` still remove entries; do not use them with the directory.
+`reconcile(view, current)` merges `GET /v1/center` and never drops an account. Accounts in the center become linked. Accounts it no longer lists are kept as device-only (`linked = false`, `refusal = Unlinked`), with `removedBy` set to the tenant's name when a tenant removed a member.
 
 ### Migrating email-keyed entries
 
@@ -101,7 +101,7 @@ when (val pull = broker.open(hex, key) { code -> Aduki.exchange(code, dpop = key
 
 `open` tries each installed sibling that is signed like this app. A sibling that holds no session, or a code that turns out spent, moves on to the next sibling. After a network failure the whole round is tried once more after a short pause. Only then does it return `NeedsPassword` with the reason. `providers(hex)` pings the siblings first, so a "Continue as" sheet can decide its primary button before the person taps.
 
-The push path (`Accounts.offer`, `claim`, `offered`, `withdraw`, `holds`) is deprecated and kept one release for older siblings. To take a code an old sibling left, call `pending(hex)`, redeem it, then `settle(hex, code)`. Unlike `claim`, this no longer deletes the code before redeeming it, and it no longer compares the code's expiry with the phone's clock.
+This SDK no longer pushes codes to siblings (the old `Accounts.offer`/`claim` path is removed). An older sibling (0.7.x) may still leave one in the account entry for this app: call `pending(hex)`, redeem it, then `settle(hex, code)`. The code is deleted only after it was redeemed or refused, and its expiry is left to Aduki ID.
 
 ## Accounts Center
 
@@ -139,4 +139,4 @@ On the client:
 
 `Aduki.signIn` and `Aduki.exchange` return `Opened(client, group, ticket)`.
 
-`SwitcherState` and `Linked` are deprecated but still work. `SwitcherState.of(center.accounts.value)` maps the new rows into them.
+`SwitcherState`, `Linked`, `Switcher`, `Center.fetch`, `Accounts.reconcile`, `Accounts.refresh` and the push handoff calls (`offer`, `claim`, `offered`, `withdraw`, `holds`) were removed in 0.8.0. Use `AccountsCenter.accounts` for the rows, `AccountDirectory` for the entries and `SuiteBroker.open` for a sibling's session; see the CHANGELOG.

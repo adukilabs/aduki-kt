@@ -11,9 +11,7 @@ import pro.aduki.core.config.Endpoints
 import pro.aduki.core.errors.AdukiException
 import pro.aduki.core.models.AccountProfile
 import pro.aduki.core.models.CenterView
-import pro.aduki.core.models.Linked
 import pro.aduki.core.models.Tenancy
-import pro.aduki.core.models.Switcher
 import pro.aduki.core.models.Tokens
 import pro.aduki.core.models.Unlocked
 import pro.aduki.crypto.dpop.Device
@@ -22,7 +20,7 @@ import java.util.Base64
 
 /**
  * Center is the Account Center at Aduki ID (ADK-AUTH-002 §5): link another
- * account, read the switcher, unlink, and reopen sessions with a
+ * account, read the center, unlink, and reopen sessions with a
  * device-bound key (ADK-AUTH-001 §9, §5.4) instead of password and TOTP.
  *
  * `identity` is the Aduki ID base, e.g. `https://id.aduki.pro/v1`; `bearer`
@@ -37,7 +35,8 @@ object Center {
 
     /**
      * Links the account [handle] to the signed-in one. Its own password and
-     * second factor ([code] or [backup]) are required.
+     * second factor ([code] or [backup]) are required. Returns the center
+     * with every account's profile.
      *
      * @throws AdukiException.Unauthorized for a wrong password or factor.
      * @throws AdukiException.Network with code 403 when a tenant forbids
@@ -51,7 +50,7 @@ object Center {
         password: String,
         code: String? = null,
         backup: String? = null
-    ): Switcher {
+    ): CenterView {
         val body = JSONObject().apply {
             put("handle", handle)
             put("password", password)
@@ -63,7 +62,7 @@ object Center {
             .header("Authorization", "Bearer $bearer")
             .post(body.toString().toRequestBody(JSON))
             .build()
-        client.newCall(request).execute().use { return switcher(data(it, "Link")) }
+        client.newCall(request).execute().use { return view(data(it, "Link")) }
     }
 
     /**
@@ -114,9 +113,7 @@ object Center {
             (0 until listed.length()).mapNotNull { listed.optJSONObject(it)?.let(::profile) }
         } else {
             // An older server: the accounts only in the token.
-            accounts(token).map {
-                AccountProfile(it.hex, it.handle, kind = if (it.personal) AccountProfile.Kind.Personal else AccountProfile.Kind.Member, unlock = it.unlock)
-            }
+            accounts(token)
         }
         return CenterView(
             center = Login.text(data, "center"),
@@ -153,22 +150,6 @@ object Center {
             session = Login.text(o, "session"),
             group = Login.text(o, "group")
         )
-    }
-
-    /** The signed-in account's center, or `null` when it is in none. */
-    fun fetch(client: OkHttpClient, identity: String, bearer: String): Switcher? {
-        val request = Request.Builder()
-            .url(url(identity, "center"))
-            .header("Authorization", "Bearer $bearer")
-            .get()
-            .build()
-        client.newCall(request).execute().use {
-            if (it.code == 404) return null
-            val data = data(it, "Center")
-            // Aduki ID answers `center: null` (one account) where it said 404 before.
-            if (Login.text(data, "center") == null) return null
-            return switcher(data)
-        }
     }
 
     /** Unlinks the signed-in account; [code] is a fresh TOTP code. */
@@ -357,30 +338,19 @@ object Center {
         return unlock(client, identity, credential, key::sign, audience)
     }
 
-    /** The switcher in a center-token response. */
-    internal fun switcher(data: JSONObject): Switcher {
-        val token = data.optString("token")
-        return Switcher(
-            center = Login.text(data, "center").orEmpty(),
-            token = token,
-            expires = data.optLong("expires", 0),
-            accounts = accounts(token)
-        )
-    }
-
-    /** The accounts listed in a center token's payload (`acc`). */
-    internal fun accounts(token: String): List<Linked> {
+    /** The accounts listed in a center token's payload (`acc`), with what the token says of each. */
+    internal fun accounts(token: String): List<AccountProfile> {
         val payload = token.split('.').getOrNull(1) ?: return emptyList()
         val claims = runCatching { JSONObject(String(UNB64.decode(payload))) }.getOrNull()
             ?: return emptyList()
         val acc = claims.optJSONArray("acc") ?: JSONArray()
         return (0 until acc.length()).map { i ->
             val o = acc.getJSONObject(i)
-            Linked(
+            AccountProfile(
                 hex = o.optString("hex"),
                 handle = o.optString("handle"),
-                personal = o.optString("knd") == "p",
-                tenant = o.optString("ten").ifBlank { null },
+                kind = if (o.optString("knd") == "p") AccountProfile.Kind.Personal else AccountProfile.Kind.Member,
+                tenant = o.optString("ten").ifBlank { null }?.let { Tenancy(hex = it, name = "") },
                 unlock = o.optString("unlock", "self")
             )
         }

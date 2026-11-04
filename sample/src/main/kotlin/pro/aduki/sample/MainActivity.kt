@@ -10,17 +10,18 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
+import pro.aduki.android.account.AccountDirectory
 import pro.aduki.android.account.Accounts
-import pro.aduki.android.account.SwitcherState
 import pro.aduki.android.keystore.AndroidKey
 import pro.aduki.android.passkey.CredentialManagerAuthenticator
 import pro.aduki.android.passkey.PasskeyFlow
 import pro.aduki.android.signin.PendingStore
 import pro.aduki.android.signin.SignIn
 import pro.aduki.android.signin.SignInConfig
-import pro.aduki.core.models.Linked
+import pro.aduki.core.models.AccountProfile
 import pro.aduki.core.models.Tokens
 import pro.aduki.crypto.cipher.Vault
+import pro.aduki.net.http.Center
 import pro.aduki.net.http.Dpop
 import pro.aduki.net.http.Id
 import pro.aduki.net.http.Oidc
@@ -35,6 +36,7 @@ class MainActivity : Activity() {
     private val scope = CoroutineScope(Dispatchers.IO)
     private lateinit var log: TextView
     private lateinit var accounts: Accounts
+    private lateinit var directory: AccountDirectory
     private val identity get() = BuildConfig.ISSUER.trimEnd('/') + "/v1"
     private val redirect get() = BuildConfig.SCHEME + ":/callback"
     private val key by lazy { AndroidKey.open() }
@@ -46,6 +48,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         val vault = Vault.platform()
         accounts = Accounts(this, Accounts.Mode.Own(vault))
+        directory = AccountDirectory(this)
         SignInConfig.flow = SignIn(Oidc(http, BuildConfig.ISSUER.trimEnd('/'), BuildConfig.CLIENT, redirect, dpop = Dpop(key)), redirect, PendingStore(this, vault))
         SignInConfig.done = { result -> runOnUiThread { signedIn(result) } }
 
@@ -95,16 +98,18 @@ class MainActivity : Activity() {
         val claims = grant.claims
         val hex = claims?.optString("sub").orEmpty()
         val handle = claims?.optString("preferred_username").orEmpty().ifBlank { claims?.optString("email").orEmpty() }.ifBlank { hex }
-        accounts.add(Linked(hex, handle, personal = true, tenant = null, unlock = "center"), Tokens(grant.access, grant.refresh.orEmpty(), grant.expires.toString(), ""))
+        if (directory.find(hex) == null) directory.upsert(AccountProfile(hex, handle))
+        accounts.save(hex, Tokens(grant.access, grant.refresh.orEmpty(), grant.expires.toString(), ""))
         activeHex = hex
         say("signed in as $handle (sub=$hex), scope=${grant.scope}, refresh=${!grant.refresh.isNullOrEmpty()}")
     }
 
     private fun switcher() = scope.launch {
         run("switcher") {
-            val state = SwitcherState.of(accounts, activeHex)
-            if (state.rows.isEmpty()) "no accounts" else state.rows.joinToString("\n  ", "\n  ") {
-                "${it.handle} ${if (it.active) "[active] " else ""}${if (it.locked) "[lock] " else ""}${if (it.signInAgain) "[sign in again] " else ""}${if (it.instant) "[instant]" else ""}"
+            val rows = directory.list()
+            if (rows.isEmpty()) "no accounts" else rows.joinToString("\n  ", "\n  ") {
+                val hex = it.hex
+                "${it.profile.handle} ${if (hex == activeHex) "[active] " else ""}${if (it.profile.unlock == "self") "[lock] " else ""}${if (accounts.needsSignIn(hex)) "[sign in again] " else ""}${if (accounts.fresh(hex)) "[instant]" else ""}"
             }
         }
     }
@@ -113,8 +118,8 @@ class MainActivity : Activity() {
         run("center") {
             val current = activeHex ?: accounts.list().firstOrNull()?.hex ?: return@run "no account"
             val bearer = accounts.tokens(current)?.token ?: return@run "no token"
-            val change = accounts.refresh(http, identity, bearer, current)
-            "added=${change.added} removed=${change.removed} updated=${change.updated}"
+            val change = directory.reconcile(Center.view(http, identity, bearer), current)
+            "added=${change.added} updated=${change.updated} unlinked=${change.unlinked}"
         }
     }
 

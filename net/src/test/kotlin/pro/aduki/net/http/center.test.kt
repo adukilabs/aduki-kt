@@ -45,9 +45,9 @@ class CenterTest {
     private fun switcherJson() = """{"center":"c1","token":"${centerToken()}","expires":1800003600}"""
 
     @Test
-    fun linkSendsTheOtherAccountsCredentialsAndReadsTheSwitcher() {
+    fun linkSendsTheOtherAccountsCredentialsAndReadsTheCenter() {
         server.enqueue(ok(switcherJson(), 201))
-        val switcher = Center.link(http, base, "tok", "ada@acme.example", "pw", code = " 123456 ")
+        val view = Center.link(http, base, "tok", "ada@acme.example", "pw", code = " 123456 ")
         val request = server.takeRequest()
         assertEquals("/v1/links", request.path)
         assertEquals("Bearer tok", request.getHeader("Authorization"))
@@ -55,14 +55,14 @@ class CenterTest {
         assertEquals("ada@acme.example", body.getString("handle"))
         assertEquals("123456", body.getString("code"))
         assertFalse(body.has("backup"))
-        assertEquals("c1", switcher.center)
-        assertEquals(2, switcher.accounts.size)
-        assertTrue(switcher.accounts[0].personal)
-        assertEquals("center", switcher.accounts[0].unlock)
-        assertFalse(switcher.accounts[1].personal)
-        assertEquals("t9", switcher.accounts[1].tenant)
-        assertEquals("self", switcher.accounts[1].unlock)
-        assertNull(switcher.accounts[0].tenant)
+        assertEquals("c1", view.center)
+        assertEquals(2, view.accounts.size)
+        assertTrue(view.accounts[0].personal)
+        assertEquals("center", view.accounts[0].unlock)
+        assertFalse(view.accounts[1].personal)
+        assertEquals("t9", view.accounts[1].tenant?.hex)
+        assertEquals("self", view.accounts[1].unlock)
+        assertNull(view.accounts[0].tenant)
     }
 
     @Test
@@ -76,16 +76,18 @@ class CenterTest {
     }
 
     @Test
-    fun fetchReturnsNullWhenNotLinkedAndAnAccountListOtherwise() {
+    fun viewReadsAnOlderServersCenterFromItsToken() {
         server.enqueue(failure(404, "entity.missing"))
-        assertNull(Center.fetch(http, base, "tok"))
+        val none = Center.view(http, base, "tok")
+        assertNull(none.center)
+        assertTrue(none.accounts.isEmpty())
         server.enqueue(ok(switcherJson()))
-        assertEquals(listOf("a1", "b2"), Center.fetch(http, base, "tok")!!.accounts.map { it.hex })
+        assertEquals(listOf("a1", "b2"), Center.view(http, base, "tok").accounts.map { it.hex })
         assertEquals("/v1/center", server.takeRequest().path.also { server.takeRequest() })
     }
 
     @Test
-    fun aCenterTokenWithoutAccountsOrWithGarbageGivesAnEmptySwitcher() {
+    fun aCenterTokenWithoutAccountsOrWithGarbageGivesNoAccounts() {
         assertTrue(Center.accounts("not-a-jwt").isEmpty())
         assertTrue(Center.accounts("a.${b64.encodeToString("{}".toByteArray())}.c").isEmpty())
         assertTrue(Center.accounts("a.!!!.c").isEmpty())
@@ -173,7 +175,7 @@ class CenterTest {
     @Test
     fun anAccessTokenIsNeverParsedForCenterData() {
         // Access tokens carry no center data (ADK-AUTH-002 section 7.2): the only
-        // source of the switcher is the center token from /center or /links.
+        // source of the token fallback is the center token from /center or /links.
         val access = "${b64.encodeToString("""{"alg":"EdDSA"}""".toByteArray())}.${b64.encodeToString("""{"sub":"a1","aud":"mail","scope":"x"}""".toByteArray())}.sig"
         assertTrue(Center.accounts(access).isEmpty())
     }
