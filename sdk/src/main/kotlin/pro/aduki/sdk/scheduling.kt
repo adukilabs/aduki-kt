@@ -198,18 +198,24 @@ class Scheduling internal constructor(
     /**
      * Creates an event: personal, all-day, repeating, with attendees and
      * reminders, in no service. It is stored at once with a `local-...` hex
-     * that becomes the server's once sent. With [notify], the server
-     * invites the attendees (iTIP REQUEST) when the account organizes it.
+     * that becomes the server's once sent. An event with attendees is
+     * organized by the account (`ORGANIZER`, its address). With [notify],
+     * the server invites the attendees (iTIP REQUEST).
      */
     suspend fun create(request: EventRequest, notify: Boolean = false): Appointment =
-        client.io { writable(request.calendar); local().create(request, notify) }.also { flush() }
+        client.io { writable(request.calendar); local().create(request, notify, organizer(request.attendees)) }.also { flush() }
 
     /**
      * Edits an event; null fields of [changes] keep their value. With
      * [notify], the server sends the changed event to the attendees.
      */
     suspend fun update(hex: String, changes: EventChanges, notify: Boolean = false): Appointment =
-        client.io { event(hex); local().update(hex, changes, notify) }.also { flush() }
+        client.io { event(hex); local().update(hex, changes, notify, organizer(changes.attendees.orEmpty())) }.also { flush() }
+
+    // The account's address as the organizer of an event with [attendees]
+    // (Aduki Mail invites them only then); "" without attendees or address.
+    private suspend fun organizer(attendees: List<String>): String =
+        if (attendees.isEmpty()) "" else client.me()?.email.orEmpty()
 
     /** Moves an event to [start] .. [end]; [notify] as for [update]. */
     suspend fun reschedule(hex: String, start: Instant, end: Instant, notify: Boolean = false): Appointment =

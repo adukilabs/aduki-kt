@@ -173,7 +173,8 @@ class CalendarTest {
     @Test
     fun respondCancelAndRemoveGoOutOnce() = runBlocking<Unit> {
         val aduki = build()
-        val hex = aduki.scheduling.create(standup()).let { aduki.scheduling.get("srv1")!!.hex }
+        // An event the account does not organize (from another calendar app): no ORGANIZER.
+        val hex = aduki.scheduling.importIcs(Events.build(standup(), "standup-1")).let { aduki.scheduling.get("srv1")!!.hex }
         calls.clear()
 
         aduki.scheduling.respond(hex, Response.Declined)
@@ -217,6 +218,8 @@ class CalendarTest {
         val aduki = build()
         aduki.scheduling.create(standup(), notify = true)
         assertTrue(JSONObject(bodies.last()).getBoolean("notify"))
+        // The server invites the attendees only for an event the account organizes.
+        assertEquals("me@example.com", Events.read(JSONObject(bodies.last()).getString("ical"))!!.organizer)
         aduki.scheduling.update("srv1", EventChanges(title = "Sync"), notify = true)
         assertTrue(JSONObject(bodies.last()).getBoolean("notify"))
         aduki.scheduling.cancel("srv1", notify = true)

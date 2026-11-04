@@ -72,16 +72,22 @@ class Schedule(
     fun appointments(): List<Appointment> = box.all.sortedBy { it.start }
 
     /** Creates an event locally (hex `local-...`) and queues it; [notify] invites the attendees. */
-    fun create(request: EventRequest, notify: Boolean = false): Appointment {
+    fun create(request: EventRequest, notify: Boolean = false): Appointment = create(request, notify, "")
+
+    /** [create] organized by [organizer] (the account's address) when it has attendees. */
+    fun create(request: EventRequest, notify: Boolean, organizer: String): Appointment {
         request.validate()
-        return insert(Events.build(request), request.calendar, notify)
+        return insert(Events.build(request, "${UUID.randomUUID()}@aduki", organizer), request.calendar, notify)
     }
 
     /** Applies [changes] to an event and queues the new object; [notify] sends it to the attendees. */
-    fun update(hex: String, changes: EventChanges, notify: Boolean = false): Appointment {
+    fun update(hex: String, changes: EventChanges, notify: Boolean = false): Appointment = update(hex, changes, notify, "")
+
+    /** [update], with [organizer] as the organizer when attendees are added to an event without one. */
+    fun update(hex: String, changes: EventChanges, notify: Boolean, organizer: String): Appointment {
         changes.validate()
         val row = find(hex)
-        val ical = Events.change(source(row), changes)
+        val ical = Events.change(source(row), changes, organizer)
         val moved = if (changes.start != null && changes.start!!.toEpochMilli() != row.start) row.start else row.moved
         val target = changes.calendar?.takeIf { it != row.calendar }
         return write(row, ical, UPDATE, Extra(notify = notify, calendar = target.orEmpty())) {

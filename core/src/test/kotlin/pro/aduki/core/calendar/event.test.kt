@@ -40,6 +40,23 @@ class EventsTest {
     }
 
     @Test
+    fun anEventWithAttendeesIsOrganizedByTheAccount() {
+        val request = EventRequest(title = "Review", start = nine, end = nine.plusSeconds(1800), attendees = listOf("Bob@Example.com"))
+        val ical = Events.build(request, "o1", "Ada@Example.com")
+        assertTrue(ical.contains("ORGANIZER:mailto:ada@example.com\r\nATTENDEE;"))
+        assertEquals("ada@example.com", Events.read(ical)!!.organizer)
+
+        val personal = Events.build(request.copy(attendees = emptyList()), "o2", "ada@example.com")
+        assertFalse("no organizer without attendees", personal.contains("ORGANIZER"))
+
+        // Attendees added to a personal event: it gets the organizer; an existing one is kept.
+        val invited = Events.change(personal, EventChanges(attendees = listOf("bob@example.com")), "ada@example.com")
+        assertEquals("ada@example.com", Events.read(invited)!!.organizer)
+        val kept = Events.change(Events.build(request, "o3", "eve@example.com"), EventChanges(title = "x"), "ada@example.com")
+        assertEquals("eve@example.com", Events.read(kept)!!.organizer)
+    }
+
+    @Test
     fun buildsAnAllDayRepeatingEventWithRemindersAndAttendees() {
         val ical = Events.build(
             EventRequest(
