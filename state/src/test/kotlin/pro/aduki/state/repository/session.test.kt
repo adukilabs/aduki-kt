@@ -38,5 +38,18 @@ class SessionTest {
         repo.update(Tokens(token = "b1", refresh = "q1", session = "s2"))
         assertNull(repo.identity.value)
     }
+
+    @Test
+    fun tokensWithoutASessionIdAreAnotherSessionWhenTheTokenDiffers() {
+        val repo = SessionRepository()
+        repo.update(Tokens(token = "a1"))
+        repo.update(Identity(user = "ada"))
+
+        repo.update(Tokens(token = "a1", refresh = ""))
+        assertEquals("the same token keeps it", "ada", repo.identity.value?.user)
+
+        repo.update(Tokens(token = "b1"))
+        assertNull(repo.identity.value)
+    }
 }
 

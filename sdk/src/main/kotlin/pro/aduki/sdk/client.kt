@@ -759,7 +759,7 @@ class Aduki internal constructor(
     private var profileCache: AccountProfile? = null
 
     @Volatile
-    private var profileSession: String? = null
+    private var profileSession: Tokens? = null
 
     /**
      * The signed-in account's profile from Aduki ID (`GET /v1/me`): real hex,
@@ -770,8 +770,10 @@ class Aduki internal constructor(
      * signed out, an older server). Never throws, except on cancellation.
      */
     suspend fun account(refresh: Boolean = false): AccountProfile? {
-        val current = session.tokens.value?.session
-        if (!refresh && profileSession == current) profileCache?.let { return it }
+        val current = session.tokens.value
+        val held = profileSession
+        val same = if (held == null || current == null) held == current else !Session.differs(held, current)
+        if (!refresh && same) profileCache?.let { return it }
         return read("account profile", null) { identity { it.me() } }?.also {
             profileCache = it
             profileSession = current

@@ -35,12 +35,13 @@ class Session {
     /**
      * Holds [tokens]. Tokens of another session than the one held (another
      * account, handed to a running client on a switch) drop the cached
-     * identity, so the next `me()` reads the account behind them.
+     * identity, so the next `me()` reads the account behind them. Tokens
+     * with no session id are another session when their access token differs.
      */
     fun update(tokens: Tokens) {
         val held = _tokens.value
         _tokens.value = tokens
-        if (held != null && held.session != tokens.session) _identity.value = null
+        if (held != null && differs(held, tokens)) _identity.value = null
     }
 
     fun updateIdentity(newIdentity: Identity) = update(newIdentity)
@@ -57,6 +58,16 @@ class Session {
     fun clear() {
         _identity.value = null
         _tokens.value = null
+    }
+
+    companion object {
+        /**
+         * True when [next] is another Aduki ID session than [held]: another
+         * session id, or, without one, another access token. A renewal keeps
+         * the session id.
+         */
+        fun differs(held: Tokens, next: Tokens): Boolean =
+            if (next.session.isBlank() || held.session.isBlank()) held.token != next.token else held.session != next.session
     }
 }
 
