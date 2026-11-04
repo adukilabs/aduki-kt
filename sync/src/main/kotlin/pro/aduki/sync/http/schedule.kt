@@ -32,7 +32,8 @@ import pro.aduki.sync.outbox.Rejected
  *
  * An event created offline is addressed by UID until its create was sent.
  * Anything else goes to [fallback]. A 4xx the client cannot fix by retrying
- * (not 408, 409 or 429) is thrown as [Rejected]; a 404 on update or delete
+ * (not 408, 409 or 429), or a 403 for a read-only calendar, is thrown as
+ * [Rejected]; a 404 on update or delete
  * completes the action (the event is gone).
  */
 class ScheduleDispatcher(
@@ -60,6 +61,10 @@ class ScheduleDispatcher(
                     Schedule.DELETE -> api.removeEvent(hex(payload), payload.optBoolean("notify"))
                     Schedule.LEGACY -> legacy(payload)
                 }
+            } catch (e: AdukiException.Api) {
+                // A read-only calendar ("Birthdays & dates") never takes the write.
+                if (e.readonly) throw Rejected("Aduki rejected '${action.action}': the calendar is read-only", e.status, e)
+                throw e
             } catch (e: AdukiException.Network) {
                 val code = e.code ?: throw e
                 if (code == 404 && action.action != Schedule.CREATE) return@withContext

@@ -44,7 +44,11 @@ data class AppointmentRecord(
 )
 
 /**
- * CalendarRecord is one calendar collection (`/user/calendars`).
+ * CalendarRecord is one calendar collection (`/user/calendars`). [kind] is
+ * the server's kind: `default`, `shared`, `dates` (the read-only "Birthdays
+ * & dates" calendar built from the account's contacts), or empty from older
+ * servers. [writable] is false for a calendar whose events cannot be
+ * created, edited, moved, answered or deleted.
  */
 data class CalendarRecord(
     val hex: String = "",
@@ -56,10 +60,53 @@ data class CalendarRecord(
     val writable: Boolean = true,
     val href: String = "",
     val created: String = "",
-    val updated: String = ""
+    val updated: String = "",
+    val kind: String = ""
 ) {
     /** Alias for [color] matching UK spelling. */
     val colour: String? get() = color
+
+    /**
+     * True for the "Birthdays & dates" calendar (`kind` `dates`): read-only,
+     * derived from contacts. It can be renamed and recoloured, not deleted.
+     */
+    val dates: Boolean get() = kind == DATES
+
+    companion object {
+        /** The [kind] of the "Birthdays & dates" calendar. */
+        const val DATES = "dates"
+    }
+}
+
+/**
+ * ContactDates is the "Birthdays & dates" setting
+ * (`GET|PATCH /user/calendars/dates`): the server builds a read-only
+ * calendar of yearly all-day events from the birthdays, anniversaries and
+ * other dates of the account's contacts.
+ *
+ * [enabled] turns the calendar on (the default). [alarm] is when each event
+ * reminds, at 09:00 local time; null for no reminder. [calendar] is the
+ * calendar's hex, null while the feature is off or before the calendar was
+ * first built. Each event's iCalendar carries `X-ADUKI-CONTACT` (the contact
+ * card hex), `X-ADUKI-DATE` (`birthday`, `anniversary`, `other`, `custom`)
+ * and, when the year is known, `X-ADUKI-YEAR`.
+ */
+data class ContactDates(
+    val enabled: Boolean = true,
+    val alarm: Alarm? = Alarm.OnTheDay,
+    val calendar: String? = null
+) {
+    /** When a date reminds: [days] before it, at 09:00 local time. */
+    enum class Alarm(val days: Int) {
+        OnTheDay(0),
+        DayBefore(1),
+        WeekBefore(7);
+
+        companion object {
+            /** The alarm of [days], or null for a value the SDK does not know. */
+            fun of(days: Int): Alarm? = entries.find { it.days == days }
+        }
+    }
 }
 
 /**

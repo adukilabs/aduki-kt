@@ -44,6 +44,12 @@ Fast, observable contacts sync, and contact photos. It uses the mail server's `G
 - `pro.aduki.store.box.Files`: sealed files by name. `pro.aduki.sync.outbox.Photos`: the photo cache and spool.
 - See `docs/services/contacts.md`.
 
+Birthdays & dates (needs the mail server with adukilabs/aduki#254):
+
+- `CalendarRecord.kind` (`default`, `shared`, `dates`) and `CalendarRecord.dates`; `writable` is false for the read-only `dates` calendar (it was always true).
+- `Scheduling.contactDates()` and `updateContactDates(enabled)` / `updateContactDates(enabled, alarm)` (`GET|PATCH /user/calendars/dates`), with the new model `ContactDates(enabled, alarm, calendar)` and `ContactDates.Alarm` (`OnTheDay`, `DayBefore`, `WeekBefore`; null is no reminder). The overload without `alarm` leaves it unchanged. Turning the feature on or off reads the calendar list again.
+- A 403 with `details.kind = "calendar.readonly"` is thrown as `AdukiException.Api` with the new `readonly` true, not as `Auth`. `Scheduling` refuses event writes into a read-only calendar and removing it before sending; the outbox drops such a queued write as `Rejected`.
+
 ## 0.7.1 (2026-11-04)
 
 Public holidays. It needs the mail server with `GET /user/holidays`, `PUT|DELETE /user/holidays/{region}` and `GET /user/exceptions`.

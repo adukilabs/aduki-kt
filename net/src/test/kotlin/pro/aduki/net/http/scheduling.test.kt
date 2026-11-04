@@ -15,6 +15,7 @@ import org.junit.Before
 import org.junit.Test
 import pro.aduki.core.errors.AdukiException
 import pro.aduki.core.models.BookRequest
+import pro.aduki.core.models.ContactDates
 import pro.aduki.core.models.OfferRequest
 import pro.aduki.core.models.Place
 import pro.aduki.core.models.ServiceRequest
@@ -610,6 +611,69 @@ class SchedulingTest {
             ServiceRequest(colour = "blue").validate()
             fail("expected IllegalArgumentException")
         } catch (_: IllegalArgumentException) {
+        }
+    }
+
+    @Test
+    fun `the dates calendar is read-only and other calendars are writable`() {
+        reply(
+            """{"items":[{"hex":"00000000000000aa","kind":"dates","name":"Birthdays & dates","href":"/caldav/t/u/contact-dates/"},""" +
+                """{"hex":"00000000000000bb","kind":"default","name":"Calendar"}],"total":2,"page":1,"pages":1}"""
+        )
+        val all = api.calendars()
+        assertEquals("dates", all[0].kind)
+        assertTrue(all[0].dates)
+        assertFalse(all[0].writable)
+        assertTrue(all[1].writable)
+        assertTrue(all[1].default)
+        assertFalse(all[1].dates)
+    }
+
+    @Test
+    fun `the contact dates setting is read`() {
+        reply("""{"enabled":true,"alarm":7,"calendar":"00000000000000aa"}""")
+        val got = api.contactDates()
+        assertEquals("/v1/user/calendars/dates", server.takeRequest().path)
+        assertTrue(got.enabled)
+        assertEquals(ContactDates.Alarm.WeekBefore, got.alarm)
+        assertEquals("00000000000000aa", got.calendar)
+        reply("""{"enabled":false,"alarm":null,"calendar":null}""")
+        val off = api.contactDates()
+        assertFalse(off.enabled)
+        assertNull(off.alarm)
+        assertNull(off.calendar)
+    }
+
+    @Test
+    fun `updating the setting keeps, sets or clears the alarm`() {
+        val body = """{"enabled":true,"alarm":0,"calendar":null}"""
+        reply(body)
+        api.updateContactDates(enabled = false)
+        val keep = server.takeRequest()
+        assertEquals("PATCH", keep.method)
+        assertEquals("""{"enabled":false}""", keep.body.readUtf8())
+        reply(body)
+        api.updateContactDates(alarm = ContactDates.Alarm.DayBefore)
+        assertEquals("""{"alarm":1}""", server.takeRequest().body.readUtf8())
+        reply(body)
+        api.updateContactDates(alarm = null)
+        assertEquals("""{"alarm":null}""", server.takeRequest().body.readUtf8())
+    }
+
+    @Test
+    fun `a write to the dates calendar is a readonly Api failure`() {
+        server.enqueue(
+            MockResponse().setResponseCode(403).setBody(
+                """{"success":false,"error":{"status":403,"kind":"access.denied","message":"read-only",""" +
+                    """"details":{"kind":"calendar.readonly"}}}"""
+            )
+        )
+        try {
+            api.removeCalendar("00000000000000aa")
+            fail("expected AdukiException.Api")
+        } catch (e: AdukiException.Api) {
+            assertEquals(403, e.status)
+            assertTrue(e.readonly)
         }
     }
 }

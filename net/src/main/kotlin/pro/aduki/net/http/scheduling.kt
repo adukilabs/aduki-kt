@@ -15,6 +15,7 @@ import pro.aduki.core.models.Availability
 import pro.aduki.core.models.BookRequest
 import pro.aduki.core.models.BookingRecord
 import pro.aduki.core.models.CalendarRecord
+import pro.aduki.core.models.ContactDates
 import pro.aduki.core.models.Holiday
 import pro.aduki.core.models.HolidayRegion
 import pro.aduki.core.models.OfferRecord
@@ -49,6 +50,10 @@ import java.time.Instant
  *   `GET|PATCH /user/bookings/{hex}`.
  * - holidays: `GET /user/holidays`, `PUT|DELETE /user/holidays/{region}`;
  *   the dates are the `holiday` exceptions of `GET /user/exceptions?from&to`.
+ * - birthdays and dates: `GET|PATCH /user/calendars/dates`
+ *   `{enabled?, alarm?}`. The calendar it builds (`kind` `dates`) is
+ *   read-only: writes to it are refused with a 403 thrown as
+ *   [AdukiException.Api] with [AdukiException.Api.readonly] true.
  */
 class Scheduling(
     private val client: OkHttpClient,
@@ -190,6 +195,39 @@ class Scheduling(
             .delete()
             .build()
         execute(request) { }
+    }
+
+    // ── Birthdays and dates ──────────────────────────────────────────
+
+    /** The "Birthdays & dates" setting (`GET /user/calendars/dates`). */
+    fun contactDates(): ContactDates {
+        val request = Request.Builder().url(url("user/calendars/dates")).get().build()
+        return execute(request) { parseDates(JSONObject(it)) }
+    }
+
+    /**
+     * Changes the "Birthdays & dates" setting (`PATCH /user/calendars/dates`)
+     * and returns it. A null [enabled] keeps it; turning it off removes the
+     * calendar and its events, turning it on builds it again (same hex).
+     * The alarm is left unchanged by this overload; see the one taking `alarm`.
+     */
+    fun updateContactDates(enabled: Boolean? = null): ContactDates = patchDates(enabled, keep = true, alarm = null)
+
+    /**
+     * Changes the "Birthdays & dates" setting and sets its [alarm]: a
+     * [ContactDates.Alarm], or null to turn reminders off (`"alarm": null` on
+     * the wire). A null [enabled] keeps it. To leave the alarm unchanged,
+     * call the overload without `alarm`.
+     */
+    fun updateContactDates(enabled: Boolean? = null, alarm: ContactDates.Alarm?): ContactDates =
+        patchDates(enabled, keep = false, alarm = alarm)
+
+    private fun patchDates(enabled: Boolean?, keep: Boolean, alarm: ContactDates.Alarm?): ContactDates {
+        val payload = JSONObject()
+        enabled?.let { payload.put("enabled", it) }
+        if (!keep) payload.put("alarm", alarm?.days ?: JSONObject.NULL)
+        val request = Request.Builder().url(url("user/calendars/dates")).patch(json(payload)).build()
+        return execute(request) { parseDates(JSONObject(it)) }
     }
 
     // ── Services (booking pages) ─────────────────────────────────────
@@ -658,11 +696,22 @@ class Scheduling(
         )
     }
 
+    // An absent alarm is the server default (on the day); null or an unknown value is none.
+    private fun parseDates(obj: JSONObject): ContactDates = ContactDates(
+        enabled = obj.optBoolean("enabled", true),
+        alarm = when {
+            !obj.has("alarm") -> ContactDates.Alarm.OnTheDay
+            obj.isNull("alarm") -> null
+            else -> ContactDates.Alarm.of(obj.optInt("alarm", -1))
+        },
+        calendar = optional(obj, "calendar")
+    )
+
     private fun parseCalendar(obj: JSONObject): CalendarRecord {
         val hex = text(obj, "hex")
         if (hex.isBlank()) throw AdukiException.Network("Calendar without a hex in the reply")
-        val kind = text(obj, "kind")
-        val default = kind.equals("default", ignoreCase = true)
+        val kind = text(obj, "kind").lowercase()
+        val default = kind == "default"
         return CalendarRecord(
             hex = hex,
             name = text(obj, "name"),
@@ -670,10 +719,11 @@ class Scheduling(
             color = optional(obj, "color"),
             timezone = text(obj, "timezone").ifBlank { "UTC" },
             default = default,
-            writable = true,
+            writable = kind != CalendarRecord.DATES,
             href = text(obj, "href"),
             created = text(obj, "created"),
-            updated = text(obj, "updated")
+            updated = text(obj, "updated"),
+            kind = kind
         )
     }
 
@@ -757,6 +807,7 @@ class Scheduling(
 
         response.use { resp ->
             val raw = resp.body?.string() ?: ""
+            if (resp.code == 403) readonly(raw)?.let { throw it }
             if (resp.code == 401 || resp.code == 403) {
                 val why = Envelope.failure(raw) ?: "HTTP ${resp.code}"
                 throw AdukiException.Auth("Unauthorized access ($why)")
@@ -775,6 +826,19 @@ class Scheduling(
                 throw AdukiException.Protocol("Unexpected response from ${request.url}", e)
             }
         }
+    }
+
+    // A write to a read-only calendar: an Api failure, not a session problem.
+    private fun readonly(raw: String): AdukiException.Api? {
+        val error = runCatching { JSONObject(raw) }.getOrNull()?.optJSONObject("error") ?: return null
+        val details = error.optJSONObject("details") ?: return null
+        if (details.optString("kind") != "calendar.readonly") return null
+        return AdukiException.Api(
+            status = 403,
+            kind = error.optString("kind").ifBlank { "access.denied" },
+            message = error.optString("message").ifBlank { "The calendar is read-only" },
+            details = details.toString()
+        )
     }
 
     private companion object {

@@ -48,6 +48,11 @@ class Scheduling internal constructor(...) {
     suspend fun updateCalendar(hex: String, name: String? = null, color: String? = null, timezone: String? = null, description: String? = null, busy: Boolean? = null): CalendarRecord
     suspend fun removeCalendar(hex: String)
 
+    // Birthdays & dates: a read-only calendar (kind "dates") built from the contacts' dates
+    suspend fun contactDates(): ContactDates
+    suspend fun updateContactDates(enabled: Boolean? = null): ContactDates
+    suspend fun updateContactDates(enabled: Boolean? = null, alarm: ContactDates.Alarm?): ContactDates
+
     // Services (booking pages), online
     suspend fun services(): List<ServiceRecord>
     suspend fun service(hex: String): ServiceRecord
@@ -337,3 +342,15 @@ uses to change a service's windows.
   occurrences, and all-day events carry their start and end.
 - A `PATCH` with field edits (`summary`, `description`, `location`) keeps
   attendees and alarms; the SDK sends the whole object anyway.
+
+## Birthdays & dates
+
+The server keeps a read-only calendar of the birthdays, anniversaries and other dates on the account's contacts (`CalendarRecord.kind == "dates"`, `dates` true, `writable` false). Each event is a yearly all-day event; its `ical` carries `X-ADUKI-CONTACT` (the contact's hex), `X-ADUKI-DATE` and, when known, `X-ADUKI-YEAR`. Writes to it, and removing it, throw `AdukiException.Api` with `readonly` true; it can be renamed and recoloured.
+
+```kotlin
+val setting = client.scheduling.contactDates()                       // enabled, alarm, calendar hex
+client.scheduling.updateContactDates(alarm = ContactDates.Alarm.DayBefore)  // 09:00 the day before
+client.scheduling.updateContactDates(alarm = null)                   // no reminder
+client.scheduling.updateContactDates(enabled = false)                // removes the calendar
+```
+
