@@ -1101,7 +1101,7 @@ class Aduki internal constructor(
 
         /**
          * Opens this app's own session from a [Handoff] code another app of the
-         * same publisher left for it (`Accounts.claim` on Android), with no
+         * same publisher left for it (`Accounts.pending` on Android, then `settle`), with no
          * password or second factor. With [dpop] the session is bound to this
          * app's key. [device] names the session.
          *

@@ -161,6 +161,9 @@ suspend fun logout(): Boolean
 
 - **Return Type**: `Boolean` — `true` if Aduki ID revoked the session (`DELETE /v1/sessions/{hex}`); the local session is then cleared. When revocation fails the session is kept with the rotated refresh token so `logout()` can be retried (or call `session.clear()`). Also stops `watchRights`.
 
+### Accounts on Android
+The device's accounts and the Accounts Center are in `pro.aduki:android` (`AccountDirectory`, `AccountsCenter`, `SuiteBroker`): see [Suite sign-in & Accounts Center](../auth/suite.md). `SwitcherState`, `Linked`, `Switcher`, `Center.fetch`, `Accounts.reconcile`/`refresh` and the push handoff calls (`Accounts.offer`, `claim`, `offered`, `withdraw`, `holds`) were removed in 0.8.0; the CHANGELOG lists what replaces each.
+
 ### `rights`, `watchRights`, `unwatchRights`
 Renew the access token on a rights push, or subscribe to the mail event stream that sends them. See [Token lifecycle](../auth/tokens.md).
 

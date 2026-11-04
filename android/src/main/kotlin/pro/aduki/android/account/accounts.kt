@@ -6,13 +6,10 @@ import android.content.Context
 import android.os.Bundle
 import okhttp3.OkHttpClient
 import org.json.JSONObject
-import pro.aduki.core.models.Linked
-import pro.aduki.core.models.Switcher
 import pro.aduki.core.models.Tokens
 import pro.aduki.core.errors.AdukiException
 import pro.aduki.crypto.cipher.Vault
 import pro.aduki.crypto.dpop.Key
-import pro.aduki.net.http.Handoff
 import pro.aduki.android.keystore.AndroidKey
 import pro.aduki.net.http.Center
 
@@ -55,24 +52,19 @@ interface Visibility {
 }
 
 /**
- * Accounts keeps an Account Center's linked accounts in Android's
- * [AccountManager] (K4, ADK-AUTH-002 section 5.5): one entry per linked
- * account under the one [TYPE], the center id in each entry's user data so the
- * authenticator knows which entries belong together.
- *
- * The center token (ADK-AUTH-002 section 7.2) is sent to Aduki ID only and is
- * kept in its own private file, never in an account entry and never next to an
- * access token.
+ * Accounts keeps this app's session tokens of the device's accounts, and the
+ * device credential, next to the [AccountManager] entries under the one
+ * [TYPE] (ADK-AUTH-002 section 5.5). The entries themselves (profile, device
+ * group, link state) are written by [AccountDirectory]; [AccountsCenter]
+ * keeps them in step with Aduki ID.
  *
  * ## Where session tokens live
  * The [mode] decides, and there is always exactly one copy:
  * - [Mode.Own] (default): this app's own session, sealed with the mode's [Vault]
  *   in this app's private storage. The account entry carries metadata only
- *   (`hex`, `handle`, `center`, `tenant`, `personal`, `unlock`). Another app of
- *   the same publisher opens its own session with a handoff: the signed-in app
- *   gets one from Aduki ID (`Aduki.handoff(target)`) and leaves it with [offer];
- *   the other app takes it with [claim] and redeems it with its own key
- *   (`Aduki.redeem`). Only that single-use code crosses apps.
+ *   (see [AccountDirectory]). Another app of the same publisher opens its own
+ *   session with a handoff code a signed-in sibling mints for its key on
+ *   request (`SuiteBroker.open`). Only that single-use code crosses apps.
  * - [Mode.Shared]: one session for every app the entry is visible to (apps that
  *   share a `TokenStore`). The tokens live only in the account entry, unsealed,
  *   because a Keystore key belongs to one app. Every read goes to the entry, so
@@ -139,73 +131,11 @@ class Accounts(
         val center: String
     )
 
-    /** What a [reconcile] changed. */
-    data class Change(val added: List<String>, val removed: List<String>, val updated: List<String>)
-
     /** All entries of this type, personal first then by handle. */
     fun list(): List<Entry> = manager.getAccountsByType(TYPE).mapNotNull(::read)
         .sortedWith(compareByDescending<Entry> { it.personal }.thenBy { it.handle })
 
     fun find(hex: String): Entry? = list().firstOrNull { it.hex == hex }
-
-    /**
-     * Makes the entries of [switcher]'s center match it: accounts the center
-     * lists are added or refreshed, entries of that center it no longer lists
-     * are removed with their tokens (a tenant `links = deny`, a forced unlink or
-     * the person's own unlink, ADK-AUTH-002 section 5.3). Entries of other
-     * centers and tokens of kept entries are left alone. The center token is
-     * stored for later calls to Aduki ID.
-     */
-    @Deprecated("Drops entries a center no longer lists; use AccountDirectory.reconcile (keeps device-only accounts) or AccountsCenter.refresh.")
-    @Synchronized
-    fun reconcile(switcher: Switcher): Change {
-        val wanted = switcher.accounts.associateBy { it.hex }
-        val existing = list()
-        val removed = existing.filter { it.center == switcher.center && it.hex !in wanted }
-        removed.forEach(::drop)
-        val added = ArrayList<String>()
-        val updated = ArrayList<String>()
-        for (linked in switcher.accounts) {
-            val have = existing.firstOrNull { it.hex == linked.hex }
-            if (have == null) {
-                if (create(linked, switcher.center)) added += linked.hex
-            } else if (have.center != switcher.center || have.unlock != linked.unlock || have.tenant != linked.tenant || have.handle != linked.handle) {
-                if (have.handle != linked.handle) drop(have).also { create(linked, switcher.center) } else {
-                    write(have.account, linked, switcher.center)
-                }
-                updated += linked.hex
-            }
-        }
-        center.save(switcher.center, switcher.token, switcher.expires)
-        return Change(added, removed.map { it.hex }, updated)
-    }
-
-    /**
-     * Fetches the center of the account [current] (hex; [bearer] is its access
-     * token for audience `id`) and reconciles. When Aduki ID says it is in no
-     * center, every other entry that belonged to a center is removed and
-     * [current] stays as a single account.
-     */
-    @Deprecated("Drops every other entry when the account is in no center; use AccountsCenter.refresh.")
-    @Suppress("DEPRECATION")
-    fun refresh(client: OkHttpClient, identity: String, bearer: String, current: String): Change {
-        val switcher = Center.fetch(client, identity, bearer)
-        if (switcher != null) return reconcile(switcher)
-        val gone = list().filter { it.hex != current && it.center.isNotEmpty() }
-        gone.forEach(::drop)
-        find(current)?.let { manager.setUserData(it.account, CENTER, "") }
-        center.clearCenter()
-        return Change(emptyList(), gone.map { it.hex }, emptyList())
-    }
-
-    /** Adds (or updates) a single account that is in no center, e.g. right after sign-in. */
-    @Synchronized
-    fun add(linked: Linked, tokens: Tokens? = null): Boolean {
-        val have = find(linked.hex)
-        val ok = have != null || create(linked, "")
-        if (ok && tokens != null) save(linked.hex, tokens)
-        return ok
-    }
 
     /** Stores the session [tokens] of the account [hex] where the [mode] keeps them; false when no such entry exists. */
     fun save(hex: String, tokens: Tokens, now: Long = System.currentTimeMillis()): Boolean {
@@ -385,50 +315,6 @@ class Accounts(
     }
 
     /**
-     * Whether the app [target] holds its own session of [hex] ([Mode.Own]
-     * apps mark the entry when they save one); a signed-in app offers
-     * handoffs only to apps that do not.
-     */
-    @Deprecated("The push handoff path is replaced by the on-demand SuiteBroker; kept one release for older siblings.")
-    fun holds(hex: String, target: String): Boolean {
-        val entry = find(hex) ?: return false
-        return manager.getUserData(entry.account, own(target)) != null
-    }
-
-    /**
-     * Leaves [handoff] (from `Aduki.handoff(target)`) in the entry of [hex]
-     * for the app [target], replacing one left before. False when there is no
-     * such entry, the target is this app or the handoff has expired. The entry
-     * is visible only to the apps [share] named; the code works once.
-     */
-    @Deprecated("Push handoffs are replaced by the on-demand SuiteBroker (a code minted for the caller's key when it asks); kept one release for older siblings.")
-    fun offer(hex: String, target: String, handoff: Handoff): Boolean {
-        val entry = find(hex) ?: return false
-        if (target == packageName || handoff.expired()) return false
-        val json = JSONObject().put("code", handoff.code).put("expires", handoff.expires)
-        manager.setUserData(entry.account, slot(target), json.toString())
-        return true
-    }
-
-    /**
-     * Takes the handoff another app left for this app on [hex] and removes it
-     * from the entry: redeem it with `Aduki.redeem(code, dpop = ...)`. Null
-     * when none was left or it has expired.
-     *
-     * Deleting the code before it is redeemed loses it when the redeem fails
-     * (offline, a timeout, the process killed): use [pending], redeem, then
-     * [settle].
-     */
-    @Deprecated("Removes the code before it is redeemed; use pending(hex), redeem, then settle(hex, code).", ReplaceWith("pending(hex)"))
-    fun claim(hex: String, now: Long = System.currentTimeMillis() / 1000): String? {
-        val entry = find(hex) ?: return null
-        val raw = manager.getUserData(entry.account, slot(packageName)) ?: return null
-        manager.setUserData(entry.account, slot(packageName), null)
-        val handoff = runCatching { JSONObject(raw).let { Handoff(it.getString("code"), it.optLong("expires")) } }.getOrNull()
-        return handoff?.takeUnless { it.expired(now) }?.code
-    }
-
-    /**
      * The handoff an older sibling (push path) left for this app on [hex],
      * without removing it: redeem it, then [settle] it whatever the outcome
      * except a network failure (then it stays for the next try). Its expiry
@@ -463,27 +349,6 @@ class Accounts(
         val stored = tokensPrefs.getString(from, null) ?: return false
         if (tokensPrefs.contains(to)) return false
         return tokensPrefs.edit().putString(to, stored).remove(from).commit()
-    }
-
-    /**
-     * The handoff left for [target] on [hex] and not claimed yet, without
-     * claiming it: a signed-in app offers a new one only when this is null or
-     * about to expire. Null too when it has expired.
-     */
-    @Deprecated("Push handoffs are replaced by the on-demand SuiteBroker.")
-    fun offered(hex: String, target: String, now: Long = System.currentTimeMillis() / 1000): Handoff? {
-        val entry = find(hex) ?: return null
-        val raw = manager.getUserData(entry.account, slot(target)) ?: return null
-        val handoff = runCatching { JSONObject(raw).let { Handoff(it.getString("code"), it.optLong("expires")) } }.getOrNull()
-        return handoff?.takeUnless { it.expired(now) }
-    }
-
-    /** Removes a handoff left for [target] on [hex] that was not claimed. */
-    @Deprecated("Push handoffs are replaced by the on-demand SuiteBroker.")
-    fun withdraw(hex: String, target: String): Boolean {
-        val entry = find(hex) ?: return false
-        manager.setUserData(entry.account, slot(target), null)
-        return true
     }
 
     /**
@@ -558,7 +423,7 @@ class Accounts(
      * Reopens the sessions of every account the registered credential opens, with the device key and no
      * password: challenge, sign the raw nonce, unlock (`Center.unlock`), then [save] each session. Returns
      * the account hexes whose tokens were stored; sessions of accounts that have no entry here are not
-     * stored (call [refresh] or [reconcile] first). One attempt: a 401 ([AdukiException.Unauthorized]) is
+     * stored (add them with `AccountDirectory.upsert` or `AccountsCenter.refresh` first). One attempt: a 401 ([AdukiException.Unauthorized]) is
      * final for that nonce, the caller decides whether to ask again. A 404 means the credential was
      * revoked or lapsed (60 days): it is forgotten here and the user must sign in fully.
      *
@@ -598,35 +463,14 @@ class Accounts(
     /** The device credential id last registered, or null. */
     fun credential(): String? = center.credential()
 
-    /** The center token for calls to Aduki ID only, or null when it is missing or expired. */
-    fun centerToken(now: Long = System.currentTimeMillis() / 1000): String? = center.token(now)
-
     /** Removes [hex] and its tokens. */
     fun remove(hex: String): Boolean = find(hex)?.let { drop(it); true } ?: false
 
-    /** Removes every entry and the center token (sign-out of the device). */
+    /** Removes every entry, this app's tokens and the device credential (sign-out of the device). */
     fun clear() {
         tokensPrefs.edit().clear().apply()
         list().forEach(::drop)
         center.clear()
-    }
-
-    private fun create(linked: Linked, centerId: String): Boolean =
-        // one Binder call with all user data: AccountManager calls are slow on weak devices
-        manager.addAccountExplicitly(Account(linked.handle, TYPE), null, Bundle().apply {
-            putString(HEX, linked.hex)
-            putString(CENTER, centerId)
-            putString(PERSONAL, linked.personal.toString())
-            linked.tenant?.let { putString(TENANT, it) }
-            putString(UNLOCK, linked.unlock)
-        })
-
-    private fun write(account: Account, linked: Linked, centerId: String) {
-        manager.setUserData(account, HEX, linked.hex)
-        manager.setUserData(account, CENTER, centerId)
-        manager.setUserData(account, PERSONAL, linked.personal.toString())
-        manager.setUserData(account, TENANT, linked.tenant)
-        manager.setUserData(account, UNLOCK, linked.unlock)
     }
 
     private fun read(account: Account): Entry? {

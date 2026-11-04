@@ -16,8 +16,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import pro.aduki.android.signin.SignInActivity
 import pro.aduki.android.softVault
-import pro.aduki.core.models.Linked
-import pro.aduki.core.models.Switcher
+import pro.aduki.core.models.AccountProfile
 import pro.aduki.core.models.Tokens
 
 @RunWith(RobolectricTestRunner::class)
@@ -28,7 +27,7 @@ class AuthenticatorTest {
     private val authenticator = AdukiAuthenticator(context, accounts)
 
     @Before fun seed() {
-        accounts.reconcile(Switcher("c1", "t", 4_000_000_000L, listOf(Linked("a1", "ada@aduki.me", true, null, "center"))))
+        AccountDirectory(context).upsert(AccountProfile("a1", "ada@aduki.me", unlock = "center"))
         Authenticator.refresher = null
     }
 

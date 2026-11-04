@@ -7,8 +7,7 @@ device-bound unlock.
 
 | Call | Endpoint | Returns |
 |------|----------|---------|
-| `Center.link` | `POST /links` | `Switcher` — center token plus linked accounts |
-| `Center.fetch` | `GET /center` | `Switcher?` (`null` when the account is in no center: `center: null` or an older `404`) |
+| `Center.link(..., handle, password, code)` | `POST /links` | `CenterView` with every account's profile |
 | `Center.view` | `GET /center` | `CenterView`: the center (null when none) and every account's full profile (0.8.0) |
 | `Center.link(..., ticket)` | `POST /links {ticket}` | `CenterView`; the ticket comes from a sign-in with `link: true` (0.8.0) |
 | `Center.unlink` | `DELETE /links` | `Boolean` |
@@ -32,7 +31,7 @@ The signature form is tested on the JVM against an independent verifier.
 
 ## Android authenticator
 
-Since 0.8.0 the device's accounts live in `AccountDirectory`. `AccountsCenter` does the adding, linking with tickets, switching and removing ([Suite sign-in & Accounts Center](suite.md)), and it never drops a device-only account. The older `Accounts.reconcile` and `Accounts.refresh` are deprecated: they remove the entry and its tokens when Aduki ID removes a link (tenant `links = deny`, forced unlink). The center token is stored in a separate sealed file and sent to Aduki ID only.
+Since 0.8.0 the device's accounts live in `AccountDirectory`. `AccountsCenter` does the adding, linking with tickets, switching and removing ([Suite sign-in & Accounts Center](suite.md)), and it never drops a device-only account. `Accounts` keeps only this app's tokens and the device credential next to those entries.
 
 `Accounts.registerDevice` and `Accounts.unlockWithDevice` use `AndroidKey.open(AndroidKey.DEVICE)` (P-256, `ES256`) as the signer of this flow and store each unlocked session.
 `Accounts.revokeDevice` revokes the credential at Aduki ID (`DELETE /credentials/{id}`) and clears it locally. When a credential has lapsed after 60 days or is revoked, `Accounts.unlockWithDevice` catches HTTP 404, clears the local credential automatically, and raises `AdukiException.Network(code = 404)`.
