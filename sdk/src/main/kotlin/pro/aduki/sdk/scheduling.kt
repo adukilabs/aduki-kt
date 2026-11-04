@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import pro.aduki.core.calendar.Events
+import pro.aduki.core.calendar.Imip
 import pro.aduki.core.errors.AdukiException
 import pro.aduki.core.errors.Faults
 import pro.aduki.core.models.BookRequest
@@ -278,6 +280,45 @@ class Scheduling internal constructor(
         val me = address ?: client.me()?.email?.ifBlank { null }
             ?: throw IllegalStateException("the account's address is unknown: pass address")
         engine.respond(hex, response, me, comment)
+    }.also { flush() }
+
+    /**
+     * Files the invitation that arrived as mail message [message] (its hex):
+     * an iMIP email (RFC 6047) from the organizer, on Aduki Mail or
+     * elsewhere. A REQUEST creates the event in [calendar] (the default
+     * calendar when blank) or brings the stored event with its UID up to the
+     * organizer's version (a new time, a cancelled status); a CANCEL marks the
+     * stored event cancelled. Answer it with [respond]: the organizer gets an
+     * iTIP REPLY. Returns the event, or null when the message carries no
+     * invitation (no calendar part, a REPLY) or cancels an event that is not
+     * stored. An update older than the stored event (a lower `SEQUENCE`)
+     * changes nothing and returns the stored event.
+     */
+    suspend fun invitation(message: String, calendar: String = ""): Appointment? =
+        invite(client.mail.source(message), calendar)
+
+    // [invitation] of the raw message [raw].
+    internal suspend fun invite(raw: String, calendar: String = ""): Appointment? = client.io {
+        val invitation = Imip.read(raw) ?: return@io null
+        val engine = local()
+        when (invitation.method) {
+            "REQUEST" -> {
+                val ical = Events.split(invitation.ical).firstOrNull() ?: return@io null
+                val event = Events.read(ical) ?: return@io null
+                val known = engine.resolve(event.uid)?.let { get(it) }
+                if (known != null && known.sequence > event.sequence) return@io known
+                writable(known?.calendar ?: calendar)
+                engine.import(ical, calendar).firstOrNull()
+            }
+            "CANCEL" -> {
+                val uid = Events.read(invitation.ical)?.uid ?: return@io null
+                val known = engine.resolve(uid)?.let { get(it) } ?: return@io null
+                if (known.status == "cancelled") return@io known
+                event(known.hex)
+                engine.cancel(known.hex)
+            }
+            else -> null
+        }
     }.also { flush() }
 
     /**

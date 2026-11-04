@@ -7,10 +7,12 @@ import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -22,6 +24,7 @@ import pro.aduki.core.models.EventChanges
 import pro.aduki.core.models.EventRequest
 import pro.aduki.core.models.Response
 import java.time.Instant
+import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -35,6 +38,7 @@ class CalendarTest {
     private val calls = CopyOnWriteArrayList<String>()
     private val bodies = CopyOnWriteArrayList<String>()
     private val held = ConcurrentHashMap<String, String>() // hex -> ical
+    private val mails = ConcurrentHashMap<String, String>() // message hex -> raw source
     @Volatile private var down = false
     @Volatile private var recorded = false
     private var client: Aduki? = null
@@ -48,6 +52,7 @@ class CalendarTest {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val path = request.path.orEmpty()
                 val body = request.body.readUtf8()
+                if (path.startsWith("/jmap")) return jmap(path, body)
                 calls += "${request.method} $path"
                 if (body.isNotBlank()) bodies += body
                 if (down) return MockResponse().setResponseCode(503)
@@ -96,6 +101,34 @@ class CalendarTest {
     fun tearDown() {
         client?.close()
         server.shutdown()
+    }
+
+    // JMAP as far as `Mail.source` reads it: a message's blob, then its bytes.
+    private fun jmap(path: String, body: String): MockResponse {
+        val base = server.url("/").toString().trimEnd('/')
+        return when {
+            path == "/jmap/session" -> MockResponse().setBody(
+                """{"primaryAccounts":{"urn:ietf:params:jmap:mail":"acc"},"capabilities":{},
+                   "apiUrl":"$base/jmap","uploadUrl":"$base/jmap/upload/{accountId}",
+                   "downloadUrl":"$base/jmap/download/{accountId}/{blobId}/{name}?accept={type}"}"""
+            )
+            path.startsWith("/jmap/download/acc/blob-") ->
+                mails[path.removePrefix("/jmap/download/acc/blob-").substringBefore('/').substringBefore('?')]
+                    ?.let { MockResponse().setBody(it) } ?: MockResponse().setResponseCode(404)
+            path == "/jmap" -> {
+                val methods = JSONObject(body).getJSONArray("methodCalls")
+                val replies = JSONArray()
+                for (i in 0 until methods.length()) {
+                    val call = methods.getJSONArray(i)
+                    val id = call.getJSONObject(1).optJSONArray("ids")?.optString(0).orEmpty()
+                    val list = JSONArray()
+                    if (mails.containsKey(id)) list.put(JSONObject().put("id", id).put("blobId", "blob-$id"))
+                    replies.put(JSONArray().put(call.getString(0)).put(JSONObject().put("accountId", "acc").put("list", list)).put(call.getString(2)))
+                }
+                MockResponse().setBody(JSONObject().put("methodResponses", replies).put("sessionState", "s").toString())
+            }
+            else -> MockResponse().setResponseCode(404)
+        }
     }
 
     private fun ok(data: String, code: Int = 200) = MockResponse().setResponseCode(code).setBody("""{"success":true,"data":$data}""")
@@ -193,6 +226,69 @@ class CalendarTest {
         aduki.scheduling.remove(hex)
         assertNull(aduki.scheduling.get(hex))
         assertEquals(listOf("DELETE /v1/user/events/srv1"), calls)
+        assertEquals(0, aduki.sync.outbox.value)
+    }
+
+    // An invitation from boss@example.com to the account, at [hour] UTC on 1 December.
+    private fun invitation(sequence: Int, hour: Int, method: String = "REQUEST", status: String = "CONFIRMED") =
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//t//EN\r\nMETHOD:$method\r\nBEGIN:VEVENT\r\nUID:lunch-1@aduki\r\n" +
+            "DTSTAMP:20261104T080000Z\r\nDTSTART:20261201T%02d0000Z\r\nDTEND:20261201T%02d3000Z\r\n".format(hour, hour) +
+            "SEQUENCE:$sequence\r\nSUMMARY:Lunch\r\nSTATUS:$status\r\nORGANIZER:mailto:boss@example.com\r\n" +
+            "ATTENDEE;PARTSTAT=ACCEPTED:mailto:boss@example.com\r\n" +
+            "ATTENDEE;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:me@example.com\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+
+    // [calendar] as the iMIP email Aduki Mail delivers (RFC 6047).
+    private fun imip(calendar: String, method: String) =
+        "From: <boss@example.com>\r\nTo: <me@example.com>\r\nSubject: Invitation: Lunch\r\nMIME-Version: 1.0\r\n" +
+            "Content-Type: text/calendar; method=$method; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" +
+            Base64.getMimeEncoder().encodeToString(calendar.toByteArray()) + "\r\n"
+
+    @Test
+    fun anInvitationByMailIsFiledAnsweredMovedAndCancelled() = runBlocking<Unit> {
+        val aduki = build()
+        val ten = Instant.parse("2026-12-01T10:00:00Z").toEpochMilli()
+        val two = Instant.parse("2026-12-01T14:00:00Z").toEpochMilli()
+
+        // The invitation: filed in the calendar (without METHOD), then answered.
+        mails["m1"] = imip(invitation(0, 10), "REQUEST")
+        assertEquals("lunch-1@aduki", aduki.scheduling.invitation("m1")?.uid)
+        val filed = aduki.scheduling.get("srv1")
+        assertNotNull(filed)
+        assertEquals(ten, filed!!.start)
+        assertEquals("boss@example.com", filed.organizer)
+        assertTrue(calls.contains("POST /v1/user/events"))
+        assertFalse(held["srv1"]!!.contains("METHOD"))
+        calls.clear()
+        aduki.scheduling.respond("srv1", Response.Accepted)
+        assertEquals(listOf("GET /v1/user", "POST /v1/user/events/srv1/reply"), calls)
+
+        // The organizer moves it: the same event takes the new time.
+        calls.clear()
+        mails["m2"] = imip(invitation(1, 14), "REQUEST")
+        val moved = aduki.scheduling.invitation("m2")!!
+        assertEquals("srv1", moved.hex)
+        assertEquals(two, aduki.scheduling.get("srv1")!!.start)
+        assertEquals(listOf("PATCH /v1/user/events/srv1"), calls)
+        // The first mail, read again, is older: nothing changes.
+        calls.clear()
+        assertEquals(two, aduki.scheduling.invitation("m1")!!.start)
+        assertTrue(calls.isEmpty())
+
+        // The organizer cancels it.
+        mails["m3"] = imip(invitation(2, 14, method = "CANCEL", status = "CANCELLED"), "CANCEL")
+        assertEquals("cancelled", aduki.scheduling.invitation("m3")!!.status)
+        assertEquals("CANCELLED", Events.read(held["srv1"]!!)!!.status)
+        assertEquals(1, held.size)
+
+        // Not an invitation: a plain message, and a reply (for the organizer's side).
+        mails["m4"] = "From: <boss@example.com>\r\nSubject: Lunch?\r\n\r\nAre you free?\r\n"
+        assertNull(aduki.scheduling.invitation("m4"))
+        mails["m5"] = imip(invitation(2, 14, method = "REPLY"), "REPLY")
+        assertNull(aduki.scheduling.invitation("m5"))
+        // A cancellation of an event that is not stored files nothing.
+        mails["m6"] = imip(invitation(0, 9, method = "CANCEL").replace("lunch-1@aduki", "other@aduki"), "CANCEL")
+        assertNull(aduki.scheduling.invitation("m6"))
+        assertEquals(1, held.size)
         assertEquals(0, aduki.sync.outbox.value)
     }
 

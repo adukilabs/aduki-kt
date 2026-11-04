@@ -32,6 +32,7 @@ class Scheduling internal constructor(...) {
     suspend fun update(hex: String, changes: EventChanges, notify: Boolean = false): Appointment
     suspend fun reschedule(hex: String, start: Instant, end: Instant, notify: Boolean = false): Appointment
     suspend fun respond(hex: String, response: Response, address: String? = null, comment: String = ""): Appointment
+    suspend fun invitation(message: String, calendar: String = ""): Appointment?
     suspend fun cancel(hex: String, reason: String = "", notify: Boolean = false): Appointment
     suspend fun remove(hex: String, notify: Boolean = false)
     suspend fun importIcs(text: String, calendar: String = ""): List<Appointment>
@@ -147,10 +148,11 @@ event with an organizer of the account (0.8.1; before, such events had no
 `ORGANIZER` and `notify` sent nothing).
 
 Attendees hear nothing unless asked. Pass `notify = true` and, for an event
-the account organizes, the server sends each attendee an iTIP message: by
-mail to an address elsewhere, into the CalDAV scheduling inbox for an
-account on the same server (which the REST API does not list yet, so the
-suite apps do not show those invitations):
+the account organizes, the server sends each attendee an iTIP message by
+mail (iMIP, a `text/calendar` part, Subject `Invitation: <title>`); an
+account on the same server also gets it in its CalDAV scheduling inbox.
+Servers before local invitations (adukilabs/aduki) filed it in that inbox
+only:
 
 - `create(request, notify = true)`, `update(..., notify = true)` and
   `reschedule(..., notify = true)` send a REQUEST (`"notify": true` in the
@@ -162,6 +164,24 @@ suite apps do not show those invitations):
 The flag is kept in the outbox entry, so a write made offline notifies when it
 is sent. Nothing is sent for an event the account does not organize, or one
 without attendees.
+
+### Invitations that arrive by mail
+
+```kotlin
+val event = client.scheduling.invitation(message.hex)        // null: no invitation in it
+client.scheduling.respond(event!!.hex, Response.Accepted)   // the organizer gets a REPLY
+```
+
+`invitation` reads the message source (`Mail.source`) and its calendar part
+(`Imip.read`: `text/calendar`, or an `application/ics` attachment; base64 or
+quoted-printable). A REQUEST creates the event in `calendar` (the default
+one when blank) or brings the stored event with that UID up to the
+organizer's version: the new time of a reschedule, the `STATUS:CANCELLED` of
+a cancellation. An older `SEQUENCE` than the stored event's changes nothing.
+A CANCEL marks the stored event cancelled. A REPLY, a message without a
+calendar part, or a CANCEL of an event that is not stored gives null. The
+event is an ordinary event of the account; `respond` answers it, and an
+organizer on Aduki Mail sees the answer on their event at once.
 
 ### Occurrences in a range
 
