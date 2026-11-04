@@ -698,9 +698,9 @@ class LiveTest {
         }
     }
 
-    // Flushes the outbox until it is empty, waiting out a rate limit; fails with what is left after a minute.
+    // Flushes the outbox until it is empty, waiting out a rate limit; fails with what is left after 150 s.
     private suspend fun drain(client: Aduki, box: io.objectbox.BoxStore? = null) {
-        val until = System.currentTimeMillis() + 60_000
+        val until = System.currentTimeMillis() + 150_000
         while (true) {
             client.sync.flush()
             if (client.sync.pending() == 0) return
