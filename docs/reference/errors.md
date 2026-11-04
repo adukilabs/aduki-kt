@@ -91,7 +91,12 @@ call), and `CancellationException`; nothing else. Background work reports to
 `Aduki.fault` instead of throwing. See [Failure handling](../resilience.md).
 
 Sign-in messages start with Aduki ID's error kind where it sent one, for
-example `auth.factor: ...`.
+example `auth.factor: ...`. For the one message a sign-in screen shows, read
+the failure with `SignInFailure.of(e)` (0.8.1): `Credentials` (Aduki ID
+answers a wrong password and a wrong authenticator or backup code alike,
+`401 auth.invalid`, so it cannot say which), `NeedsCode` (`auth.factor`),
+`Limited(retryAfter)` (`429`; five wrong codes hold the account for 15
+minutes), `Offline`, `Proof` or `Other`.
 
 ---
 
