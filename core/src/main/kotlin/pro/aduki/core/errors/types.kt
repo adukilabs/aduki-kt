@@ -80,6 +80,18 @@ sealed class AdukiException(
          * not an owner, so the name and photo cannot be changed.
          */
         val locked: Boolean get() = status == 403 && (kind == "locked" || kind.endsWith(".locked"))
+
+        /**
+         * True for a 403 whose `details.kind` is `calendar.readonly`: a write
+         * to a read-only calendar (the "Birthdays & dates" calendar) or its
+         * events, or deleting that calendar.
+         */
+        val readonly: Boolean
+            get() = status == 403 && details != null && READONLY.containsMatchIn(details)
+
+        private companion object {
+            val READONLY = Regex("\"kind\"\\s*:\\s*\"calendar\\.readonly\"")
+        }
     }
 
     /** The person refused an authorization (device grant `access_denied`). */

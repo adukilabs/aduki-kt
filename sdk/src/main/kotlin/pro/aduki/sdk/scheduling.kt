@@ -7,11 +7,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import pro.aduki.core.errors.AdukiException
 import pro.aduki.core.errors.Faults
 import pro.aduki.core.models.BookRequest
 import pro.aduki.core.models.BookingRecord
 import pro.aduki.core.models.Availability
 import pro.aduki.core.models.CalendarRecord
+import pro.aduki.core.models.ContactDates
 import pro.aduki.core.models.AppointmentRecord
 import pro.aduki.core.models.EventChanges
 import pro.aduki.core.models.EventRequest
@@ -40,6 +42,11 @@ import java.time.Instant
  * iCalendar object. Writes throw `IllegalStateException("no local store")`
  * without `Aduki.Builder.store`. Services are the account's booking pages
  * (`/user/pages`) and are read and written online.
+ *
+ * The "Birthdays & dates" calendar ([CalendarRecord.dates]) is read-only:
+ * event writes to it and removing it throw [AdukiException.Api] with
+ * [AdukiException.Api.readonly] true, here before anything is stored or
+ * queued, or from the server.
  */
 class Scheduling internal constructor(
     private val client: Aduki,
@@ -52,6 +59,20 @@ class Scheduling internal constructor(
     private fun local(): ScheduleEngine = engine ?: throw IllegalStateException("no local store")
 
     private fun api(): NetScheduling = net ?: throw IllegalStateException("no scheduling client")
+
+    // Refuses a write to a calendar known to be read-only, as the server would.
+    private fun writable(calendar: String?) {
+        val record = calendar?.trim()?.ifEmpty { null }?.let { hex -> _calendars.value.find { it.hex == hex } } ?: return
+        if (record.writable) return
+        throw AdukiException.Api(
+            status = 403,
+            kind = "access.denied",
+            message = "The calendar ${record.name.ifBlank { record.hex }} is read-only",
+            details = """{"kind":"calendar.readonly"}"""
+        )
+    }
+
+    private fun event(hex: String) = writable(get(hex)?.calendar)
 
     // Sends what was queued; a failure stays queued for the next flush.
     private suspend fun flush() {
@@ -132,6 +153,7 @@ class Scheduling internal constructor(
 
     /** Deletes a calendar and its events from the server. */
     suspend fun removeCalendar(hex: String) = client.io {
+        writable(hex)
         api().removeCalendar(hex)
         _calendars.value = _calendars.value.filterNot { it.hex == hex }
     }
@@ -180,18 +202,18 @@ class Scheduling internal constructor(
      * invites the attendees (iTIP REQUEST) when the account organizes it.
      */
     suspend fun create(request: EventRequest, notify: Boolean = false): Appointment =
-        client.io { local().create(request, notify) }.also { flush() }
+        client.io { writable(request.calendar); local().create(request, notify) }.also { flush() }
 
     /**
      * Edits an event; null fields of [changes] keep their value. With
      * [notify], the server sends the changed event to the attendees.
      */
     suspend fun update(hex: String, changes: EventChanges, notify: Boolean = false): Appointment =
-        client.io { local().update(hex, changes, notify) }.also { flush() }
+        client.io { event(hex); local().update(hex, changes, notify) }.also { flush() }
 
     /** Moves an event to [start] .. [end]; [notify] as for [update]. */
     suspend fun reschedule(hex: String, start: Instant, end: Instant, notify: Boolean = false): Appointment =
-        client.io { local().reschedule(hex, start, end, notify) }.also { flush() }
+        client.io { event(hex); local().reschedule(hex, start, end, notify) }.also { flush() }
 
     /**
      * Edits a single occurrence of a recurring event at [occurrenceStart]
@@ -204,6 +226,7 @@ class Scheduling internal constructor(
         changes: EventChanges,
         notify: Boolean = false
     ): Appointment = client.io {
+        event(hex)
         local().updateOccurrence(hex, occurrenceStart, changes, notify)
     }.also { flush() }
 
@@ -217,6 +240,7 @@ class Scheduling internal constructor(
         occurrenceStart: Instant,
         notify: Boolean = false
     ): Appointment = client.io {
+        event(hex)
         local().cancelOccurrence(hex, occurrenceStart, notify)
     }.also { flush() }
 
@@ -231,6 +255,7 @@ class Scheduling internal constructor(
         changes: EventChanges,
         notify: Boolean = false
     ): Appointment = client.io {
+        event(hex)
         local().updateFollowing(hex, occurrenceStart, changes, notify)
     }.also { flush() }
 
@@ -242,6 +267,7 @@ class Scheduling internal constructor(
      * stored.
      */
     suspend fun respond(hex: String, response: Response, address: String? = null, comment: String = ""): Appointment = client.io {
+        event(hex)
         val engine = local()
         val me = address ?: client.me()?.email?.ifBlank { null }
             ?: throw IllegalStateException("the account's address is unknown: pass address")
@@ -255,11 +281,11 @@ class Scheduling internal constructor(
      * with `notify` sends a CANCEL).
      */
     suspend fun cancel(hex: String, reason: String = "", notify: Boolean = false): Appointment =
-        client.io { local().cancel(hex, reason, notify) }.also { flush() }
+        client.io { event(hex); local().cancel(hex, reason, notify) }.also { flush() }
 
     /** Deletes an event; with [notify], the attendees get an iTIP CANCEL when the account organizes it. */
     suspend fun remove(hex: String, notify: Boolean = false) {
-        client.io { local().remove(hex, notify) }
+        client.io { event(hex); local().remove(hex, notify) }
         flush()
     }
 
@@ -269,7 +295,7 @@ class Scheduling internal constructor(
      * server takes one event per request.
      */
     suspend fun importIcs(text: String, calendar: String = ""): List<Appointment> =
-        client.io { local().import(text, calendar) }.also { flush() }
+        client.io { writable(calendar); local().import(text, calendar) }.also { flush() }
 
     /** The events with [hexes] (every stored event when null) as one iCalendar file. */
     fun exportIcs(hexes: List<String>? = null): String = local().export(hexes)
@@ -462,6 +488,38 @@ class Scheduling internal constructor(
 
     /** Stops following [region]. Throws `AdukiException` (`Network` with `code` 404 when it was not followed). */
     suspend fun unfollowHoliday(region: String) = client.io { api().unfollowHoliday(region) }
+
+    // ── Birthdays and dates ──────────────────────────────────────────
+
+    /**
+     * The "Birthdays & dates" setting (`GET /user/calendars/dates`): whether
+     * the server builds the calendar from the contacts' dates, the reminder,
+     * and the calendar's hex. Throws `AdukiException` on failure.
+     */
+    suspend fun contactDates(): ContactDates = client.io { api().contactDates() }
+
+    /**
+     * Turns "Birthdays & dates" on or off, alarm unchanged (`PATCH
+     * /user/calendars/dates`). A null [enabled] changes nothing. Off removes
+     * the calendar and its events; on builds it again with the same hex.
+     * [calendars] is read again afterwards.
+     */
+    suspend fun updateContactDates(enabled: Boolean? = null): ContactDates =
+        client.io { api().updateContactDates(enabled) }.also { refresh(enabled) }
+
+    /**
+     * Sets the reminder of "Birthdays & dates" to [alarm] (null: no
+     * reminder), and turns it on or off when [enabled] is not null. Throws
+     * `AdukiException` (`Network` with `code` 422 for a refused value).
+     */
+    suspend fun updateContactDates(enabled: Boolean? = null, alarm: ContactDates.Alarm?): ContactDates =
+        client.io { api().updateContactDates(enabled, alarm) }.also { refresh(enabled) }
+
+    // The dates calendar comes or goes with the setting: read the list again.
+    private suspend fun refresh(enabled: Boolean?) {
+        if (enabled == null) return
+        quiet("calendar list") { api().calendars() }?.let { _calendars.value = it }
+    }
 
     private suspend fun <T> quiet(where: String, block: () -> T): T? = try {
         client.io { block() }
