@@ -983,7 +983,10 @@ class Aduki internal constructor(
          * the Android Keystore provider is used; on a plain JVM nothing is
          * sealed unless this is called, and a `Provider` there keeps its keys
          * in memory only, so use it for tests. The vault is process-wide and is
-         * installed by [build], before the database is opened. Android Keystore
+         * installed by [build], before the database is opened. Without this
+         * call, [build] installs the platform vault only while none is
+         * installed, so a second client keeps the first one's vault and its
+         * blind-index keys. Android Keystore
          * behaviour is unverified until a device run.
          */
         fun secureStore(provider: pro.aduki.crypto.keystore.Provider) = apply { this.secureStore = provider }
@@ -1037,7 +1040,7 @@ class Aduki internal constructor(
             require(apiKey.isNotBlank() || activeToken.isNotBlank() || (tokenStore != null && storedTokens?.refresh?.isNotBlank() == true)) {
                 "Either API key or JWT token must not be blank"
             }
-            (secureStore?.let { pro.aduki.crypto.cipher.Vault(it) } ?: pro.aduki.crypto.cipher.Vault.platform())
+            vault(secureStore, pro.aduki.store.box.Sealing.vault()) { pro.aduki.crypto.cipher.Vault.platform() }
                 ?.let { pro.aduki.store.box.Sealing.install(it) }
             val local = store ?: directory?.let { Factory.build(it) }
             val options = Options(
@@ -1073,6 +1076,24 @@ class Aduki internal constructor(
     }
 
     companion object {
+        /**
+         * The vault [Builder.build] installs, or null to keep [installed]:
+         * one from [secureStore] when given, else the platform's only while
+         * none is installed. A later client (another account's, or the one
+         * inside `signIn`, `exchange` and `register`) keeps the installed
+         * vault and the blind-index keys its store attached; a fresh one
+         * would have none, and contacts would be written without an index.
+         */
+        internal fun vault(
+            secureStore: pro.aduki.crypto.keystore.Provider?,
+            installed: pro.aduki.crypto.cipher.Vault?,
+            platform: () -> pro.aduki.crypto.cipher.Vault?
+        ): pro.aduki.crypto.cipher.Vault? = when {
+            secureStore != null -> pro.aduki.crypto.cipher.Vault(secureStore)
+            installed != null -> null
+            else -> platform()
+        }
+
         // Aduki ID calls are small JSON exchanges: besides the connect, read
         // and write timeouts, the whole call is bounded, so a server that
         // trickles an answer cannot hold a sign-in or a renewal (which holds
