@@ -166,6 +166,39 @@ class WorkerTest {
     }
 
     @Test
+    fun aSendThatFoundNoNetworkGoesOutOnTheNextDrain() = runBlocking {
+        var online = false
+        val worker = Worker(
+            manager,
+            Dispatcher {
+                if (!online) throw pro.aduki.core.errors.AdukiException.Network("Network request failed", java.net.UnknownHostException("mail.aduki.pro"))
+            },
+            jitter = Jitter(base = 10_000, max = 30_000)
+        )
+        manager.enqueue("send", "msg_1".toByteArray(Charsets.UTF_8))
+        repeat(3) { assertEquals(0, worker.drain()) }
+        val held = manager.pending().single()
+        assertEquals(3, held.attempts)
+        assertTrue("no backoff without an answer", held.nextRetry <= System.currentTimeMillis())
+        online = true
+        assertEquals("the network is back: it goes out at once", 1, worker.drain())
+        assertTrue(manager.pending().isEmpty())
+    }
+
+    @Test
+    fun aServerErrorStillBacksOff() = runBlocking {
+        val worker = Worker(
+            manager,
+            Dispatcher { throw pro.aduki.core.errors.AdukiException.Network("HTTP error 502", code = 502) },
+            jitter = Jitter(base = 10_000, max = 30_000)
+        )
+        manager.enqueue("flag", "msg_1:4".toByteArray(Charsets.UTF_8))
+        val before = System.currentTimeMillis()
+        assertEquals(0, worker.drain())
+        assertTrue(manager.pending().single().nextRetry >= before + 10_000)
+    }
+
+    @Test
     fun aHugeRetryAfterIsCappedAtAnHour() = runBlocking {
         val worker = Worker(
             manager,

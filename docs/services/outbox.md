@@ -20,8 +20,11 @@ sequenceDiagram
     activate Worker
     Worker->>Store: Next pending entry (oldest first)
     Worker->>Server: HttpDispatcher: REST call (send carries Idempotency-Key)
-    alt Transient failure (network, 5xx, 408, 409, 429)
-        Worker->>Store: attempts++, nextRetry = now + jitter
+    alt Server not reached (no network, DNS, timeout)
+        Worker->>Store: attempts++, nextRetry = now (the next drain tries again at once)
+        Worker->>Worker: Stop: later entries wait (order is preserved)
+    else Transient failure (5xx, 408, 409, 429)
+        Worker->>Store: attempts++, nextRetry = now + jitter (at least Retry-After)
         Worker->>Worker: Stop: later entries wait (order is preserved)
     else Rejected for good (5xx mailbox full, invalid recipient, unrecoverable 4xx)
         Worker->>Store: Mark entry failed (status = failed, code, reason), clear dirty
