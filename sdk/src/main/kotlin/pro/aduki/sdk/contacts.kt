@@ -202,8 +202,9 @@ class Contacts internal constructor(
      * Performs incremental delta sync for address book.
      */
     suspend fun sync(tenant: String = ""): Boolean = client.io {
-        val targetTenant = tenant.ifBlank { client.me()?.tenant ?: "" }
-        return@io engine?.sync(targetTenant) ?: false
+        val me = client.me()
+        val targetTenant = tenant.ifBlank { me?.tenant ?: "" }
+        return@io engine?.sync(targetTenant, me?.user.orEmpty()) ?: false
     }
 
     /**

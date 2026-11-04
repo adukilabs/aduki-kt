@@ -42,6 +42,35 @@ class ContactTest {
     }
 
     @Test
+    fun anotherAccountOnTheSameStoreStartsWithAFullListing() = runBlocking {
+        val records = mutableMapOf<String, Sync>()
+        val keyed = object : ContactStorage by storage {
+            override fun getSync(target: String): Sync? = records[target]
+            override fun putSync(sync: Sync) { records[sync.target] = sync }
+        }
+        val asked = mutableListOf<String>()
+        val transport = ContactTransport { _, ctag ->
+            asked += ctag
+            if (ctag.isEmpty()) {
+                ContactDelta(changed = listOf(ContactEntity(hex = "b1", name = "Bea", updated = 1L)), removed = emptyList(), ctag = "bob_1", full = true)
+            } else {
+                ContactDelta(changed = emptyList(), removed = emptyList(), ctag = ctag)
+            }
+        }
+        val engine = Contact(keyed, transport)
+        records["contacts/ada"] = Sync(target = "contacts/ada", token = "ada_9")
+
+        engine.sync("t", "bob")
+        assertEquals("Ada's cursor is not used for Bob", listOf(""), asked)
+        assertEquals(setOf("b1"), storage.contacts.keys)
+        assertEquals("bob_1", records["contacts/bob"]?.token)
+        assertEquals("ada_9", records["contacts/ada"]?.token)
+
+        engine.sync("t", "ada")
+        assertEquals(listOf("", "ada_9"), asked)
+    }
+
+    @Test
     fun testContactDeltaSync() = runBlocking {
         val transport = ContactTransport { _, ctag ->
             assertEquals("", ctag)

@@ -92,9 +92,10 @@ class Sync internal constructor(
             }
             client.mail.wake()
             if (contactEngine != null) {
-                val tenant = client.me()?.tenant ?: ""
+                val me = client.me()
+                val tenant = me?.tenant ?: ""
                 if (tenant.isNotBlank()) {
-                    contactEngine.sync(tenant)
+                    contactEngine.sync(tenant, me?.user.orEmpty())
                 }
             }
             current.value = SyncState(synced = System.currentTimeMillis(), missing = missing)

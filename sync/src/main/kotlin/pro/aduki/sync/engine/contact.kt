@@ -181,8 +181,17 @@ class Contact(
      * Throws what the transport throws; [progress] is then `Failed`, and the
      * pages applied before the failure stay.
      */
-    suspend fun sync(tenant: String): Boolean = lock.withLock {
-        val record = storage.getSync("contacts") ?: Sync(target = "contacts", token = "")
+    suspend fun sync(tenant: String): Boolean = sync(tenant, "")
+
+    /**
+     * [sync] for the account [account] (its user hex): the sync cursor is
+     * kept per account, so a store that another account synced before (an
+     * in-process account switch) starts with a full listing, which also
+     * drops the other account's contacts. Blank keeps the one shared cursor.
+     */
+    suspend fun sync(tenant: String, account: String): Boolean = lock.withLock {
+        val target = if (account.isBlank()) "contacts" else "contacts/$account"
+        val record = storage.getSync(target) ?: Sync(target = target, token = "")
         // A queued group-wide write (no hex) touches contacts this cannot
         // tell apart: apply nothing until it is sent.
         if ("" in storage.pending()) return@withLock true
