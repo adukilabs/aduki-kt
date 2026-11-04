@@ -113,7 +113,14 @@ object Events {
     }
 
     /** A new event object for [request]; [uid] defaults to a random one. */
-    fun build(request: EventRequest, uid: String = "${UUID.randomUUID()}@aduki"): String {
+    fun build(request: EventRequest, uid: String = "${UUID.randomUUID()}@aduki"): String = build(request, uid, "")
+
+    /**
+     * A new event object for [request], organized by [organizer] (the
+     * account's address) when it has attendees: Aduki Mail sends the
+     * invitations (iTIP) only for an event with an `ORGANIZER` of the account.
+     */
+    fun build(request: EventRequest, uid: String, organizer: String): String {
         val vevent = Component("VEVENT")
         vevent.add(Property("UID", uid))
         vevent.add(Property("DTSTAMP", STAMP.format(Instant.now())))
@@ -124,6 +131,7 @@ object Events {
         vevent.set("DESCRIPTION", request.notes)
         if (request.rrule.isNotBlank()) vevent.add(Property("RRULE", request.rrule.trim()))
         attendees(vevent, request.attendees)
+        organize(vevent, organizer)
         alarms(vevent, request.reminders)
         return wrap(listOf(vevent))
     }
@@ -132,7 +140,13 @@ object Events {
      * [ical] with [changes] applied to its master VEVENT, `SEQUENCE` bumped
      * and `DTSTAMP` renewed.
      */
-    fun change(ical: String, changes: EventChanges): String = edit(ical) { vevent ->
+    fun change(ical: String, changes: EventChanges): String = change(ical, changes, "")
+
+    /**
+     * [change], with [organizer] set as the `ORGANIZER` when the event has
+     * attendees and none yet (attendees added to a personal event).
+     */
+    fun change(ical: String, changes: EventChanges, organizer: String): String = edit(ical) { vevent ->
         val now = read(vevent)
         changes.title?.let { vevent.set("SUMMARY", it) }
         changes.location?.let { vevent.set("LOCATION", it) }
@@ -145,6 +159,7 @@ object Events {
         }
         changes.rrule?.let { if (it.isBlank()) vevent.remove("RRULE") else vevent.set(Property("RRULE", it.trim())) }
         changes.attendees?.let { attendees(vevent, it) }
+        organize(vevent, organizer)
         changes.reminders?.let { alarms(vevent, it) }
         bump(vevent)
         true
@@ -498,6 +513,15 @@ object Events {
             kept[email] ?: Property("ATTENDEE", "mailto:$email", listOf("PARTSTAT" to "NEEDS-ACTION", "RSVP" to "TRUE"))
         }
         vevent.properties.addAll(minOf(at, vevent.properties.size), lines)
+    }
+
+    // `ORGANIZER` [organizer] before the attendees, when there are some and no organizer yet.
+    private fun organize(vevent: Component, organizer: String) {
+        val email = organizer.trim().lowercase()
+        if (email.isEmpty() || vevent.first("ORGANIZER") != null) return
+        val at = vevent.properties.indexOfFirst { it.name == "ATTENDEE" }
+        if (at < 0) return
+        vevent.properties.add(at, Property("ORGANIZER", "mailto:$email"))
     }
 
     private fun address(raw: String): String = raw.trim().let {

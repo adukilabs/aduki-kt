@@ -140,9 +140,17 @@ account is not an attendee; `422`), the answered object is stored with
 
 ### Telling the attendees
 
+An event created with attendees, or given attendees by `update`, is
+organized by the account: the SDK writes `ORGANIZER:mailto:` with the
+account's address (`me().email`), since the server sends iTIP only for an
+event with an organizer of the account (0.8.1; before, such events had no
+`ORGANIZER` and `notify` sent nothing).
+
 Attendees hear nothing unless asked. Pass `notify = true` and, for an event
-the account organizes, the server sends each attendee an iTIP message by
-mail:
+the account organizes, the server sends each attendee an iTIP message: by
+mail to an address elsewhere, into the CalDAV scheduling inbox for an
+account on the same server (which the REST API does not list yet, so the
+suite apps do not show those invitations):
 
 - `create(request, notify = true)`, `update(..., notify = true)` and
   `reschedule(..., notify = true)` send a REQUEST (`"notify": true` in the

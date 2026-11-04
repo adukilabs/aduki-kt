@@ -1162,4 +1162,108 @@ class LiveTest {
         assertFalse("the signer's session ended with the group", renewed)
         mail.close()
     }
+    /**
+     * T5-LIVE-30 (suite#288, Contacts): birthday reminders. A contact with a
+     * birthday shows in the read-only Birthdays & dates calendar with the
+     * chosen reminder; the setting is put back afterwards.
+     */
+    @Test
+    fun birthdayReminders() = runBlocking<Unit> {
+        val client = live(store = true)
+        val before = client.scheduling.contactDates()
+        val tag = "bd${System.currentTimeMillis()}"
+        val day = java.time.LocalDate.now(java.time.ZoneOffset.UTC).plusDays(10)
+        var hex: String? = null
+        try {
+            val dates = client.scheduling.updateContactDates(true, pro.aduki.core.models.ContactDates.Alarm.DayBefore)
+            assertTrue(dates.enabled)
+            assertEquals(pro.aduki.core.models.ContactDates.Alarm.DayBefore, dates.alarm)
+            val calendar = client.scheduling.calendars().first { it.dates }
+            assertFalse("the dates calendar is read-only", calendar.writable)
+            val made = client.contacts.create(pro.aduki.core.models.Card(name = "Birthday $tag", birthday = "1990-%02d-%02d".format(day.monthValue, day.dayOfMonth)))
+            client.sync.flush()
+            assertEquals(0, client.sync.pending())
+            hex = withTimeout(10_000) {
+                client.contacts.observe()!!.first { list -> list.any { it.uid == made.uid && !it.hex.startsWith("contact_") } }
+            }.first { it.uid == made.uid }.hex
+            var event: pro.aduki.core.models.AppointmentRecord? = null
+            repeat(15) {
+                if (event != null) return@repeat
+                event = client.schedulingApi.events().firstOrNull { it.calendar == calendar.hex && it.ical.contains(hex!!) }
+                if (event == null) Thread.sleep(2_000)
+            }
+            val found = event ?: error("no birthday event for the contact")
+            assertTrue(found.ical.contains("RRULE:FREQ=YEARLY"))
+            assertTrue("a reminder the day before: ${found.ical}", found.ical.contains("TRIGGER") && (found.ical.contains("-P1D") || found.ical.contains("-PT15H") || found.ical.contains("-PT24H") || found.ical.contains("-P1DT")))
+        } finally {
+            hex?.let { client.contacts.delete(it) }
+            client.sync.flush()
+            client.scheduling.updateContactDates(before.enabled, before.alarm)
+            client.close()
+        }
+        assertEquals(before, live().scheduling.contactDates().copy(calendar = before.calendar))
+    }
+    /**
+     * T5-LIVE-31 (suite#288, Calendar services): create, edit, pause, resume,
+     * booking link, book for oneself, confirm, reschedule, done, cancel with
+     * a reason, no-show, stats, delete. Needs a package that allows booking
+     * pages (`schedule.pages`); skipped while the server refuses with
+     * `plan.limit`.
+     */
+    @Test
+    fun servicesAndBookings() = runBlocking<Unit> {
+        val client = live()
+        val tag = System.currentTimeMillis().toString(36)
+        val service = try {
+            client.scheduling.createService(pro.aduki.core.models.ServiceRequest(name = "Live $tag", slug = "live-$tag", lengths = listOf(30), notice = 0))
+        } catch (e: AdukiException.Auth) {
+            assumeTrue("no package allows booking pages for this account: ${e.message}", "plan.limit" !in e.message.orEmpty())
+            throw e
+        } catch (e: AdukiException.Network) {
+            assumeTrue("no package allows booking pages for this account: ${e.message}", e.code != 403)
+            throw e
+        }
+        try {
+            assertEquals("live-$tag", service.slug)
+            val edited = client.scheduling.updateService(service.hex, pro.aduki.core.models.ServiceRequest(name = "Live $tag edited", colour = "#1A73E8"))
+            assertEquals("Live $tag edited", edited.name)
+            assertFalse("paused", client.scheduling.updateService(service.hex, pro.aduki.core.models.ServiceRequest(paused = true)).active)
+            assertTrue("resumed", client.scheduling.updateService(service.hex, pro.aduki.core.models.ServiceRequest(paused = false)).active)
+            assertTrue(client.scheduling.bookingUrl(service).endsWith("/book/pages/${service.hex}"))
+
+            val now = Instant.now()
+            val slots = client.scheduling.slots(service.hex, now.plusSeconds(86_400), now.plusSeconds(15 * 86_400)).filter { it.available }
+            assertTrue("open slots: ${slots.size}", slots.size >= 4)
+            fun at(i: Int) = Instant.parse(slots[i * (slots.size / 4)].start)
+            val mine = { start: Instant -> pro.aduki.core.models.BookRequest(start = start, notes = "live $tag") }
+
+            val first = client.scheduling.reserve(service.hex, mine(at(0)))
+            assertEquals("confirmed", client.scheduling.updateBooking(first.hex, "confirmed").state)
+            val moved = client.scheduling.rescheduleBooking(first.hex, at(1))
+            assertNotEquals(first.hex, moved.hex)
+            assertEquals("cancelled", client.scheduling.booking(first.hex).state)
+            assertEquals("done", client.scheduling.updateBooking(moved.hex, "done").state)
+
+            val dropped = client.scheduling.reserve(service.hex, mine(at(2)))
+            val cancelled = client.scheduling.cancelBooking(dropped.hex, "live $tag reason")
+            assertEquals("cancelled", cancelled.state)
+            assertEquals("live $tag reason", cancelled.note)
+
+            val missed = client.scheduling.reserve(service.hex, mine(at(3)))
+            assertEquals("noshow", client.scheduling.updateBooking(missed.hex, "noshow").state)
+
+            val stats = client.scheduling.stats(service.hex, now.minusSeconds(86_400), now.plusSeconds(30 * 86_400))
+            println("live: stats $stats")
+            assertTrue(stats.done >= 1 && stats.noshow >= 1 && stats.cancelled >= 2)
+            assertTrue("no paid bookings, no revenue", stats.revenue.isEmpty())
+        } finally {
+            try {
+                client.scheduling.removeService(service.hex)
+            } catch (e: AdukiException) {
+                // One with bookings may not be deleted: leave it paused.
+                println("live: service kept paused: ${e.message}")
+                runCatching { client.scheduling.updateService(service.hex, pro.aduki.core.models.ServiceRequest(paused = true)) }
+            }
+        }
+    }
 }
