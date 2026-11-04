@@ -38,6 +38,10 @@ class BrokerTest {
     class Provider : SuiteBrokerService() {
         override val packages = listOf(MAIL, CALENDAR, CONTACTS)
         val asked = mutableListOf<Triple<String, String, String>>()
+        val removals = mutableListOf<String>()
+        override suspend fun removed(hex: String) {
+            removals += hex
+        }
         override suspend fun hasSession(hex: String) = hex == "00a1"
         override suspend fun handoff(hex: String, target: String, jkt: String): Handoff? {
             asked += Triple(hex, target, jkt)
@@ -177,13 +181,17 @@ class BrokerTest {
     fun removingAnAccountTellsTheSiblingsWhileItsEntryIsStillThere() = runBlocking {
         val directory = AccountDirectory(context)
         directory.upsert(pro.aduki.core.models.AccountProfile("00b2", "ada@acme.example", group = "g2"), linked = false)
-        val seen = mutableListOf<Boolean>()
+        val seen = mutableListOf<Pair<Int, Boolean>>()
         val link = object : BrokerLink {
             override fun has(pkg: String) = pkg == CALENDAR
             override suspend fun <T> bind(pkg: String, block: (IBinder) -> T?): T? {
                 val binder = object : android.os.Binder() {
                     override fun onTransact(c: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
-                        if (c == SuiteBrokerService.SIGNED_OUT) seen += directory.find("00b2") != null
+                        data.enforceInterface(SuiteBrokerService.DESCRIPTOR)
+                        val first = data.readString()
+                        if (c == SuiteBrokerService.REMOVED) assertEquals("00b2", first)
+                        if (c == SuiteBrokerService.SIGNED_OUT) assertEquals("g2", first)
+                        seen += c to (directory.find("00b2") != null)
                         reply!!.writeInt(SuiteBrokerService.OK)
                         return true
                     }
@@ -197,8 +205,81 @@ class BrokerTest {
         }, broker)
 
         assertTrue(center.removeFromDevice("00b2"))
-        assertEquals("the sibling found the entry when told", listOf(true), seen)
+        assertEquals(
+            "the group, then the account, both while the entry was there",
+            listOf(SuiteBrokerService.SIGNED_OUT to true, SuiteBrokerService.REMOVED to true),
+            seen
+        )
         assertNull(directory.find("00b2"))
+    }
+
+    @Test
+    fun aDeviceSignOutOfOneAccountTellsTheSiblingsItWasRemoved() = runBlocking {
+        val directory = AccountDirectory(context)
+        directory.upsert(pro.aduki.core.models.AccountProfile("00c3", "eve@acme.example", group = "g3"), linked = false)
+        val seen = mutableListOf<Pair<Int, Boolean>>()
+        val link = object : BrokerLink {
+            override fun has(pkg: String) = pkg == CALENDAR
+            override suspend fun <T> bind(pkg: String, block: (IBinder) -> T?): T? = block(object : android.os.Binder() {
+                override fun onTransact(c: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                    seen += c to (directory.find("00c3") != null)
+                    reply!!.writeInt(SuiteBrokerService.OK)
+                    return true
+                }
+            })
+        }
+        val center = AccountsCenter(context, directory, object : AccountsCenter.Sessions {
+            override fun client(hex: String) = null
+        }, SuiteBroker(context, listOf(CALENDAR), backoff = 0, link = link))
+
+        center.signOutDevice("00c3")
+        assertEquals(listOf(SuiteBrokerService.SIGNED_OUT to true, SuiteBrokerService.REMOVED to true), seen)
+        assertNull(directory.find("00c3"))
+    }
+
+    @Test
+    fun theRemovalNoticeReachesTheAppOnlyFromASibling() {
+        val controller = Robolectric.buildService(Provider::class.java).create()
+        val service = controller.get()
+        val binder = service.onBind(null)
+        fun removed(hex: String): Int {
+            val data = Parcel.obtain()
+            val reply = Parcel.obtain()
+            data.writeInterfaceToken(SuiteBrokerService.DESCRIPTOR)
+            data.writeString(hex)
+            data.writeString("")
+            binder.transact(SuiteBrokerService.REMOVED, data, reply, 0)
+            reply.setDataPosition(0)
+            return reply.readInt().also { data.recycle(); reply.recycle() }
+        }
+
+        ShadowBinder.setCallingUid(20_002)
+        assertEquals(SuiteBrokerService.REFUSED, removed("00a1"))
+        assertTrue(service.removals.isEmpty())
+        ShadowBinder.setCallingUid(20_001)
+        assertEquals(SuiteBrokerService.OK, removed("00a1"))
+        assertEquals(listOf("00a1"), service.removals)
+        ShadowBinder.reset()
+    }
+
+    @Test
+    fun aSiblingThatDoesNotKnowTheRemovalNoticeIsLeftOut() = runBlocking {
+        sign(MAIL, release)
+        // A 0.8.0 sibling: an unknown transaction is not handled (transact returns false).
+        val old = object : BrokerLink {
+            override fun has(pkg: String) = true
+            override suspend fun <T> bind(pkg: String, block: (IBinder) -> T?): T? = block(object : android.os.Binder() {
+                override fun onTransact(c: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                    if (c == SuiteBrokerService.REMOVED) return false
+                    reply!!.writeInt(SuiteBrokerService.OK)
+                    return true
+                }
+            })
+        }
+        val broker = SuiteBroker(context, listOf(MAIL, CALENDAR), backoff = 0, link = old)
+        assertTrue(broker.removed("00a1").isEmpty())
+        val current = SuiteBroker(context, listOf(MAIL, CALENDAR), backoff = 0, link = Fake(mapOf(MAIL to (SuiteBrokerService.OK to null), CALENDAR to (SuiteBrokerService.OK to null))))
+        assertEquals(listOf(MAIL, CALENDAR), current.removed("00a1"))
     }
 
     companion object {

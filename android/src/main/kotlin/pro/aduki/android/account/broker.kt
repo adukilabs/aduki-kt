@@ -88,6 +88,18 @@ abstract class SuiteBrokerService : Service() {
     /** A sibling asked every app to switch to [hex] ("Use in all Aduki apps"). */
     protected open suspend fun activate(hex: String) {}
 
+    /**
+     * A sibling removed the account [hex] from this device ("Remove from
+     * this device", or a device sign-out of that account): end this app's
+     * own session of it (it may be in another device group than the
+     * sibling's, e.g. after a password sign-in here), forget it and drop
+     * what the app keeps for it. Called before the sibling removes the
+     * entry, and the sibling waits for the answer. Default: nothing.
+     * Siblings on aduki-kt 0.8.0 do not know this call (it reaches them as
+     * an unknown transaction and is ignored).
+     */
+    protected open suspend fun removed(hex: String) {}
+
     /** How long one call may take, ms. */
     protected open val timeout: Long = 15_000
 
@@ -96,7 +108,7 @@ abstract class SuiteBrokerService : Service() {
     private val binder = object : Binder() {
         override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
             if (code == INTERFACE_TRANSACTION) return super.onTransact(code, data, reply, flags)
-            if (code !in PING..ACTIVATE) return super.onTransact(code, data, reply, flags)
+            if (code !in PING..REMOVED) return super.onTransact(code, data, reply, flags)
             data.enforceInterface(DESCRIPTOR)
             val caller = guard.admit(Binder.getCallingUid())
             if (caller == null) {
@@ -134,6 +146,7 @@ abstract class SuiteBrokerService : Service() {
                         }
                         SIGNED_OUT -> { signedOut(first); reply?.writeInt(OK) }
                         ACTIVATE -> { activate(first); reply?.writeInt(OK) }
+                        REMOVED -> { removed(first); reply?.writeInt(OK) }
                     }
                 } catch (e: CancellationException) {
                     throw e
@@ -164,6 +177,7 @@ abstract class SuiteBrokerService : Service() {
         internal const val HANDOFF = PING + 1
         internal const val SIGNED_OUT = PING + 2
         internal const val ACTIVATE = PING + 3
+        internal const val REMOVED = PING + 4
 
         internal const val OK = 0
         internal const val NO_SESSION = 1
@@ -279,6 +293,16 @@ class SuiteBroker(
 
     /** Asks every sibling to switch to [hex] ("Use in all Aduki apps"). */
     suspend fun activate(hex: String) = installed().forEach { call(it, SuiteBrokerService.ACTIVATE, hex, "") }
+
+    /**
+     * Tells every sibling that [hex] is being removed from this device
+     * ([SuiteBrokerService.removed]), one after another, waiting for each.
+     * Returns the siblings that confirmed; a sibling on aduki-kt 0.8.0 (it
+     * does not know the call), one not answering in time and one that
+     * failed are left out, so the app can tell those another way.
+     */
+    suspend fun removed(hex: String): List<String> =
+        installed().filter { call(it, SuiteBrokerService.REMOVED, hex, "")?.status == SuiteBrokerService.OK }
 
     internal class Answer(val status: Int, val flag: Boolean = false, val code: String? = null, val expiresIn: Long = 0)
 
