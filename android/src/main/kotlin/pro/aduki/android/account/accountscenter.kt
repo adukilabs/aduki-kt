@@ -213,6 +213,10 @@ class AccountsCenter(
      * its directory entry goes. It stays linked on the server. The app also
      * drops what it keeps per account (the phone book of that account, ...).
      *
+     * The siblings are told ([SuiteBrokerService.signedOut]) while the entry
+     * still exists, so they can find which of their accounts the group
+     * belongs to; told after, they find no entry and keep their sessions.
+     *
      * @throws AdukiException when Aduki ID refused or could not be reached;
      * the entry is kept then.
      */
@@ -227,9 +231,9 @@ class AccountsCenter(
                 .firstNotNullOfOrNull { other -> sessions.client(other.hex) }
                 ?.removeFromDevice(hex, group)
         }
+        group?.let { attempt { broker?.signedOut(it) } }
         directory.remove(hex)
         if (active() == hex) prefs.edit().remove(KEY).commit()
-        group?.let { attempt { broker?.signedOut(it) } }
         reload()
         return true
     }

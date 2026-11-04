@@ -2,6 +2,11 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
+## 0.8.1 (unreleased)
+
+- `AccountsCenter.removeFromDevice` tells the siblings (`SuiteBrokerService.signedOut(group)`) before it removes the account's entry. Before, the entry was already gone when a sibling looked up which of its accounts the group belonged to, so the siblings kept their sessions and the account stayed signed in there.
+- `Aduki.account()` reads `GET /v1/me` again when the client's session changed since the cached read. A client handed another account's tokens (`session.update`, as an app does when it switches accounts in process) returned the previous account's profile, and `endDevice()` then asked to end that account's device group with the new account's session, which ended nothing.
+
 ## 0.8.0 (2026-11-04)
 
 The suite sign-in protocol: one account directory per device, per-app sessions opened on demand from a signed-in sibling, and the Accounts Center. It needs Aduki ID with handoff `jkt`/`expires_in`, device groups, `GET /v1/me`, link tickets, the rich `GET /v1/center` and DPoP nonces (adukilabs/id#62). This is a minor release because sign-in, token clearing and reconcile change in substance. Source breaks: a new `AdukiException.Proof` subclass (an exhaustive `when` needs a branch), `pro.aduki:android` now depends on `pro.aduki:sdk`, and the old account calls are removed (see Removed below). See `docs/auth/suite.md`.

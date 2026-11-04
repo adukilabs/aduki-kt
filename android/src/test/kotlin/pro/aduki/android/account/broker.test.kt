@@ -173,6 +173,34 @@ class BrokerTest {
         assertTrue(fake.bound.isEmpty())
     }
 
+    @Test
+    fun removingAnAccountTellsTheSiblingsWhileItsEntryIsStillThere() = runBlocking {
+        val directory = AccountDirectory(context)
+        directory.upsert(pro.aduki.core.models.AccountProfile("00b2", "ada@acme.example", group = "g2"), linked = false)
+        val seen = mutableListOf<Boolean>()
+        val link = object : BrokerLink {
+            override fun has(pkg: String) = pkg == CALENDAR
+            override suspend fun <T> bind(pkg: String, block: (IBinder) -> T?): T? {
+                val binder = object : android.os.Binder() {
+                    override fun onTransact(c: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                        if (c == SuiteBrokerService.SIGNED_OUT) seen += directory.find("00b2") != null
+                        reply!!.writeInt(SuiteBrokerService.OK)
+                        return true
+                    }
+                }
+                return block(binder)
+            }
+        }
+        val broker = SuiteBroker(context, listOf(context.packageName, CALENDAR), backoff = 0, link = link)
+        val center = AccountsCenter(context, directory, object : AccountsCenter.Sessions {
+            override fun client(hex: String) = null
+        }, broker)
+
+        assertTrue(center.removeFromDevice("00b2"))
+        assertEquals("the sibling found the entry when told", listOf(true), seen)
+        assertNull(directory.find("00b2"))
+    }
+
     companion object {
         const val MAIL = "pro.aduki.mail"
         const val CALENDAR = "pro.aduki.calendar"

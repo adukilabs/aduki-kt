@@ -753,19 +753,29 @@ class Aduki internal constructor(
     suspend fun handoff(target: String, ttl: Long = Handoff.TTL, jkt: String? = null): Handoff =
         guard { identity { it.handoff(target, ttl, jkt) } }
 
+    // The profile read last and the Aduki ID session it was read with: a
+    // client handed another account's tokens (`session.update`) reads again.
     @Volatile
     private var profileCache: AccountProfile? = null
+
+    @Volatile
+    private var profileSession: String? = null
 
     /**
      * The signed-in account's profile from Aduki ID (`GET /v1/me`): real hex,
      * handle, name, kind, tenant with name and role, photo tag, center,
      * unlock, and this session's device group. Cached for the life of the
-     * client unless [refresh]; null when it cannot be read (offline, signed
-     * out, an older server). Never throws, except on cancellation.
+     * client unless [refresh] or the session changed since (the client was
+     * given another account's tokens); null when it cannot be read (offline,
+     * signed out, an older server). Never throws, except on cancellation.
      */
     suspend fun account(refresh: Boolean = false): AccountProfile? {
-        if (!refresh) profileCache?.let { return it }
-        return read("account profile", null) { identity { it.me() } }?.also { profileCache = it }
+        val current = session.tokens.value?.session
+        if (!refresh && profileSession == current) profileCache?.let { return it }
+        return read("account profile", null) { identity { it.me() } }?.also {
+            profileCache = it
+            profileSession = current
+        }
     }
 
     /**
