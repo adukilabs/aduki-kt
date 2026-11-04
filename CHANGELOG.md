@@ -2,7 +2,7 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
-## 0.8.1 (unreleased)
+## 0.8.1 (2026-11-04)
 
 Fixes for the suite sign-in and Accounts Center flows, the store vault and offline sends, found while checking the suite's device checklist (adukilabs/suite#288). No source breaks; a 0.8.0 sibling app keeps working with a 0.8.1 one. New live tests cover the checklist rows that depend on the SDK.
 
