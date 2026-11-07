@@ -21,6 +21,12 @@ object Endpoints {
     /** The audience Store accepts on Aduki ID tokens. */
     const val STORE_AUDIENCE = "store"
 
+    /** aduki Calls REST API (ADK-AUDIO-013); `audio.aduki.pro` once the service moves to its planned host. */
+    const val CALLS = "https://voice.aduki.pro/v1"
+
+    /** The audience aduki Calls accepts on Aduki ID tokens (DPoP-bound only). */
+    const val CALLS_AUDIENCE = "audio"
+
     /** The audience mail accepts on Aduki ID tokens. */
     const val AUDIENCE = "mail"
 }
