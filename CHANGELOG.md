@@ -2,6 +2,10 @@
 
 The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
+## Unreleased
+
+- New `pro.aduki.net.http.Calls` (draft): the aduki Calls API (`https://voice.aduki.pro/v1`, audience `audio`, DPoP-bound tokens only): `start` a call and ring people, `ringing`, `answer`, `ticket`, `leave`, `relays`, and the devices that ring (`register`, `devices`, `edit`, `remove`). `token()` and `proof(method, url, token)` sign in aduki Calls' own SDK, which does the media. New `Endpoints.CALLS` and `Endpoints.CALLS_AUDIENCE`. Aduki ID does not issue `audio` tokens yet. See `docs/services/calls.md`.
+
 ## 0.8.1 (2026-11-04)
 
 Fixes for the suite sign-in and Accounts Center flows, the store vault and offline sends, found while checking the suite's device checklist (adukilabs/suite#288). No source breaks; a 0.8.0 sibling app keeps working with a 0.8.1 one. New live tests cover the checklist rows that depend on the SDK.
