@@ -60,6 +60,9 @@ not signed, and the token is bound with `ath`.
 | `leave(call)` | `DELETE /calls/{hex}/participants/me`: on every device |
 | `relays()` | `POST /relays`: TURN servers, or none |
 | `register(platform, token, label)`, `devices()`, `edit(device, token, label)`, `remove(device)` | `/devices`: the FCM token a device rings on (`null`: it rings nowhere) |
+| `limits()` | `GET /limits`: the package, its `audio.*` keys (null: unlimited), what is used this month; a new call past them is `403 plan.limit` |
+| `report(call, report)` | `POST /calls/{hex}/reports`: the final numbers of a call when leaving it, once, after being in it (shares per mille, times in ms; no audio, no device identifier) |
+| `quality(call)` | `GET /calls/{hex}/quality`: per person, the reports folded and a MOS estimate (1 to 4.5); for the owner and the participants |
 
 ## Rings
 

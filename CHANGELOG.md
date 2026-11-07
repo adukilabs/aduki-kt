@@ -5,6 +5,7 @@ The SDK is 0.x: breaking changes can land in a minor release. The version is set
 ## Unreleased
 
 - New `pro.aduki.net.http.Calls` (draft): the aduki Calls API (`https://voice.aduki.pro/v1`, audience `audio`, DPoP-bound tokens only): `start` a call and ring people, `ringing`, `answer`, `ticket`, `leave`, `relays`, and the devices that ring (`register`, `devices`, `edit`, `remove`). `token()` and `proof(method, url, token)` sign in aduki Calls' own SDK, which does the media. New `Endpoints.CALLS` and `Endpoints.CALLS_AUDIENCE`. Aduki ID does not issue `audio` tokens yet. See `docs/services/calls.md`.
+- `Calls`: `limits()` (the package's `audio.*` keys and what is used this month; a new call past them is `403 plan.limit`), `report(call, report)` (the final numbers of a call, once) and `quality(call)` (per person with a MOS estimate), for the aduki Calls routes of voice#97.
 
 ## 0.8.1 (2026-11-04)
 
