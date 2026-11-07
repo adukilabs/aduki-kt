@@ -202,6 +202,42 @@ class CallsTest {
     }
 
     @Test
+    fun limitsReportAndQualityUseTheirRoutes() {
+        val client = calls()
+        answer(
+            ok("""{"package":"free","limits":{"audio.calls":1,"audio.minutes":300},"usage":{"audio.calls":0,"audio.minutes":12},"enforced":["audio.calls"]}"""),
+            ok("""{"accepted":true,"call":"$call"}""", 201),
+            failure(409, "state.conflict"),
+            ok("""{"call":"$call","mos":4.2,"people":[{"account":"$amina","mos":4.2,"worstLoss":12}]}"""),
+            failure(403, "plan.limit")
+        )
+        val plan = client.limits()
+        assertEquals("free", plan.getString("package"))
+        assertEquals(12, plan.getJSONObject("usage").getInt("audio.minutes"))
+        client.report(call, JSONObject().put("agent", "test").put("loss", 12).put("rtt", 180))
+        assertEquals("POST", seen[1].method)
+        assertEquals("/calls/v1/calls/$call/reports", seen[1].path)
+        assertEquals(12, JSONObject(seen[1].body.readUtf8()).getInt("loss"))
+        try {
+            client.report(call, JSONObject().put("loss", 1))
+            fail()
+        } catch (e: AdukiException.Api) {
+            assertEquals("state.conflict", e.kind)
+        }
+        assertEquals(4.2, client.quality(call).getDouble("mos"), 0.0)
+        assertEquals("/calls/v1/calls/$call/quality", seen[3].path)
+        try {
+            client.start(listOf(baraka))
+            fail()
+        } catch (e: AdukiException.Api) {
+            assertEquals(403, e.status)
+            assertEquals("plan.limit", e.kind)
+        }
+        try { client.report(call, JSONObject().put("loss", 1001)); fail() } catch (_: IllegalArgumentException) {}
+        assertEquals(5, seen.size)
+    }
+
+    @Test
     fun badIdsAndTooManyPeopleAreRefusedBeforeAnyRequest() {
         val client = calls()
         try { client.fetch("NOT-A-HEX"); fail() } catch (_: IllegalArgumentException) {}

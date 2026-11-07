@@ -14,7 +14,8 @@ import java.util.UUID
 
 /**
  * Calls is the client for the aduki Calls API (ADK-AUDIO-013): calls, ringing
- * people, tickets into a call, answers, devices that ring, and relays.
+ * people, tickets into a call, answers, devices that ring, relays, the plan
+ * (limits and use) and call quality (final reports, quality per person).
  *
  * It does the HTTP side only. The media (the microphone, the speaker, the
  * call itself) is aduki Calls' own SDK, which signs in through this client:
@@ -104,6 +105,31 @@ class Calls(
     fun leave(call: String) {
         request("DELETE", "calls/${hex(call)}/participants/me")
     }
+
+    /**
+     * This person's plan (`GET /v1/limits`): `package`, `limits` (the
+     * `audio.*` keys, null for unlimited), `usage` (`audio.calls` at a time,
+     * `audio.minutes` this UTC month), `period` and `enforced`. A new call
+     * past them is `403 plan.limit`.
+     */
+    fun limits(): JSONObject = request("GET", "limits").obj()
+
+    /**
+     * Sends this person's final numbers for [call] when they leave it
+     * (`agent`, `filter`, `bitrate`, `loss`, `rtt`, `jitter`, `concealed`,
+     * `received`, `lost`, `level`, `agc`, `restarts`, `input`, `sent`,
+     * `heard`; shares per mille, times in ms). Once per call session and only
+     * after they were in it (else 404); a second is `409 state.conflict`.
+     */
+    fun report(call: String, report: JSONObject) {
+        for (field in listOf("loss", "concealed")) {
+            if (report.has(field)) require(report.optInt(field, -1) in 0..1000) { "$field is per mille: 0 to 1000" }
+        }
+        request("POST", "calls/${hex(call)}/reports", body = report)
+    }
+
+    /** The quality of [call] per person (`people`, each with a `mos` estimate) and the worst `mos`; for its owner and participants. */
+    fun quality(call: String): JSONObject = request("GET", "calls/${hex(call)}/quality").obj()
 
     /** TURN servers for this person (`servers`, `ttl`, `expires`, `policy`); an empty list when the server has none. */
     fun relays(): JSONObject = request("POST", "relays").obj()
