@@ -61,6 +61,16 @@ class Files(private val dir: File?) {
         return if (dir == null) memory.containsKey(name) else File(dir, name).isFile
     }
 
+    /**
+     * When [name] was last written (epoch ms), or null when it is not stored
+     * or kept in memory.
+     */
+    fun modified(name: String): Long? {
+        check(name)
+        if (dir == null) return null
+        return File(dir, name).takeIf { it.isFile }?.lastModified()
+    }
+
     /** The stored names that start with [prefix]. */
     fun names(prefix: String = ""): List<String> =
         if (dir == null) memory.keys.filter { it.startsWith(prefix) }

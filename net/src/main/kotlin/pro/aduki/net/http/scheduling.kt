@@ -61,6 +61,42 @@ class Scheduling(
 ) {
     private val mediaJson = "application/json; charset=utf-8".toMediaType()
 
+    // ---- Aduki Calls meetings on events ---------------------------------------------------------------------------
+
+    /** The Calls meeting of event [hex], or null when it never had one (`GET /user/events/{hex}/meeting`). */
+    fun meeting(hex: String): pro.aduki.core.models.EventMeeting? = try {
+        Rest.execute(client, Rest.request("GET", Rest.url(endpoint, "user", "events", hex, "meeting").build())) { data ->
+            (data as? JSONObject)?.let(::meetingOf)
+        }
+    } catch (e: AdukiException.Api) {
+        if (e.status == 404) null else throw e
+    }
+
+    /**
+     * Puts a Calls meeting on event [hex] (`POST /user/events/{hex}/meeting`):
+     * booked in Calls for the event's time, it moves and is cancelled with
+     * the event. The answer may still be `wanted` while Calls books it.
+     */
+    fun addMeeting(hex: String): pro.aduki.core.models.EventMeeting =
+        Rest.execute(client, Rest.request("POST", Rest.url(endpoint, "user", "events", hex, "meeting").build())) { data -> meetingOf(Rest.obj(data)) }
+
+    /** Takes the Calls meeting off event [hex], cancelled in Calls (`DELETE /user/events/{hex}/meeting`). */
+    fun removeMeeting(hex: String): pro.aduki.core.models.EventMeeting =
+        Rest.execute(client, Rest.request("DELETE", Rest.url(endpoint, "user", "events", hex, "meeting").build())) { data -> meetingOf(Rest.obj(data)) }
+
+    private fun meetingOf(o: JSONObject) = pro.aduki.core.models.EventMeeting(
+        hex = o.optString("hex"),
+        title = o.optString("title"),
+        starts = Rest.instant(o, "starts"),
+        ends = Rest.instant(o, "ends"),
+        state = o.optString("state"),
+        meeting = Rest.text(o, "meeting"),
+        link = Rest.text(o, "link"),
+        guest = Rest.text(o, "guest"),
+        error = Rest.text(o, "error"),
+        updated = Rest.instant(o, "updated")
+    )
+
     private fun url(path: String): HttpUrl {
         val clean = endpoint.trimEnd('/')
         return "$clean/${path.trimStart('/')}".toHttpUrl()

@@ -1,11 +1,50 @@
 # Changelog
 
-The SDK is 0.x: breaking changes can land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
+From 1.0.0 the SDK follows semantic versioning: breaking changes only in a major release. Before 1.0.0, breaking changes could land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
-## Unreleased
+## 1.0.0 (unreleased)
 
-- New `pro.aduki.net.http.Calls` (draft): the aduki Calls API (`https://voice.aduki.pro/v1`, audience `audio`, DPoP-bound tokens only): `start` a call and ring people, `ringing`, `answer`, `ticket`, `leave`, `relays`, and the devices that ring (`register`, `devices`, `edit`, `remove`). `token()` and `proof(method, url, token)` sign in aduki Calls' own SDK, which does the media. New `Endpoints.CALLS` and `Endpoints.CALLS_AUDIENCE`. Aduki ID does not issue `audio` tokens yet. See `docs/services/calls.md`.
-- `Calls`: `limits()` (the package's `audio.*` keys and what is used this month; a new call past them is `403 plan.limit`), `report(call, report)` (the final numbers of a call, once) and `quality(call)` (per person with a MOS estimate), for the aduki Calls routes of voice#97.
+The first stable release. It catches up with what the Aduki servers gained since 0.8.1: Aduki Calls (calls and meetings), verified senders and their logos in Mail, billing at Aduki ID, and the contacts and calendar additions. Sign-up leaves the SDK: accounts are made on Aduki ID's sign-up page in a browser, and apps keep sign-in only. Threading and start-up work is tightened (see "Threading and performance"). Source breaks are listed under "Breaking" with what replaces each; see `docs/start/migrate-1.0.md`.
+
+### Breaking
+
+- **Sign-up is removed.** `Aduki.signUp`, `Aduki.verify`, `Aduki.register`, `Id.create`, `Id.verify`, `Signup.create`, `Signup.verify` and the `Enrolment` and `Verified` types are gone. People sign up on `https://id.aduki.pro/signup`: build the address with `Aduki.signUpUrl(handle, back)` (or `Signup.url`), or on Android open it with `pro.aduki.android.signin.SignUpTab(back).open(activity)`, a Custom Tab over the app's sign-in screen. Closing the tab returns to the app; with `back` (the app's own URI, such as `pro.aduki.mail:/signup`) the page sends the person back with `?handle=`, read with `SignUpTab.handle(intent)` or `Aduki.signedUp(uri, back)` to fill the sign-in form. Sign-in is unchanged, the cross-app sign-in of 0.8.0 included. `Aduki.requirements()` stays (the personal mail domain).
+- `pro.aduki.net.http.Calls` (a draft, never released) returns typed models instead of `JSONObject`s, takes its tokens from a `Bearer` (an `Id` still works through the second constructor), and its default base is `https://calls.aduki.pro/v1` (`Endpoints.CALLS`; `voice.aduki.pro` no longer answers). `ticket(call)` throws `AdukiException.Api` `202 lobby.waiting` while a meeting's lobby holds the caller; `enter(call)` returns `CallEntry.Ticket` or `CallEntry.Waiting`. `answer(call, false)` returns null.
+- `Aduki` builds its HTTP clients on one process-wide OkHttp base (`pro.aduki.net.http.Client.shared`): every client shares its connection pool and dispatcher. A client handed in with `Builder.http(client)` is unchanged.
+
+### Calls and meetings
+
+Aduki Calls through the client's own Aduki ID session (audience `audio`, DPoP-bound: build the client with `dpop(key)`):
+
+- `Aduki.calls` (`pro.aduki.sdk.Calls`): `start(to)` a call and ring people, `meeting(title, lobby)` makes a meeting with a letter code (`abc-defg-hij`) and a link (`Call.link`, `https://calls.aduki.pro/call/abc-defg-hij`), `meetings()` and `list(limit, after, missed, kind, with)` the call log, `get(call)`, `join(call)` (a ticket, or `CallEntry.Waiting` in the lobby), `status(code)`, `restart(call)` (open again after it ended), `end`, `change` (lock, title, lobby, unmute), `invite`, `answer`, `leave`, `ringing`, `missed`, `seenMissed`, `hide`, `clearLog`, `limits`, `relays`, and the devices that ring (`register`, `devices`, `edit`, `remove`). Every call that takes a meeting takes its hex, its code in any form, or a pasted link. `token()` and `proof()` sign in Aduki Calls' media SDK.
+- `Calls.link(code)`, `Calls.code(text)` and `pro.aduki.core.calls.Meetings` read and build codes and links; `Calls.status(code)` works signed out.
+- The `audio` token is renewed with the client's refresh token under the same lock as the mail token and the rotated refresh token is saved; the Calls request itself runs outside that lock.
+- `Aduki.callsApi` (the HTTP client), `Builder.calls(base)` and `Options.calls`. New models in `pro.aduki.core.models`: `Call`, `MeetingStatus`, `CallTicket`, `CallEntry`, `MissedCalls`, `CallPage`, `CallDevice`, `CallLimits`.
+- Calendar: `Scheduling.meeting(hex)`, `addMeeting(hex)` and `removeMeeting(hex)` put a Calls meeting on an event (`EventMeeting` with its `link` and `guest` link).
+
+### Mail: verified senders and logos
+
+- `Mail.verification(hex)`: why a message's sender is verified (`GET /v1/user/mail/{hex}/verification`): the badge (`aduki` for "Verified · Aduki", `vmc`, `cmc`), DMARC, DKIM and SPF with alignment, and for a BIMI logo the mark certificate. Model `Verification`.
+- `Mail.brands(keys)`: sender logos by address or domain (`POST /v1/user/lookup/brands`, 20 a request), every key answered, kept in memory for an hour. The Aduki mark is only ever an address's, never a whole domain's. Model `Brand`.
+- `Mail.verified(hexes)`: the domain each message is verified for (JMAP `aduki:verified`); show a logo only when it names the logo's domain.
+
+### Billing (Aduki ID)
+
+Payments moved from Space to Aduki ID. `Aduki.billing` reads, for a personal account: `subscription()`, `addons()`, `addonCatalogue()`, `usage(period)`, `payments()` and `invoices()` (through a portal session opened on demand). Buying and paying stay on the web. Models `Subscription`, `AddOnPurchase`, `AddOn`, `Usage`, `Payment`, `Invoice`, `BillingPage`; `pro.aduki.net.http.Billing`.
+
+### Contacts
+
+- Deleted contacts wait 30 days in the server's trash: `Contacts.trash()`, `restore(entry)` (then syncs), `purge(entry)`, `emptyTrash()`.
+- `Contacts.accounts(hex)`: the Aduki accounts holding a contact's addresses and what they are on (`mail`, `chats`, `calls`); `Contacts.recent(hex, limit)`: the latest mail and events with a contact. Models `TrashedContact`, `LinkedAccount`, `Dealing`.
+
+### Threading and performance
+
+- Building a client no longer reads and unseals the stored tokens twice (the builder's read is handed to the client).
+- The contact photo spool sweep left the constructor: it runs in the background, and only removes spool files written before the client was built, so it cannot remove the file of an upload being queued.
+- One shared OkHttp connection pool and dispatcher for every client of the process: a second account's client, the Aduki ID client and the clients inside `signIn`, `exchange` and `requirements` reuse open TLS connections and threads instead of starting their own.
+- DPoP: the proof header and the key thumbprint are built once per key, and whether an access token is bound to the key is decoded once per token, instead of on every request.
+- `Lifecycle.pause()`/`resume()` change state under a lock (two racing calls notified the listeners twice) and the state is volatile. The OIDC discovery cache and `Vault`'s index file are volatile (written and read from different threads).
+- Calls and billing get their `audio`/`id` tokens under the session lock, but send their requests outside it, so a slow Calls request never holds up a mail token renewal.
 
 ## 0.8.1 (2026-11-04)
 

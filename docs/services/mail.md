@@ -355,3 +355,31 @@ The server has no snooze, so the SDK keeps it in data that syncs:
 - `Message.snoozed()` reads the time back.
 - After each sync, `client.sync.all()` calls `wake()`, which brings due messages back to the inbox, unread. Any device that syncs does it.
 - A message comes back on the first sync after its time, so schedule periodic syncs (e.g. WorkManager) for it to reappear on time.
+
+## 10. Verified senders and logos
+
+A sender is verified when its message passed DMARC aligned with `From` on Aduki
+Mail, or an Aduki account sent it. Three reads, all on the mail host:
+
+- `verified(hexes): Map<String, String?>`: per message, the domain it is
+  verified for (JMAP `aduki:verified`), null when it is not. Empty from a server
+  without the reading capability.
+- `brands(keys): Map<String, Brand>`: logos by sender address or domain
+  (`POST /v1/user/lookup/brands`, 20 a request). Every key asked is answered; one
+  without a logo has a null `url`. `verified` is the badge: `aduki` ("Verified ·
+  Aduki", an official Aduki sender, only ever for an address), `vmc` or `cmc`.
+  Answers are kept in memory for an hour. Never throws.
+- `verification(hex): Verification`: why one message's sender is verified
+  (`GET /v1/user/mail/{hex}/verification`): the badge, `passed`, DMARC, DKIM and
+  SPF with alignment, the logo, and for a BIMI logo the mark certificate
+  (holder, issuer, validity, trademark, CT log). For the "Verified · Aduki"
+  details sheet.
+
+Show a logo only on a message whose `verified` domain equals the logo's
+`domain`: a logo on an unverified message would let anyone borrow a brand.
+
+```kotlin
+val domains = client.mail.verified(rows.map { it.hex })
+val logos = client.mail.brands(rows.mapNotNull { it.from?.email })
+val logo = logos[row.from?.email?.lowercase()]?.takeIf { it.domain == domains[row.hex] }
+```

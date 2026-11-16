@@ -7,11 +7,13 @@
 - [Installation](start/install.md)
 - [Configuration](start/config.md)
 - [Android module](start/android.md)
+- [Moving to 1.0.0](start/migrate-1.0.md)
 
 # Authentication
 
 - [Overview](auth/index.md)
 - [Sign-in](auth/login.md)
+- [Sign-up](auth/signup.md)
 - [Aduki ID Client](auth/id.md)
 - [Token Lifecycle & Rights](auth/tokens.md)
 - [DPoP](auth/dpop.md)
@@ -47,7 +49,8 @@
 - [Contacts Service](services/contacts.md)
 - [Scheduling Service](services/scheduling.md)
 - [Space client (draft)](services/space.md)
-- [Calls client (draft)](services/calls.md)
+- [Calls and meetings](services/calls.md)
+- [Billing](services/billing.md)
 - [Sync Engine](services/sync.md)
 - [Offline Outbox](services/outbox.md)
 - [Lifecycle Manager](services/lifecycle.md)

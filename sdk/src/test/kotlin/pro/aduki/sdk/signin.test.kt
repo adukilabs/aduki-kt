@@ -283,7 +283,7 @@ class SigninTest {
             var current: Tokens? = Tokens(token = "eyJ.old", refresh = "rt_1", expires = "600", session = "sess_1")
             override fun load(): Tokens? {
                 loadCount++
-                if (loadCount >= 4 && current?.refresh == "rt_1") {
+                if (loadCount >= 3 && current?.refresh == "rt_1") {
                     current = Tokens(token = "eyJ.old", refresh = "rt_2", expires = "600", session = "sess_1")
                 }
                 return current

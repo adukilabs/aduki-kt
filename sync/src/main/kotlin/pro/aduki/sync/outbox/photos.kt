@@ -49,6 +49,19 @@ class Photos(private val files: Files) {
         for (name in files.names(SPOOL)) if (name !in live) files.delete(name)
     }
 
+    /**
+     * [sweep] that leaves the spool files written at or after [before]
+     * (epoch ms): a sweep running beside new uploads deletes only what an
+     * earlier run left, never a file whose outbox entry is being written now.
+     */
+    fun sweep(live: Set<String>, before: Long) {
+        for (name in files.names(SPOOL)) {
+            if (name in live) continue
+            val at = files.modified(name) ?: continue
+            if (at < before) files.delete(name)
+        }
+    }
+
     internal fun sent() {
         sent.update { it + 1 }
     }

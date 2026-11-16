@@ -3,7 +3,6 @@ package pro.aduki.net.http
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
-import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -65,89 +64,39 @@ class SignupTest {
     }
 
     @Test
-    fun createInitiatesPendingRegistration() {
-        server.enqueue(
-            MockResponse().setResponseCode(201).setBody(
-                """{"success":true,"data":{"id":"01a14179","handle":"ada@user.aduki.pro","totp":{"uri":"otpauth://totp/ada?secret=ABC","secret":"ABC"}}}"""
-            )
-        )
-
-        val enrolment = Signup.create(client, identity(), "ada", "Ada Lovelace", "password123456")
-
-        assertEquals("01a14179", enrolment.id)
-        assertEquals("ada@user.aduki.pro", enrolment.handle)
-        assertEquals("ABC", enrolment.secret)
-        assertEquals("otpauth://totp/ada?secret=ABC", enrolment.uri)
-
-        val req = server.takeRequest()
-        assertEquals("/v1/accounts", req.path)
-        assertEquals("POST", req.method)
-        val json = JSONObject(req.body.readUtf8())
-        assertEquals("ada", json.getString("handle"))
-        assertEquals("Ada Lovelace", json.getString("name"))
-        assertEquals("password123456", json.getString("password"))
-    }
-
-    @Test
-    fun verifyConfirmsTotpAndReturnsBackupCodes() {
-        server.enqueue(
-            MockResponse().setResponseCode(200).setBody(
-                """{"success":true,"data":{"codes":["backup-1","backup-2"]}}"""
-            )
-        )
-
-        val codes = Signup.verify(client, identity(), "01a14179", "password123456", "123456").codes
-
-        assertEquals(listOf("backup-1", "backup-2"), codes)
-
-        val req = server.takeRequest()
-        assertEquals("/v1/accounts/01a14179/verifications", req.path)
-        assertEquals("POST", req.method)
-        val json = JSONObject(req.body.readUtf8())
-        assertEquals("password123456", json.getString("password"))
-        assertEquals("123456", json.getString("code"))
-    }
-
-    @Test
-    fun idClientDelegatesSignupFlow() {
+    fun idClientReadsRequirementsAndBuildsTheSignUpPage() {
         val idClient = Id(client, identity())
-
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
-                """{"success":true,"data":{"phone":false,"domain":"user.aduki.pro"}}"""
+                """{"success":true,"data":{"phone":false,"domain":"aduki.me"}}"""
             )
         )
-        val reqs = idClient.requirements()
-        assertFalse(reqs.phone)
-        assertEquals("user.aduki.pro", reqs.domain)
-
-        server.enqueue(
-            MockResponse().setResponseCode(201).setBody(
-                """{"success":true,"data":{"id":"01a14179","handle":"ada@user.aduki.pro","totp":{"uri":"otpauth://totp/ada?secret=ABC","secret":"ABC"}}}"""
-            )
-        )
-        val enrolment = idClient.create("ada", "Ada Lovelace", "password123456")
-        assertEquals("01a14179", enrolment.id)
-
-        server.enqueue(
-            MockResponse().setResponseCode(200).setBody(
-                """{"success":true,"data":{"codes":["b1","b2"]}}"""
-            )
-        )
-        val codes = idClient.verify("01a14179", "password123456", "123456")
-        assertEquals(listOf("b1", "b2"), codes)
+        assertEquals("aduki.me", idClient.requirements().domain)
+        assertEquals(server.url("/signup").toString(), idClient.signUpUrl())
     }
 
     @Test
-    fun signupErrorsPropagateAdukiException() {
-        server.enqueue(
-            MockResponse().setResponseCode(400).setBody(
-                """{"success":false,"error":{"kind":"input.invalid","message":"address must be 3-32 characters"}}"""
-            )
+    fun signUpUrlIsTheIdSitePageWithAHandleAndAWayBack() {
+        assertEquals("https://id.aduki.pro/signup", Signup.url())
+        assertEquals("https://id.aduki.pro/signup", Signup.url("https://id.aduki.pro"))
+        assertEquals(
+            "https://id.aduki.pro/signup?handle=ada%20l&return=pro.aduki.mail%3A%2Fsignup",
+            Signup.url(handle = " ada l ", back = "pro.aduki.mail:/signup")
         )
+        assertThrows(IllegalArgumentException::class.java) { Signup.url(back = "no scheme") }
+        assertThrows(IllegalArgumentException::class.java) { Signup.url(back = "pro.aduki.mail:/signup#x") }
+    }
 
-        assertThrows(AdukiException.Network::class.java) {
-            Signup.create(client, identity(), "a", "A", "pass")
-        }
+    @Test
+    fun theHandleIsReadOnlyFromTheAppsOwnWayBack() {
+        val back = "pro.aduki.mail:/signup"
+        assertEquals("ada@aduki.me", Signup.handle("pro.aduki.mail:/signup?handle=ada%40aduki.me", back))
+        assertEquals("ada@aduki.me", Signup.handle("PRO.ADUKI.MAIL:/signup?x=1&handle=ada@aduki.me", back))
+        assertEquals(null, Signup.handle("pro.aduki.mail:/other?handle=ada", back))
+        assertEquals(null, Signup.handle("pro.aduki.calendar:/signup?handle=ada", back))
+        assertEquals(null, Signup.handle("pro.aduki.mail:/signup", back))
+        assertEquals(null, Signup.handle("pro.aduki.mail:/signup?handle=", back))
+        assertEquals("ada", Signup.handle("https://mail.aduki.pro/app/signup?handle=ada", "https://mail.aduki.pro/app/signup"))
+        assertEquals(null, Signup.handle("https://evil.example/app/signup?handle=ada", "https://mail.aduki.pro/app/signup"))
     }
 }

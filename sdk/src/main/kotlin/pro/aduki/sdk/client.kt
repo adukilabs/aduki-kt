@@ -35,7 +35,6 @@ import pro.aduki.net.http.Login
 import pro.aduki.net.http.Profiles
 import pro.aduki.net.http.Signup
 import pro.aduki.net.http.Requirements
-import pro.aduki.net.http.Enrolment
 import pro.aduki.net.http.Scheme
 import pro.aduki.net.http.Whoami
 import pro.aduki.core.models.Identity
@@ -57,6 +56,9 @@ import pro.aduki.state.repository.Appointment as AppointmentRepo
 import pro.aduki.net.http.Scheduling as NetScheduling
 import pro.aduki.net.http.Mail as NetMail
 import pro.aduki.net.http.Contacts as NetContacts
+import pro.aduki.net.http.Calls as NetCalls
+import pro.aduki.net.http.Bearer
+import pro.aduki.net.http.Billing as NetBilling
 import pro.aduki.sync.engine.ContactStorage
 import pro.aduki.sync.http.ContactDispatcher
 import pro.aduki.sync.http.HttpContactTransport
@@ -100,12 +102,12 @@ class Aduki internal constructor(
     rejected: (Outbox, Rejected) -> Unit = { _, _ -> },
     val tokenStore: TokenStore? = null,
     /** Where contact photos are cached and spooled, sealed; null keeps them in memory. */
-    photoDir: File? = null
+    photoDir: File? = null,
+    /** The tokens [tokenStore] held when the builder read it, so they are not read (and unsealed) twice. */
+    stored: Tokens? = null
 ) {
     init {
-        tokenStore?.load()?.let { stored ->
-            session.update(stored)
-        }
+        (stored ?: tokenStore?.load())?.let { session.update(it) }
     }
 
     private val failure = MutableStateFlow<Throwable?>(null)
@@ -340,6 +342,9 @@ class Aduki internal constructor(
         }
     }
 
+    // The mail host's authenticated client, for the facades' REST reads.
+    internal fun http(): OkHttpClient = activeHttpClient()
+
     private fun activeHttpClient(): OkHttpClient {
         return customClient ?: defaultClient
     }
@@ -448,16 +453,50 @@ class Aduki internal constructor(
     /** Filter rules, vacation reply, senders and new-mail push, kept on the server. */
     val settings = Settings(this)
 
+    /**
+     * The Aduki Calls client of this account (audience `audio`, DPoP-bound):
+     * its tokens come from this client's Aduki ID session, renewed under the
+     * same lock as the mail token, and every rotated refresh token is saved.
+     *
+     * @throws IllegalStateException on first use without a DPoP key.
+     */
+    val callsApi: NetCalls by lazy {
+        val signer = checkNotNull(dpop) { "Aduki Calls needs a DPoP-bound session: build the client with dpop(key)" }
+        NetCalls(identityClient, Bearer { stale -> audience(Endpoints.CALLS_AUDIENCE, stale) }, signer, options.calls)
+    }
+
+    /** Calls and meetings: start a call, make, list, join and restart meetings, the call log. */
+    val calls = Calls { callsApi }
+
+    /**
+     * The account's package, add-ons, usage, payments and invoices at Aduki
+     * ID, read only (`audience id` tokens from this client's session).
+     */
+    val billingApi: NetBilling by lazy {
+        NetBilling(identityClient, Bearer { stale -> audience(Endpoints.ID_AUDIENCE, stale) }, options.identity)
+    }
+
+    /** Billing, read only: the package, add-ons, usage, payments and invoices. */
+    val billing = Billing { billingApi }
+
     init {
-        // Spooled photos of outbox entries that are gone (sent, discarded).
+        // Spooled photos of outbox entries that are gone (sent, discarded):
+        // a database query and a directory walk, so in the background, not
+        // on the thread that builds the client (often the main thread).
         if (photos != null && outbox != null) {
-            try {
-                val live = (outbox.pending() + outbox.failed()).filter { it.action == Book.PHOTO }
-                    .mapNotNull { runCatching { JSONObject(String(it.payload, Charsets.UTF_8)).optString("spool") }.getOrNull() }
-                    .toSet()
-                photos.sweep(live)
-            } catch (e: Exception) {
-                Faults.report("photo spool sweep", e)
+            // Two seconds in hand for file systems that keep times to the second.
+            val started = System.currentTimeMillis() - 2_000
+            work.launch {
+                try {
+                    val live = (outbox.pending() + outbox.failed()).filter { it.action == Book.PHOTO }
+                        .mapNotNull { runCatching { JSONObject(String(it.payload, Charsets.UTF_8)).optString("spool") }.getOrNull() }
+                        .toSet()
+                    photos.sweep(live, started)
+                } catch (e: Exception) {
+                    Faults.report("photo spool sweep", e)
+                } finally {
+                    release()
+                }
             }
         }
         lifecycle.listen { active ->
@@ -865,6 +904,16 @@ class Aduki internal constructor(
         }
     }
 
+    // An access token for [audience] from this client's Aduki ID session; with
+    // [stale] (the token a request was refused with) a renewed one. Under the
+    // same locks as the mail renewal: getting it may rotate the refresh token,
+    // which is saved before it is used again. The HTTP call that uses the
+    // token runs outside the lock.
+    private fun audience(audience: String, stale: String?): String {
+        if (!hasRefresh()) throw AdukiException.Unauthorized("No Aduki ID session for audience $audience")
+        return identity { if (stale == null) it.token(audience) else it.rotate(audience, stale).token }
+    }
+
     /**
      * Revokes the active session [target].
      */
@@ -913,6 +962,7 @@ class Aduki internal constructor(
         private var endpoint: String = Endpoints.REST
         private var identity: String = Endpoints.ID
         private var drive: String = Endpoints.STORE
+        private var calls: String = Endpoints.CALLS
         private var secure: Boolean = true
         private var pins: List<Pin> = emptyList()
         private var timeoutSeconds: Long = 15
@@ -941,6 +991,9 @@ class Aduki internal constructor(
         fun identity(identity: String) = apply { this.identity = identity }
         /** The Aduki Store base read for the pooled storage quota, e.g. `https://store.aduki.pro/v1`. */
         fun drive(drive: String) = apply { this.drive = drive }
+
+        /** The Aduki Calls base (default `https://calls.aduki.pro/v1`). */
+        fun calls(base: String) = apply { this.calls = base }
         /**
          * Binds sign-ins to a device key (DPoP, RFC 9449): Aduki ID and mail
          * calls carry a proof, and tokens bound to the key are sent as
@@ -1049,6 +1102,7 @@ class Aduki internal constructor(
                 endpoint = endpoint,
                 identity = identity,
                 drive = drive,
+                calls = calls,
                 timeoutSeconds = timeoutSeconds,
                 secure = secure,
                 pins = pins
@@ -1072,7 +1126,8 @@ class Aduki internal constructor(
                 owned = store == null && local != null,
                 rejected = rejected,
                 tokenStore = tokenStore,
-                photoDir = photoDir ?: directory?.let { File(it, "photos") }
+                photoDir = photoDir ?: directory?.let { File(it, "photos") },
+                stored = storedTokens
             )
         }
     }
@@ -1240,63 +1295,17 @@ class Aduki internal constructor(
         }
 
         /**
-         * Stage 1: Initiates personal account registration.
-         * The account remains pending until confirmed by [verify].
+         * The address of Aduki ID's sign-up page, to open in a browser or a
+         * Custom Tab (Android: `SignUpTab`). The SDK does not create accounts:
+         * people sign up on the page, then sign in in the app. [handle]
+         * fills the address field; [back] is the app's URI the page returns
+         * to with `?handle=` once the account is made ([signedUp] reads it).
          */
-        suspend fun signUp(
-            handle: String,
-            name: String,
-            password: String,
-            phone: String? = null,
-            identity: String = Endpoints.ID,
-            pins: List<Pin> = emptyList()
-        ): Enrolment = guard {
-            val tempClient = identityHttp(15, pro.aduki.crypto.tls.Pinning.pinner(pins))
-            Signup.create(tempClient, identity, handle, name, password, phone)
-        }
+        fun signUpUrl(handle: String? = null, back: String? = null, identity: String = Endpoints.ID): String =
+            Signup.url(identity, handle, back)
 
-        /**
-         * Stage 2: Confirms the authenticator code and returns backup codes.
-         */
-        suspend fun verify(
-            hex: String,
-            password: String,
-            code: String,
-            identity: String = Endpoints.ID,
-            pins: List<Pin> = emptyList()
-        ): List<String> = guard {
-            val tempClient = identityHttp(15, pro.aduki.crypto.tls.Pinning.pinner(pins))
-            Signup.verify(tempClient, identity, hex, password, code).codes
-        }
-
-        /**
-         * Completes staged registration: confirms the authenticator [code], which activates the
-         * account and opens its first session in the same call, and returns the authenticated
-         * client with the one-time backup codes. [device] names that session.
-         *
-         * Aduki ID accepts each authenticator step once, so the code cannot also be used for a
-         * separate sign-in (0.5.x signed in again with it and was refused).
-         *
-         * @throws AdukiException.Protocol from an Aduki ID that does not open a session on
-         * verification; the account is active then, sign in with the next code.
-         */
-        suspend fun register(
-            hex: String,
-            password: String,
-            code: String,
-            endpoint: String = Endpoints.REST,
-            identity: String = Endpoints.ID,
-            dpop: pro.aduki.crypto.dpop.Key? = null,
-            pins: List<Pin> = emptyList(),
-            tokenStore: TokenStore? = null,
-            device: String? = null
-        ): Pair<Aduki, List<String>> = guard {
-            val verified = Signup.verify(signing(dpop, pins), identity, hex, password, code, Endpoints.AUDIENCE, device)
-            val tokens = verified.tokens ?: throw pro.aduki.core.errors.AdukiException.Protocol(
-                "Aduki ID activated the account but opened no session; sign in with the next code"
-            )
-            Pair(open(tokens, endpoint, identity, dpop, pins, tokenStore), verified.codes)
-        }
+        /** The new account's handle when [uri] is the [back] address the sign-up page returned to, else null. */
+        fun signedUp(uri: String, back: String): String? = Signup.handle(uri, back)
     }
 }
 

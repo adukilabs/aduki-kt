@@ -624,5 +624,85 @@ class Mail internal constructor(
     private companion object {
         /** Name of the mailbox snoozed messages wait in. */
         const val SNOOZE = "Snoozed"
+
+        /** How long a sender logo answer is kept, ms. */
+        const val BRAND_TTL = 60 * 60 * 1000L
+
+        /** Past this many senders the logo cache starts again. */
+        const val BRAND_CACHE = 2_000
     }
+
+    // ---- verified senders and their logos ---------------------------------------------------------------------------
+
+    private val logos = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, pro.aduki.core.models.Brand>>()
+
+    /**
+     * The domain each message's sender is verified for (JMAP
+     * `aduki:verified`: the `From` domain when DMARC passed aligned on Aduki
+     * Mail, or an Aduki account sent it), by message hex; null for an
+     * unverified sender. One `Email/get` per 500 [hexes]; empty from a server without the reading capability. Show a logo
+     * from [brands] only when its domain equals this. Throws `AdukiException`.
+     */
+    suspend fun verified(hexes: Collection<String>): Map<String, String?> = client.io {
+        val out = LinkedHashMap<String, String?>()
+        if (pro.aduki.net.http.Jmap.READING !in client.jmap.session().capabilities) return@io out
+        for (batch in hexes.distinct().chunked(500)) {
+            val reply = client.jmap.call(
+                "Email/get",
+                JSONObject().put("ids", JSONArray(batch)).put("properties", JSONArray(listOf("id", "aduki:verified"))),
+                pro.aduki.net.http.Jmap.USING + pro.aduki.net.http.Jmap.READING
+            )
+            val list = reply.optJSONArray("list") ?: JSONArray()
+            for (i in 0 until list.length()) {
+                val o = list.optJSONObject(i) ?: continue
+                out[o.optString("id")] = if (o.isNull("aduki:verified")) null else o.optString("aduki:verified").lowercase().ifBlank { null }
+            }
+        }
+        out
+    }
+
+    /**
+     * Why message [hex]'s sender is verified: the badge (`aduki` for
+     * "Verified · Aduki", `vmc`, `cmc`), this message's DMARC, DKIM and SPF
+     * results and, for a BIMI logo, its mark certificate. Throws
+     * `AdukiException` on failure.
+     */
+    suspend fun verification(hex: String): pro.aduki.core.models.Verification = client.io {
+        pro.aduki.net.http.Brands.verification(client.http(), client.options.endpoint, hex)
+    }
+
+    /**
+     * The logos of sender addresses or domains, keyed by what was asked
+     * (lower case): every key is answered, one without a logo with a null
+     * `url`. Answers are kept in memory for an hour, so a mailbox list asks
+     * the server only for senders it has not seen. Show a logo only on a
+     * message whose `Body.verified` names its domain. Never throws, except
+     * on cancellation: senders that could not be read are left out.
+     */
+    suspend fun brands(keys: Collection<String>): Map<String, pro.aduki.core.models.Brand> {
+        val now = System.currentTimeMillis()
+        val wanted = keys.map { it.trim().lowercase().removePrefix("mailto:").removeSuffix(".") }.filter { it.isNotEmpty() }.distinct()
+        val out = LinkedHashMap<String, pro.aduki.core.models.Brand>()
+        val missing = ArrayList<String>()
+        for (key in wanted) {
+            val hit = logos[key]
+            if (hit != null && now - hit.first < BRAND_TTL) out[key] = hit.second else missing += key
+        }
+        if (missing.isEmpty()) return out
+        val fetched = try {
+            client.io { pro.aduki.net.http.Brands.lookup(client.http(), client.options.endpoint, missing) }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            pro.aduki.core.errors.Faults.report("brand lookup", e)
+            emptyMap()
+        }
+        if (logos.size > BRAND_CACHE) logos.clear()
+        for ((key, brand) in fetched) {
+            logos[key] = now to brand
+            out[key] = brand
+        }
+        return out
+    }
+
 }

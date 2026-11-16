@@ -1,84 +1,111 @@
-# Calls client (JVM, draft)
+# Calls and meetings
 
-`pro.aduki.net.http.Calls` is a client for the aduki Calls API (ADK-AUDIO-013,
-`https://voice.aduki.pro/v1`, audience `audio`). It is a library class in the
-`net` module and covers the HTTP side of calls only: starting a call and ringing
-people, the calls that ring for you, answers, tickets into a call, leaving, relays,
-and the devices that ring. The media (the microphone, the speaker, the call itself)
-is aduki Calls' own SDK (`pro.aduki.calls`, an AAR with a native engine), which
-signs in through this client.
-
-Aduki ID does not issue `audio` tokens yet. Until it does, every call ends in
-`AdukiException.Unauthorized`; the client has run against fake servers only.
+`Aduki.calls` (`pro.aduki.sdk.Calls`) is Aduki Calls for the signed-in account:
+start a call, make a meeting and share its link or code, list, join and restart
+meetings, the call log, and the devices that ring. It covers the HTTP side; the
+media (microphone, speaker, the call itself) is Aduki Calls' own SDK, which signs
+in through this client ([below](#signing-in-the-media-sdk)).
 
 ## Credentials
 
-aduki Calls accepts only DPoP-bound access tokens. Give the `Id` client and the
-`Calls` client the same HTTP client with the [DPoP](../auth/dpop.md) interceptor,
-and pass that `Dpop` to `Calls` too; it signs the proofs of aduki Calls' SDK. A 401
-renews the token once and retries once; a second 401 is
-`AdukiException.Unauthorized`.
+Aduki Calls (`https://calls.aduki.pro/v1`) accepts only DPoP-bound access tokens
+of audience `audio`. Build the client with a device key and an Aduki ID session:
 
 ```kotlin
-val dpop = Dpop(key)
-val http = OkHttpClient.Builder().addInterceptor(dpop).build()
-val id = Id(http)
-id.signIn("ada@acme.example", password, code = totp)
-val calls = Calls(http, id, dpop)
-val call = calls.start(to = listOf(barakaHex))   // rings Baraka's devices
+val client = Aduki.builder().dpop(key).tokens(store).build()
 ```
 
-The calls are blocking; run them off the main thread.
+The `audio` token comes from the client's own refresh token, renewed under the
+same lock as the mail token; the rotated refresh token is saved before it is used
+again. The Calls request itself runs outside that lock. Without a DPoP key the
+first call throws `IllegalStateException`; without a session,
+`AdukiException.Unauthorized`. `Builder.calls(base)` points at another Calls server.
 
-## Signing in aduki Calls' SDK
+Every call is `suspend`, runs on `Dispatchers.IO` and fails with `AdukiException`
+(`Api` with the server's `kind`, such as `plan.limit`, `state.conflict` or
+`rate.limited`), or `IllegalArgumentException` for an argument the server would
+refuse (an id that is not sixteen hex digits, a title over 120 characters).
 
-aduki Calls' SDK never holds a refresh token or a key. It asks for an access token
-and a DPoP proof per request through its `Identity` interface; `token()` and
-`proof()` answer it:
+## Meetings
+
+```kotlin
+val meeting = client.calls.meeting(title = "Weekly review", lobby = "guests")
+share(meeting.link)                    // https://calls.aduki.pro/call/abc-defg-hij
+meeting.code                           // abc-defg-hij
+
+when (val entry = client.calls.join(pasted)) {   // a code in any form, or a link
+    is CallEntry.Ticket -> media.join(entry.ticket.ticket)
+    is CallEntry.Waiting -> showLobby()          // join again after the socket's `admitted`
+}
+
+val ended = client.calls.status("abc-defg-hij")  // exists, open, ended, organiser, title
+if (ended.ended && ended.organiser) client.calls.restart("abc-defg-hij")
+```
+
+| Call | Route |
+| --- | --- |
+| `meeting(title, lobby)` | `POST /calls {kind: meeting}`: a letter code and a link; `lobby` is `off`, `guests` or `everyone` |
+| `meetings(limit, after)`, `list(limit, after, missed, kind, with)` | `GET /calls`: newest first, filtered |
+| `get(call)` | `GET /calls/{hex or code}` |
+| `join(call)` | `POST /calls/{hex or code}/tokens`: a ticket, or waiting in the lobby |
+| `status(code)` | `GET /meetings/{code}`: nothing about who is in it |
+| `restart(call)` | `POST /calls/{hex}/reopen`: open again for a day after it was closed or expired |
+| `end(call)` | `DELETE /calls/{hex}`: for everyone (its host) |
+| `change(call, locked, title, lobby, unmute)` | `PATCH /calls/{hex}` (its host) |
+
+Codes are ten letters in groups of three, four and three; calls made before codes
+keep their sixteen-hex id, and both work everywhere. `Calls.code(text)` reads a
+code from what was typed or pasted (any case, spaces or dashes, a whole link) or
+returns null; `Calls.link(code)` builds the link; `Calls.status(code)` works
+signed out (a join screen before sign-in).
+
+## Calls and rings
+
+| Call | Route |
+| --- | --- |
+| `start(to)` | `POST /calls`: rings up to 20 accounts |
+| `invite(call, to)` | `POST /calls/{hex}/invites`: a direct call becomes a group call |
+| `ringing()` | `GET /calls?state=ringing`: what to show after a ring's push |
+| `answer(call, accept)` | `POST /calls/{hex}/answers`: a ticket when accepted, null when declined; `409 state.conflict` once answered or missed |
+| `leave(call)` | `DELETE /calls/{hex}/participants/me`: on every device |
+| `missed()`, `seenMissed()` | the missed-calls badge, alike on every device |
+| `hide(call)`, `clearLog()` | the account's own log |
+| `limits()` | `GET /limits`: the package's `audio.*` keys and this month's use; a new call past them is `403 plan.limit` |
+| `relays()` | `POST /relays`: TURN servers, or none |
+| `register(token, label)`, `devices()`, `edit(device, token, label)`, `remove(device)` | `/devices`: the FCM token a device rings on (null: it rings nowhere) |
+
+A ring is a high-priority FCM data message with the keys `v`, `kind` (`ring`),
+`call`, `caller`, `name` and `until` (Unix seconds). The SDK has no Firebase
+dependency: the app's `FirebaseMessagingService` shows the incoming call and
+answers with `answer(call, true)`. Register again with `edit(device, token = new)`
+when Firebase rotates the token.
+
+## Meetings on calendar events
+
+`client.scheduling.addMeeting(eventHex)` books a Calls meeting for an event: it
+moves with the event and is cancelled with it. `meeting(eventHex)` reads it (null
+when the event never had one) and `removeMeeting(eventHex)` cancels it. The
+`EventMeeting` has the members' `link` and a `guest` link for attendees outside
+the workspace; its `state` is `wanted` while Calls books it, then `booked`.
+
+## Signing in the media SDK
+
+Aduki Calls' media SDK never holds a refresh token or a key. It asks for an
+access token and a DPoP proof per request through its `Identity` interface:
 
 ```kotlin
 val identity = object : pro.aduki.calls.Identity {
-    override fun token(): String = calls.token()
-    override fun proof(method: String, url: String, token: String): String = calls.proof(method, url, token)
+    override fun token(): String = client.calls.token()
+    override fun proof(method: String, url: String, token: String): String = client.calls.proof(method, url, token)
 }
-val client = pro.aduki.calls.Client.withIdentity(url, models, identity)
 ```
 
-`proof` also signs the signalling socket (`GET wss://.../v1/signal`): the query is
-not signed, and the token is bound with `ath`.
+Both are blocking; the media SDK calls them off the main thread. `proof` also
+signs the signalling socket (`GET wss://.../v1/signal`).
 
-## What it covers
+## The HTTP client
 
-| Call | Route |
-|---|---|
-| `capabilities()` | `GET /capabilities`: signalling URLs, push kinds, limits |
-| `start(to, idempotency)` | `POST /calls`: a call, ringing up to 20 accounts; the same key returns the same call |
-| `fetch(call)`, `list(limit, after)` | `GET /calls/{hex}`, `GET /calls` (newest first) |
-| `ringing()` | `GET /calls?state=ringing`: what rings for you, after a ring's push |
-| `answer(call, accept)` | `POST /calls/{hex}/answers`: a ticket when accepted; `409 state.conflict` once answered or missed (60 s) |
-| `ticket(call)` | `POST /calls/{hex}/tokens`: a single-use ticket into the call |
-| `leave(call)` | `DELETE /calls/{hex}/participants/me`: on every device |
-| `relays()` | `POST /relays`: TURN servers, or none |
-| `register(platform, token, label)`, `devices()`, `edit(device, token, label)`, `remove(device)` | `/devices`: the FCM token a device rings on (`null`: it rings nowhere) |
-| `limits()` | `GET /limits`: the package, its `audio.*` keys (null: unlimited), what is used this month; a new call past them is `403 plan.limit` |
-| `report(call, report)` | `POST /calls/{hex}/reports`: the final numbers of a call when leaving it, once, after being in it (shares per mille, times in ms; no audio, no device identifier) |
-| `quality(call)` | `GET /calls/{hex}/quality`: per person, the reports folded and a MOS estimate (1 to 4.5); for the owner and the participants |
-
-## Rings
-
-A ring is a high-priority FCM data message to the registered token, with the data
-keys `v`, `kind` (`ring`), `call`, `caller`, `name` and `until` (Unix seconds). The
-SDK has no Firebase dependency: the app's own `FirebaseMessagingService` receives
-it, shows the incoming call (aduki Calls' Android library has a ready one), and on
-Answer calls `answer(call, true)` or lets aduki Calls' SDK do it. Register again
-with `edit(device, token = new)` when Firebase rotates the token.
-
-## Rules the client follows
-
-- Envelope `{success, data}`; a failure is `AdukiException.Api(status, kind, message,
-  details, retryAfter)`, with `kind` such as `state.conflict`, `rate.limited` or
-  `input.invalid`. Branch on `kind`, not the message.
-- Creating calls and devices sends an `Idempotency-Key` (a new UUID unless you pass
-  one). A key that is not a UUID is refused before any request.
-- Ids are sixteen lowercase hex digits, checked before the request. The server
-  refuses unknown body fields.
+`client.callsApi` is the blocking `pro.aduki.net.http.Calls` behind the facade. It
+can also be built by hand with an `Id` (`Calls(http, id, dpop)`) or any `Bearer`
+token source; `http` must carry the `Dpop` interceptor and no credentials. Creating
+calls and devices sends an `Idempotency-Key` (a new UUID unless one is passed).

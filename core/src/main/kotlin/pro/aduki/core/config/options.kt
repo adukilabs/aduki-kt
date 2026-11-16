@@ -11,6 +11,8 @@ data class Options(
     /** TLS pins for the default HTTP client; empty (the default) means no pinning. */
     val pins: List<Pin> = emptyList(),
     /** The Aduki Store base, read for the pooled storage quota. */
-    val drive: String = Endpoints.STORE
+    val drive: String = Endpoints.STORE,
+    /** The Aduki Calls base: calls, meetings and the call log. */
+    val calls: String = Endpoints.CALLS
 )
 

@@ -1,9 +1,7 @@
 package pro.aduki.net.http
 
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
 import pro.aduki.core.config.Endpoints
@@ -12,21 +10,21 @@ import pro.aduki.core.errors.AdukiException
 /** Server parameters and verification requirements for signup. */
 data class Requirements(val phone: Boolean, val domain: String)
 
-/** Pending account creation outcome: account identifier and TOTP enrolment details. */
-data class Enrolment(val id: String, val handle: String, val uri: String, val secret: String)
-
 /**
- * Signup implements the staged registration flow against Aduki ID:
- * 1. Requirements discovery (`GET /v1/accounts`).
- * 2. Stage 1 account creation (`POST /v1/accounts`).
- * 3. Stage 2 second-factor verification (`POST /v1/accounts/{hex}/verifications`).
+ * Signup is where new Aduki accounts come from: the sign-up page of Aduki ID
+ * in a browser. The SDK no longer creates accounts (1.0.0): apps open [url]
+ * in a Custom Tab (Android: `pro.aduki.android.signin.SignUpTab`) and sign
+ * in afterwards with `Aduki.signIn`. [requirements] stays for the personal
+ * mail domain an app completes a handle with.
  */
 object Signup {
 
-    private val JSON = "application/json; charset=utf-8".toMediaType()
+    /** The path of the sign-up page on the Aduki ID site. */
+    const val PATH = "/signup"
 
     /**
-     * Discovers personal signup requirements from Aduki ID.
+     * Discovers personal signup requirements from Aduki ID (`GET /v1/accounts`):
+     * whether a phone is needed and the personal mail domain (`aduki.me`).
      */
     fun requirements(client: OkHttpClient, identity: String = Endpoints.ID): Requirements {
         val request = Request.Builder()
@@ -44,82 +42,48 @@ object Signup {
     }
 
     /**
-     * Stage 1: Initiates personal account registration.
-     * The account remains pending until confirmed by [verify].
+     * The address of the sign-up page (`https://id.aduki.pro/signup`) for
+     * the Aduki ID at [identity] (its API base, `/v1` or not). [handle]
+     * fills the address field. [back] is where the page sends the person
+     * once the account is made: the app's own URI (a custom scheme such as
+     * `pro.aduki.mail:/signup`, or an https App Link), which gets the new
+     * account's handle as `?handle=` ([handle] reads it). Without [back]
+     * the page ends on the site's own sign-in; closing the tab returns to
+     * the app.
      */
-    fun create(
-        client: OkHttpClient,
-        identity: String,
-        handle: String,
-        name: String,
-        password: String,
-        phone: String? = null
-    ): Enrolment {
-        val root = JSONObject().apply {
-            put("handle", handle.trim())
-            put("name", name.trim())
-            put("password", password)
-            if (!phone.isNullOrBlank()) put("phone", phone.trim())
+    fun url(identity: String = Endpoints.ID, handle: String? = null, back: String? = null): String {
+        val site = identity.trimEnd('/').removeSuffix("/v1").trimEnd('/')
+        val query = buildList {
+            handle?.trim()?.ifBlank { null }?.let { add("handle=${encode(it)}") }
+            back?.let {
+                val uri = runCatching { java.net.URI(it) }.getOrNull()
+                require(uri != null && uri.scheme != null && uri.fragment == null) { "back is an absolute URI without a fragment" }
+                add("return=${encode(it)}")
+            }
         }
-        val request = Request.Builder()
-            .url(url(identity, "accounts"))
-            .post(root.toString().toRequestBody(JSON))
-            .build()
-
-        client.newCall(request).execute().use { response ->
-            val data = data(response, "Account creation")
-            val totp = data.optJSONObject("totp")
-                ?: throw AdukiException.Auth("Missing totp in account creation response")
-            return Enrolment(
-                id = required(data, "id", "account creation"),
-                handle = required(data, "handle", "account creation"),
-                uri = required(totp, "uri", "totp enrolment"),
-                secret = required(totp, "secret", "totp enrolment")
-            )
-        }
+        return site + PATH + if (query.isEmpty()) "" else query.joinToString("&", prefix = "?")
     }
 
     /**
-     * Stage 2: Confirms the authenticator code, activating the account.
-     * Returns the one-time backup codes and, when [audience] is given, the
-     * session Aduki ID opened with the same code ([Verified.tokens]; null from
-     * a server that predates it). The code is spent here: Aduki ID accepts each
-     * authenticator step once, so a separate sign-in needs the next code.
+     * The new account's handle when [uri] is the app's [back] address the
+     * sign-up page returned to (scheme, authority and path equal), else
+     * null. The handle is only a hint for the sign-in form: the person
+     * still signs in with their password and code.
      */
-    fun verify(
-        client: OkHttpClient,
-        identity: String,
-        hex: String,
-        password: String,
-        code: String,
-        audience: String? = null,
-        device: String? = null
-    ): Verified {
-        val root = JSONObject().apply {
-            put("password", password)
-            put("code", code.trim())
-            audience?.let { put("audience", it) }
-            device?.trim()?.take(Login.DEVICE)?.ifBlank { null }?.let { put("device", it) }
-        }
-        val request = Request.Builder()
-            .url(url(identity, "accounts/${hex.trim()}/verifications"))
-            .post(root.toString().toRequestBody(JSON))
-            .build()
-
-        client.newCall(request).execute().use { response ->
-            val data = data(response, "Account verification")
-            val array = data.optJSONArray("codes")
-            val codes = if (array == null) emptyList() else List(array.length()) { i -> array.getString(i) }
-            val refresh = data.optString("refresh")
-            val tokens = if (refresh.isBlank()) null else Tokens(
-                token = data.optString("access"),
-                refresh = refresh,
-                expires = data.optLong("expires", 0).toString(),
-                session = data.optString("session")
-            )
-            return Verified(codes, tokens)
+    fun handle(uri: String, back: String): String? {
+        val got = runCatching { java.net.URI(uri) }.getOrNull() ?: return null
+        val want = runCatching { java.net.URI(back) }.getOrNull() ?: return null
+        if (!got.scheme.equals(want.scheme, ignoreCase = true)) return null
+        if (!(got.rawAuthority ?: "").equals(want.rawAuthority ?: "", ignoreCase = true)) return null
+        if ((got.rawPath ?: got.rawSchemeSpecificPart?.substringBefore('?')) != (want.rawPath ?: want.rawSchemeSpecificPart?.substringBefore('?'))) return null
+        val query = got.rawQuery ?: return null
+        return query.split('&').firstNotNullOfOrNull { pair ->
+            val (k, v) = pair.split('=', limit = 2).let { it[0] to it.getOrElse(1) { "" } }
+            if (k == "handle") java.net.URLDecoder.decode(v, "UTF-8").trim().ifBlank { null } else null
         }
     }
+
+    private fun encode(value: String): String = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 
     private fun url(identity: String, path: String) = "${identity.trimEnd('/')}/$path"
 
@@ -144,6 +108,3 @@ object Signup {
         return value
     }
 }
-
-/** What [Signup.verify] returns: the backup codes, and the session opened with the code when one was asked for. */
-data class Verified(val codes: List<String>, val tokens: Tokens? = null)

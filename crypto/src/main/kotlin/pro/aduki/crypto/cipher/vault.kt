@@ -49,6 +49,7 @@ class Vault(
     // the vault. Per-field keys come from the seed by HKDF-Expand (HMAC-SHA256)
     // with a field label, so the same value in two fields gives two unrelated
     // index values.
+    @Volatile
     private var indexFile: java.io.File? = null
     private val seeds = java.util.TreeMap<Int, ByteArray>()
 

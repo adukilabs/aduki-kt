@@ -545,6 +545,42 @@ class Contacts internal constructor(
 
         fun nameKeys(c: Contact) = listOf(c.name.trim().lowercase().split(Regex("\\s+")).joinToString(" ")).filter { it.isNotEmpty() }
     }
+
+    // ---- the trash, linked accounts and recent dealings -------------------------------------------------------------
+
+    /** Deleted contacts, kept 30 days on the server, latest first. Throws `AdukiException`. */
+    suspend fun trash(): List<pro.aduki.core.models.TrashedContact> = guard { client.contactsApi.trash() }
+
+    /**
+     * Puts a deleted contact back (its trash [entry]) with its old hex, then
+     * syncs the address book so it is in the local store again. `409` when
+     * its UID is in use again.
+     */
+    suspend fun restore(entry: String): pro.aduki.core.models.ContactRow {
+        val row = guard { client.contactsApi.restore(entry) }
+        try {
+            sync()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            pro.aduki.core.errors.Faults.report("contact sync after restore", e)
+        }
+        return row
+    }
+
+    /** Deletes a trash [entry] for good. */
+    suspend fun purge(entry: String): Unit = guard { client.contactsApi.purge(entry) }
+
+    /** Empties the trash; how many went. */
+    suspend fun emptyTrash(): Int = guard { client.contactsApi.emptyTrash() }
+
+    /** The Aduki accounts holding one of contact [hex]'s addresses, and what they are on (`mail`, `chats`, `calls`). */
+    suspend fun accounts(hex: String): List<pro.aduki.core.models.LinkedAccount> = guard { client.contactsApi.accounts(hex) }
+
+    /** The latest mail and events with contact [hex], newest first ([limit] 1 to 50). */
+    suspend fun recent(hex: String, limit: Int = 10): List<pro.aduki.core.models.Dealing> =
+        guard { client.contactsApi.recent(hex, limit) }
+
 }
 
 /**

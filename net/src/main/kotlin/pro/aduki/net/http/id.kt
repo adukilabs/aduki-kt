@@ -174,13 +174,8 @@ class Id(
     /** Discovers personal signup requirements from Aduki ID. */
     fun requirements(): Requirements = Signup.requirements(client, base)
 
-    /** Stage 1: Initiates personal account registration. */
-    fun create(handle: String, name: String, password: String, phone: String? = null): Enrolment =
-        Signup.create(client, base, handle, name, password, phone)
-
-    /** Stage 2: Confirms the authenticator code and returns backup codes. */
-    fun verify(hex: String, password: String, code: String): List<String> =
-        Signup.verify(client, base, hex, password, code).codes
+    /** The sign-up page of this Aduki ID, for a browser ([Signup.url]). */
+    fun signUpUrl(handle: String? = null, back: String? = null): String = Signup.url(base, handle, back)
 
     /** Lists active sessions for the authenticated account from Aduki ID. */
     fun sessions(): List<AccountSession> {
