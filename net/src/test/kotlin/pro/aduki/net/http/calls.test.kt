@@ -81,8 +81,9 @@ class CallsTest {
         val client = calls()
         answer(ok("""{"call":"$call","state":"open","join":{"signal":"wss://x/v1/signal","room":"$call"},"ringing":{"people":1,"devices":2}}""", 201))
         val started = client.start(listOf(baraka))
-        assertEquals(call, started.getString("call"))
-        assertEquals(2, started.getJSONObject("ringing").getInt("devices"))
+        assertEquals(call, started.call)
+        assertEquals(2, started.ringing!!.devices)
+        assertEquals("wss://x/v1/signal", started.signal)
 
         val request = seen.single()
         assertEquals("POST", request.method)
@@ -111,14 +112,14 @@ class CallsTest {
         val client = calls()
         val token = client.token()
         assertEquals("audio", claims(token).getString("aud"))
-        val proof = client.proof("GET", "wss://voice.aduki.pro/v1/signal?x=1", token)
+        val proof = client.proof("GET", "wss://calls.aduki.pro/v1/signal?x=1", token)
         val header = JSONObject(String(Base64.getUrlDecoder().decode(proof.split('.')[0])))
         assertEquals("dpop+jwt", header.getString("typ"))
         val body = claims(proof)
         assertEquals("GET", body.getString("htm"))
-        assertEquals("wss://voice.aduki.pro/v1/signal", body.getString("htu"))
+        assertEquals("wss://calls.aduki.pro/v1/signal", body.getString("htu"))
         assertEquals(ath(token), body.getString("ath"))
-        assertFalse(claims(client.proof("GET", "wss://voice.aduki.pro/v1/signal", token)).getString("jti") == body.getString("jti"))
+        assertFalse(claims(client.proof("GET", "wss://calls.aduki.pro/v1/signal", token)).getString("jti") == body.getString("jti"))
     }
 
     @Test
@@ -126,7 +127,8 @@ class CallsTest {
         val client = calls()
         answer(ok("""{"items":[{"call":"$call","owner":"$amina","invite":{"state":"ringing"}}],"next":null}"""))
         val ringing = client.ringing()
-        assertEquals(amina, ringing.single().getString("owner"))
+        assertEquals(amina, ringing.single().owner)
+        assertEquals("ringing", ringing.single().invite!!.state)
         assertEquals("ringing", seen.single().requestUrl!!.queryParameter("state"))
     }
 
@@ -138,10 +140,10 @@ class CallsTest {
             ok("""{"ok":true}""", 201),
             failure(409, "state.conflict")
         )
-        assertEquals("t1", client.answer(call, accept = true).getString("ticket"))
+        assertEquals("t1", client.answer(call, accept = true)!!.ticket)
         assertEquals("accept", JSONObject(seen[0].body.readUtf8()).getString("decision"))
         assertEquals("/calls/v1/calls/$call/answers", seen[0].path)
-        client.answer(call, accept = false)
+        assertNull(client.answer(call, accept = false))
         assertEquals("decline", JSONObject(seen[1].body.readUtf8()).getString("decision"))
         try {
             client.answer(call, accept = true)
@@ -160,7 +162,7 @@ class CallsTest {
             MockResponse().setResponseCode(204),
             ok("""{"servers":[],"ttl":0,"expires":null,"policy":{"iceTransportPolicy":"all"}}""")
         )
-        assertEquals("t2", client.ticket(call).getString("ticket"))
+        assertEquals("t2", client.ticket(call).ticket)
         client.leave(call)
         assertEquals(0, client.relays().getInt("ttl"))
         assertEquals(listOf("POST", "DELETE", "POST"), seen.map { it.method })
@@ -179,7 +181,7 @@ class CallsTest {
             ok("""{"id":"68e5ee4b5c280c80","label":"phone"}"""),
             MockResponse().setResponseCode(204)
         )
-        assertEquals("68e5ee4b5c280c80", client.register("android", "fcm-token", label = "Pixel").getString("id"))
+        assertEquals("68e5ee4b5c280c80", client.register("android", "fcm-token", label = "Pixel").id)
         val first = JSONObject(seen[0].body.readUtf8())
         assertEquals("android", first.getString("platform"))
         assertEquals("fcm", first.getJSONObject("push").getString("kind"))
@@ -212,8 +214,9 @@ class CallsTest {
             failure(403, "plan.limit")
         )
         val plan = client.limits()
-        assertEquals("free", plan.getString("package"))
-        assertEquals(12, plan.getJSONObject("usage").getInt("audio.minutes"))
+        assertEquals("free", plan.plan)
+        assertEquals(12L, plan.used["audio.minutes"])
+        assertEquals(300L, plan.limit("audio.minutes"))
         client.report(call, JSONObject().put("agent", "test").put("loss", 12).put("rtt", 180))
         assertEquals("POST", seen[1].method)
         assertEquals("/calls/v1/calls/$call/reports", seen[1].path)
@@ -276,5 +279,97 @@ class CallsTest {
         }
         try { client.fetch(call); fail() } catch (_: AdukiException.Protocol) {}
         assertNull(seen[1].getHeader("Idempotency-Key"))
+    }
+
+    @Test
+    fun aMeetingHasACodeAndALinkAndCanBeEndedAndRestarted() {
+        val client = calls()
+        val meeting = """{"call":"$call","kind":"meeting","state":"open","owner":"$amina","host":"$amina","code":"abc-defg-hij",""" +
+            """"title":"Standup","lobby":"guests","created":"2026-11-16T08:00:00Z","expires":"2026-11-17T08:00:00Z","join":{"signal":"wss://x/v1/signal","room":"$call"}}"""
+        answer(
+            ok(meeting, 201),
+            ok(meeting.replace("\"state\":\"open\"", "\"state\":\"expired\",\"closed\":\"2026-11-16T09:00:00Z\"")),
+            ok(meeting.replace("\"lobby\"", "\"restarted\":true,\"lobby\"")),
+            ok("""{"exists":true,"open":true,"ended":false,"organiser":true,"title":"Standup","call":"$call","code":"abc-defg-hij"}""")
+        )
+        val made = client.meeting(title = "Standup", lobby = "guests")
+        assertTrue(made.meeting)
+        assertEquals("abc-defg-hij", made.code)
+        assertEquals(server.url("/calls").toString() + "/call/abc-defg-hij", made.link)
+        assertEquals(java.time.Instant.parse("2026-11-16T08:00:00Z"), made.created)
+        val body = JSONObject(seen[0].body.readUtf8())
+        assertEquals("meeting", body.getString("kind"))
+        assertEquals("Standup", body.getString("title"))
+        assertEquals("guests", body.getString("lobby"))
+        UUID.fromString(seen[0].getHeader("Idempotency-Key"))
+
+        val ended = client.end(call)
+        assertEquals("DELETE", seen[1].method)
+        assertEquals("/calls/v1/calls/$call", seen[1].path)
+        assertEquals(java.time.Instant.parse("2026-11-16T09:00:00Z"), ended.closed)
+
+        assertTrue(client.reopen(call).restarted)
+        assertEquals("POST", seen[2].method)
+        assertEquals("/calls/v1/calls/$call/reopen", seen[2].path)
+
+        val status = client.meetingStatus("https://calls.aduki.pro/call/ABC-DEFG-HIJ?x=1")
+        assertEquals("/calls/v1/meetings/abc-defg-hij", seen[3].path)
+        assertTrue(status.exists && status.open && status.organiser)
+        assertEquals(call, status.call)
+    }
+
+    @Test
+    fun aLobbyMakesThePersonWaitAndTheLogFilters() {
+        val client = calls()
+        answer(
+            ok("""{"call":"$call","lobby":"waiting","since":"2026-11-16T08:00:00Z"}""", 201),
+            ok("""{"call":"$call","lobby":"waiting","since":"2026-11-16T08:00:00Z"}""", 201),
+            ok("""{"items":[{"call":"$call","kind":"direct","state":"expired"}],"next":"$amina"}"""),
+            ok("""{"count":3,"seen":null}"""),
+            ok("""{"count":0,"seen":"2026-11-16T08:00:00Z"}"""),
+            MockResponse().setResponseCode(204)
+        )
+        val entry = client.enter("abcdefghij")
+        assertTrue(entry is pro.aduki.core.models.CallEntry.Waiting)
+        assertEquals("/calls/v1/calls/abc-defg-hij/tokens", seen[0].path)
+        try { client.ticket(call); fail() } catch (e: AdukiException.Api) { assertEquals("lobby.waiting", e.kind) }
+        val page = client.list(limit = 10, missed = true, kind = "direct", with = baraka)
+        assertEquals(amina, page.next)
+        val q = seen[2].requestUrl!!
+        assertEquals("missed", q.queryParameter("state"))
+        assertEquals("direct", q.queryParameter("kind"))
+        assertEquals(baraka, q.queryParameter("with"))
+        assertEquals(3, client.missed().count)
+        assertEquals(java.time.Instant.parse("2026-11-16T08:00:00Z"), client.seenMissed().seen)
+        assertEquals("PUT", seen[4].method)
+        assertEquals("/calls/v1/calls/missed/seen", seen[4].path)
+        client.hide(call)
+        assertEquals("/calls/v1/calls/$call/log", seen[5].path)
+    }
+
+    @Test
+    fun meetingStatusWithoutAnAccountSendsNoCredentials() {
+        answer(ok("""{"exists":false,"open":false,"ended":false}"""))
+        val status = Calls.status(OkHttpClient(), "abc defg hij", server.url("/calls/v1").toString())
+        assertFalse(status.exists)
+        assertNull(status.code)
+        assertNull(seen.single().getHeader("Authorization"))
+        assertEquals("/calls/v1/meetings/abc-defg-hij", seen.single().path)
+    }
+
+    @Test
+    fun meetingCodesAreReadFromWhatWasTypedOrPasted() {
+        val m = pro.aduki.core.calls.Meetings
+        assertEquals("abc-defg-hij", m.code("ABC-DEFG-HIJ"))
+        assertEquals("abc-defg-hij", m.code(" abc defg hij "))
+        assertEquals("abc-defg-hij", m.code("abc.defg_hij"))
+        assertEquals("abc-defg-hij", m.code("https://calls.aduki.pro/call/abc-defg-hij?guest=1#x"))
+        assertEquals("abc-defg-hij", m.code("calls.aduki.pro/call/abcdefghij/"))
+        assertEquals(call, m.code(call))
+        assertNull(m.code("abc-defg-hi"))
+        assertNull(m.code("hello"))
+        assertNull(m.code(""))
+        assertEquals("https://calls.aduki.pro/call/abc-defg-hij", m.link("abcdefghij"))
+        try { m.link("nope"); fail() } catch (_: IllegalArgumentException) {}
     }
 }

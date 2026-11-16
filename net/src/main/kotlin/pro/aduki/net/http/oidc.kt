@@ -68,8 +68,9 @@ class Oidc(
         val claims: JSONObject?
     )
 
-    private var found: Discovery? = null
-    private var keys: JSONArray? = null
+    // Read and written from the threads of concurrent sign-ins.
+    @Volatile private var found: Discovery? = null
+    @Volatile private var keys: JSONArray? = null
 
     /** Fetches and checks the discovery document (the issuer must be exactly this one). */
     fun discover(): Discovery {

@@ -6,7 +6,11 @@ import java.util.concurrent.CopyOnWriteArrayList
  * Lifecycle monitors application foreground and background states, pausing or resuming sync.
  */
 class Lifecycle {
+    // Read from any thread; changed under the lock so two racing calls
+    // cannot both see the old state and notify twice.
+    @Volatile
     private var state: Boolean = true
+    private val lock = Any()
     private val listeners = CopyOnWriteArrayList<(Boolean) -> Unit>()
 
     /**
@@ -18,20 +22,16 @@ class Lifecycle {
      * Transitions to background: suspends background polling and sync tasks.
      */
     fun pause() {
-        if (state) {
-            state = false
-            listeners.forEach { it(false) }
-        }
+        val changed = synchronized(lock) { state.also { state = false } }
+        if (changed) listeners.forEach { it(false) }
     }
 
     /**
      * Transitions to foreground: reactivates polling and triggers sync flush.
      */
     fun resume() {
-        if (!state) {
-            state = true
-            listeners.forEach { it(true) }
-        }
+        val changed = synchronized(lock) { (!state).also { state = true } }
+        if (changed) listeners.forEach { it(true) }
     }
 
     /**

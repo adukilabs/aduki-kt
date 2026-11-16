@@ -382,3 +382,11 @@ client.scheduling.updateContactDates(alarm = null)                   // no remin
 client.scheduling.updateContactDates(enabled = false)                // removes the calendar
 ```
 
+
+## Calls meetings on events
+
+`addMeeting(hex)` puts an Aduki Calls meeting on an event; it moves and is
+cancelled with the event. `meeting(hex)` reads it (null when the event never had
+one) and `removeMeeting(hex)` cancels it in Calls. `EventMeeting.link` is the
+members' join link, `guest` the link for attendees outside the workspace. See
+[Calls and meetings](calls.md).

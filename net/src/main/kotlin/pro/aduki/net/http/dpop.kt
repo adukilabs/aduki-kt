@@ -54,10 +54,34 @@ class Dpop private constructor(
     private val key: Key
         get() = opened ?: source().also { opened = it }
 
+    // The encoded proof header and the thumbprint of the opened key, built
+    // once per key instead of for every request.
+    private class Signer(val key: Key, val header: String, val thumbprint: String)
+
+    @Volatile
+    private var signer: Signer? = null
+
+    private fun signer(): Signer {
+        val k = key
+        signer?.let { if (it.key === k) return it }
+        val header = JSONObject()
+            .put("typ", "dpop+jwt")
+            .put("alg", k.alg)
+            .put("jwk", JSONObject(k.jwk))
+        return Signer(k, b64(header.toString().toByteArray()), k.thumbprint()).also { signer = it }
+    }
+
+    // The last token checked by [bound] and the answer: a client sends the
+    // same access token many times, and its claims are decoded once.
+    private class Binding(val token: String, val thumbprint: String, val bound: Boolean)
+
+    @Volatile
+    private var binding: Binding? = null
+
     private val nonces get() = NONCES
 
     /** The key's thumbprint, as stored by Aduki ID in `cnf.jkt`. */
-    fun thumbprint(): String = key.thumbprint()
+    fun thumbprint(): String = signer().thumbprint
 
     /**
      * One proof for [method] on [url] (query and fragment are not signed).
@@ -65,10 +89,7 @@ class Dpop private constructor(
      * server's [nonce] when it asked for one.
      */
     fun proof(method: String, url: String, access: String? = null, nonce: String? = null): String {
-        val header = JSONObject()
-            .put("typ", "dpop+jwt")
-            .put("alg", key.alg)
-            .put("jwk", JSONObject(key.jwk))
+        val s = signer()
         val claims = JSONObject()
             .put("htm", method.uppercase())
             .put("htu", url.substringBefore('#').substringBefore('?'))
@@ -76,8 +97,8 @@ class Dpop private constructor(
             .put("jti", jti())
         if (access != null) claims.put("ath", b64(MessageDigest.getInstance("SHA-256").digest(access.toByteArray())))
         if (nonce != null) claims.put("nonce", nonce)
-        val input = "${b64(header.toString().toByteArray())}.${b64(claims.toString().toByteArray())}"
-        return "$input.${b64(key.sign(input.toByteArray()))}"
+        val input = "${s.header}.${b64(claims.toString().toByteArray())}"
+        return "$input.${b64(s.key.sign(input.toByteArray()))}"
     }
 
     /**
@@ -139,13 +160,17 @@ class Dpop private constructor(
 
     // True when the access token (a JWT) is bound to this key.
     private fun bound(token: String): Boolean {
+        val thumbprint = signer().thumbprint
+        binding?.let { if (it.token == token && it.thumbprint == thumbprint) return it.bound }
         val body = token.split('.').getOrNull(1) ?: return false
-        return try {
+        val bound = try {
             val claims = JSONObject(String(Base64.getUrlDecoder().decode(body)))
-            claims.optJSONObject("cnf")?.optString("jkt") == key.thumbprint()
+            claims.optJSONObject("cnf")?.optString("jkt") == thumbprint
         } catch (_: Exception) {
             false
         }
+        binding = Binding(token, thumbprint, bound)
+        return bound
     }
 
     private fun jti(): String = ByteArray(16).also(random::nextBytes).let(::b64)

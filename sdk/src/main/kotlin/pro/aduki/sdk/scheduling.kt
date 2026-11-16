@@ -562,6 +562,21 @@ class Scheduling internal constructor(
     suspend fun updateContactDates(enabled: Boolean? = null, alarm: ContactDates.Alarm?): ContactDates =
         client.io { api().updateContactDates(enabled, alarm) }.also { refresh(enabled) }
 
+    // ---- Aduki Calls meetings on events -----------------------------------------------------------------------------
+
+    /** The Calls meeting of event [hex] (its link and guest link), or null when it never had one. */
+    suspend fun meeting(hex: String): pro.aduki.core.models.EventMeeting? = client.io { api().meeting(hex) }
+
+    /**
+     * Puts a Calls meeting on event [hex]: it is booked for the event's time,
+     * moves with the event and is cancelled with it. Share its `link`; the
+     * `guest` link is for attendees outside the workspace.
+     */
+    suspend fun addMeeting(hex: String): pro.aduki.core.models.EventMeeting = client.io { api().addMeeting(hex) }
+
+    /** Takes the Calls meeting off event [hex] (cancelled in Calls). */
+    suspend fun removeMeeting(hex: String): pro.aduki.core.models.EventMeeting = client.io { api().removeMeeting(hex) }
+
     // The dates calendar comes or goes with the setting: read the list again.
     private suspend fun refresh(enabled: Boolean?) {
         if (enabled == null) return

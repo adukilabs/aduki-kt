@@ -229,6 +229,77 @@ class Contacts(
         execute(Request.Builder().url(url(hex).build()).delete().build()) { }
     }
 
+    // ---- the trash, linked accounts and recent dealings (aduki contacts v2) ---------------------------------------
+
+    /** Deleted contacts, kept 30 days, latest first (`GET /user/contacts/trash`). */
+    fun trash(): List<pro.aduki.core.models.TrashedContact> =
+        Rest.execute(client, Rest.request("GET", url("trash").build())) { data ->
+            Rest.items(data).map { o ->
+                pro.aduki.core.models.TrashedContact(
+                    id = o.optString("id"),
+                    card = o.optString("card"),
+                    name = Rest.text(o, "name"),
+                    emails = Rest.strings(o.optJSONArray("emails")),
+                    phones = Rest.strings(o.optJSONArray("phones")),
+                    groups = Rest.strings(o.optJSONArray("groups")),
+                    photo = o.optBoolean("photo", false),
+                    origin = Rest.text(o, "origin"),
+                    merged = Rest.text(o, "merged"),
+                    deleted = Rest.instant(o, "deleted"),
+                    purge = Rest.instant(o, "purge")
+                )
+            }
+        }
+
+    /**
+     * Puts trash [entry] back as it was, with its old hex
+     * (`POST /user/contacts/trash/{id}/restore`); `409` when its UID is in use again.
+     */
+    fun restore(entry: String): ContactRow =
+        Rest.execute(client, Rest.request("POST", url("trash", entry, "restore").build())) { data -> rowOf(Rest.obj(data)) }
+
+    /** Deletes trash [entry] for good. */
+    fun purge(entry: String) {
+        Rest.execute(client, Rest.request("DELETE", url("trash", entry).build())) { }
+    }
+
+    /** Empties the trash; how many went. */
+    fun emptyTrash(): Int =
+        Rest.execute(client, Rest.request("DELETE", url("trash").build())) { data -> (data as? JSONObject)?.optInt("removed") ?: 0 }
+
+    /** The Aduki accounts holding one of contact [hex]'s addresses (`GET /user/contacts/{hex}/accounts`). */
+    fun accounts(hex: String): List<pro.aduki.core.models.LinkedAccount> =
+        Rest.execute(client, Rest.request("GET", url(hex, "accounts").build())) { data ->
+            val list = (data as? JSONObject)?.optJSONArray("accounts") ?: (data as? JSONArray) ?: JSONArray()
+            (0 until list.length()).mapNotNull { list.optJSONObject(it) }.map { o ->
+                pro.aduki.core.models.LinkedAccount(
+                    address = o.optString("address"),
+                    account = o.optString("account"),
+                    handle = o.optString("handle"),
+                    name = Rest.text(o, "name"),
+                    colleague = o.optBoolean("colleague", false),
+                    apps = Rest.strings(o.optJSONArray("apps"))
+                )
+            }
+        }
+
+    /** The latest mail and events with contact [hex], newest first ([limit] 1 to 50). */
+    fun recent(hex: String, limit: Int = 10): List<pro.aduki.core.models.Dealing> {
+        require(limit in 1..50) { "limit is 1 to 50" }
+        val target = url(hex, "recent").addQueryParameter("limit", limit.toString()).build()
+        return Rest.execute(client, Rest.request("GET", target)) { data ->
+            Rest.items(data).map { o ->
+                pro.aduki.core.models.Dealing(
+                    kind = o.optString("kind"),
+                    id = o.optString("id"),
+                    title = Rest.text(o, "title"),
+                    `when` = Rest.instant(o, "when"),
+                    way = o.optString("way")
+                )
+            }
+        }
+    }
+
     private fun write(url: HttpUrl.Builder, method: String, payload: JSONObject, key: String?): Request {
         val builder = Request.Builder().url(url.build()).method(method, payload.toString().toRequestBody(mediaJson))
         if (!key.isNullOrBlank()) builder.header("Idempotency-Key", key)
@@ -295,6 +366,9 @@ class Contacts(
         // The server overrides `FN` with the name sent; send the card's own.
         private fun name(vcard: String): String = runCatching { Vcard.parse(vcard).name }
             .getOrElse { throw IllegalArgumentException("Not a vCard 3.0 or 4.0 with a name", it) }
+
+        /** Parses one contact row of the REST address book. */
+        fun rowOf(obj: JSONObject): ContactRow = row(obj)
 
         private fun row(obj: JSONObject): ContactRow {
             val photo = obj.optJSONObject("photo")

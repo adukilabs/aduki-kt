@@ -372,3 +372,20 @@ data class Group(
     var count: Int = 0               // members on the server at the last sync
 )
 ```
+
+## 8. Trash, accounts and recent dealings
+
+Deleting a contact keeps it 30 days in the server's trash.
+
+- `trash(): List<TrashedContact>`: latest first, with the entry `id` and the
+  contact hex (`card`) it gets back.
+- `restore(entry)`: puts it back with its old hex, then syncs the address book;
+  `409` when its UID is in use again. `purge(entry)` and `emptyTrash()` delete
+  for good.
+- `accounts(hex): List<LinkedAccount>`: the Aduki accounts holding one of the
+  contact's addresses, and what they are on (`mail`, `chats`, `calls`): whether
+  to offer a call or a chat.
+- `recent(hex, limit)`: the latest mail and events with the contact (`Dealing`:
+  `kind`, `id`, `title`, `when`, `way`).
+
+These are server reads and throw `AdukiException` (`Api` with the server's kind).

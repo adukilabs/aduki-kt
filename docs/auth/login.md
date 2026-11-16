@@ -34,11 +34,8 @@ suspend fun Aduki.Companion.login(
 | `tokenStore` | `TokenStore?` | `null` | Where the session is kept and reloaded ([tokens](tokens.md#the-tokenstore-contract)). |
 | `device` | `String?` | `null` | Names the session in `Aduki.sessions()` (e.g. `"Mail on Pixel 9"`); trimmed, at most 128 characters. Aduki ID stores it with the session and uses it for its new-device alert. Without it the session has no name. |
 
-`Aduki.register(hex, password, code, …, device)` finishes a staged signup: the
-verification activates the account and opens its first session in the same
-call (Aduki ID accepts each authenticator step once, so the code cannot be used
-again for a separate sign-in). It returns the client and the backup codes; an
-Aduki ID that does not open the session throws `AdukiException.Protocol`.
+The SDK does not make accounts (1.0.0). People sign up on Aduki ID's
+sign-up page in a browser, then sign in here: see [Sign-up](signup.md).
 
 Returns a client holding the access token, the refresh token and the session,
 with the account (`me()`) already resolved.

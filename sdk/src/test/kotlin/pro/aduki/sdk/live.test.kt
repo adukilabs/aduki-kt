@@ -555,6 +555,74 @@ class LiveTest {
         old.close()
     }
 
+    /**
+     * T5-LIVE-1.0: what 1.0.0 added, on one DPoP-bound sign-in: a meeting made,
+     * found by its code, joined, ended, restarted and ended again (then hidden
+     * from the log); sender logos and verification; billing reads; the
+     * contacts trash and a contact's accounts and dealings. Nothing is left
+     * behind but the hidden meeting.
+     */
+    @Test
+    fun oneZero() = runBlocking<Unit> {
+        val client = signIn("aduki-kt live 1.0", dpop = pro.aduki.crypto.dpop.Software.p256())
+        try {
+            val limits = client.calls.limits()
+            assertTrue("a Calls package", limits.plan.isNotBlank())
+            val meeting = try {
+                client.calls.meeting(title = "aduki-kt live ${System.currentTimeMillis()}")
+            } catch (e: AdukiException.Api) {
+                assumeTrue("Calls refused a meeting: ${e.kind}", e.kind != "plan.limit")
+                throw e
+            }
+            assertNotNull("a meeting code", meeting.code)
+            val code = meeting.code!!
+            assertEquals("https://calls.aduki.pro/call/$code", meeting.link)
+            assertTrue(meeting.meeting)
+            assertTrue("its status by code", client.calls.status(code).exists)
+            assertTrue("signed out too", Calls.status(code).exists)
+            assertEquals(meeting.call, client.calls.get(meeting.link!!).call)
+            val entry = client.calls.join(code)
+            assertTrue("a ticket into my own meeting", entry is pro.aduki.core.models.CallEntry.Ticket)
+            assertTrue("listed with the meetings", client.calls.meetings(limit = 20).items.any { it.call == meeting.call })
+            client.calls.end(meeting.call)
+            val restarted = client.calls.restart(code)
+            assertEquals(meeting.call, restarted.call)
+            assertTrue("open again", restarted.restarted)
+            client.calls.end(meeting.call)
+            client.calls.hide(meeting.call)
+            assertTrue(client.calls.missed().count >= 0)
+
+            val brands = client.mail.brands(listOf("aduki.pro", "noreply@aduki.pro", "example.invalid"))
+            assertEquals(3, brands.size)
+            assertNull(brands.getValue("example.invalid").url)
+            val inbox = client.mailApi.inbox(limit = 10).items
+            if (inbox.isNotEmpty()) {
+                val verified = client.mail.verified(inbox.map { it.hex })
+                val hex = inbox.first().hex
+                val evidence = client.mail.verification(hex)
+                assertEquals(hex, evidence.hex)
+                if (verified[hex] != null) assertTrue("a verified message passed", evidence.passed)
+            }
+
+            val sub = client.billing.subscription()
+            assertTrue("a package", sub.plan.isNotBlank())
+            assertTrue(client.billing.usage().period.matches(Regex("\\d{4}-\\d{2}")))
+            client.billing.addons()
+            client.billing.addonCatalogue()
+            client.billing.payments(limit = 5)
+            client.billing.invoices(limit = 5)
+
+            client.contacts.trash()
+            client.contactsApi.list(limit = 1).items.firstOrNull()?.let { row ->
+                client.contacts.accounts(row.hex)
+                client.contacts.recent(row.hex, 5)
+            }
+            assertTrue("the client still renews after the audio and id rotations", client.refresh())
+        } finally {
+            client.logout()
+        }
+    }
+
     private fun signIn(device: String, dpop: pro.aduki.crypto.dpop.Key? = null, store: Boolean = false): Aduki {
         val handle = System.getenv("ADUKI_LOGIN_HANDLE")
         val password = System.getenv("ADUKI_LOGIN_PASSWORD")
