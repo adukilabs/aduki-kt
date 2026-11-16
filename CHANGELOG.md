@@ -2,7 +2,7 @@
 
 From 1.0.0 the SDK follows semantic versioning: breaking changes only in a major release. Before 1.0.0, breaking changes could land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
-## 1.0.0 (unreleased)
+## 1.0.0 (2026-11-16)
 
 The first stable release. It catches up with what the Aduki servers gained since 0.8.1: Aduki Calls (calls and meetings), verified senders and their logos in Mail, billing at Aduki ID, and the contacts and calendar additions. Sign-up leaves the SDK: accounts are made on Aduki ID's sign-up page in a browser, and apps keep sign-in only. Threading and start-up work is tightened (see "Threading and performance"). Source breaks are listed under "Breaking" with what replaces each; see `docs/start/migrate-1.0.md`.
 
