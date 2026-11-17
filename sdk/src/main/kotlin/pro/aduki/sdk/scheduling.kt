@@ -84,6 +84,8 @@ class Scheduling internal constructor(
             throw e
         } catch (e: Exception) {
             Faults.report("calendar flush", e)
+        } finally {
+            repo?.refresh()
         }
     }
 
@@ -191,7 +193,7 @@ class Scheduling internal constructor(
         } catch (e: Exception) {
             Faults.report("calendar list", e)
         }
-        engine?.sync() ?: (net?.events()?.size ?: 0)
+        (engine?.sync() ?: (net?.events()?.size ?: 0)).also { repo?.refresh() }
     }
 
     /** The local event with [hex], or null. */
@@ -204,15 +206,18 @@ class Scheduling internal constructor(
      * organized by the account (`ORGANIZER`, its address). With [notify],
      * the server invites the attendees (iTIP REQUEST).
      */
-    suspend fun create(request: EventRequest, notify: Boolean = false): Appointment =
-        client.io { writable(request.calendar); local().create(request, notify, organizer(request.attendees)) }.also { flush() }
+    suspend fun create(request: EventRequest, notify: Boolean = false): Appointment {
+        val created = client.io { writable(request.calendar); local().create(request, notify, organizer(request.attendees)).also { repo?.refresh() } }
+        flush()
+        return engine?.let { e -> e.get(created.hex) ?: e.appointments().firstOrNull { it.uid == created.uid } } ?: created
+    }
 
     /**
      * Edits an event; null fields of [changes] keep their value. With
      * [notify], the server sends the changed event to the attendees.
      */
     suspend fun update(hex: String, changes: EventChanges, notify: Boolean = false): Appointment =
-        client.io { event(hex); local().update(hex, changes, notify, organizer(changes.attendees.orEmpty())) }.also { flush() }
+        client.io { event(hex); local().update(hex, changes, notify, organizer(changes.attendees.orEmpty())).also { repo?.refresh() } }.also { flush() }
 
     // The account's address as the organizer of an event with [attendees]
     // (Aduki Mail invites them only then); "" without attendees or address.
@@ -221,7 +226,7 @@ class Scheduling internal constructor(
 
     /** Moves an event to [start] .. [end]; [notify] as for [update]. */
     suspend fun reschedule(hex: String, start: Instant, end: Instant, notify: Boolean = false): Appointment =
-        client.io { event(hex); local().reschedule(hex, start, end, notify) }.also { flush() }
+        client.io { event(hex); local().reschedule(hex, start, end, notify).also { repo?.refresh() } }.also { flush() }
 
     /**
      * Edits a single occurrence of a recurring event at [occurrenceStart]
@@ -235,7 +240,7 @@ class Scheduling internal constructor(
         notify: Boolean = false
     ): Appointment = client.io {
         event(hex)
-        local().updateOccurrence(hex, occurrenceStart, changes, notify)
+        local().updateOccurrence(hex, occurrenceStart, changes, notify).also { repo?.refresh() }
     }.also { flush() }
 
     /**
@@ -249,7 +254,7 @@ class Scheduling internal constructor(
         notify: Boolean = false
     ): Appointment = client.io {
         event(hex)
-        local().cancelOccurrence(hex, occurrenceStart, notify)
+        local().cancelOccurrence(hex, occurrenceStart, notify).also { repo?.refresh() }
     }.also { flush() }
 
     /**
@@ -264,7 +269,7 @@ class Scheduling internal constructor(
         notify: Boolean = false
     ): Appointment = client.io {
         event(hex)
-        local().updateFollowing(hex, occurrenceStart, changes, notify)
+        local().updateFollowing(hex, occurrenceStart, changes, notify).also { repo?.refresh() }
     }.also { flush() }
 
     /**
@@ -279,7 +284,7 @@ class Scheduling internal constructor(
         val engine = local()
         val me = address ?: client.me()?.email?.ifBlank { null }
             ?: throw IllegalStateException("the account's address is unknown: pass address")
-        engine.respond(hex, response, me, comment)
+        engine.respond(hex, response, me, comment).also { repo?.refresh() }
     }.also { flush() }
 
     /**
@@ -308,14 +313,14 @@ class Scheduling internal constructor(
                 val known = engine.resolve(event.uid)?.let { get(it) }
                 if (known != null && known.sequence > event.sequence) return@io known
                 writable(known?.calendar ?: calendar)
-                engine.import(ical, calendar).firstOrNull()
+                engine.import(ical, calendar).firstOrNull().also { repo?.refresh() }
             }
             "CANCEL" -> {
                 val uid = Events.read(invitation.ical)?.uid ?: return@io null
                 val known = engine.resolve(uid)?.let { get(it) } ?: return@io null
                 if (known.status == "cancelled") return@io known
                 event(known.hex)
-                engine.cancel(known.hex)
+                engine.cancel(known.hex).also { repo?.refresh() }
             }
             else -> null
         }
@@ -328,11 +333,11 @@ class Scheduling internal constructor(
      * with `notify` sends a CANCEL).
      */
     suspend fun cancel(hex: String, reason: String = "", notify: Boolean = false): Appointment =
-        client.io { event(hex); local().cancel(hex, reason, notify) }.also { flush() }
+        client.io { event(hex); local().cancel(hex, reason, notify).also { repo?.refresh() } }.also { flush() }
 
     /** Deletes an event; with [notify], the attendees get an iTIP CANCEL when the account organizes it. */
     suspend fun remove(hex: String, notify: Boolean = false) {
-        client.io { event(hex); local().remove(hex, notify) }
+        client.io { event(hex); local().remove(hex, notify); repo?.refresh() }
         flush()
     }
 
@@ -342,7 +347,7 @@ class Scheduling internal constructor(
      * server takes one event per request.
      */
     suspend fun importIcs(text: String, calendar: String = ""): List<Appointment> =
-        client.io { writable(calendar); local().import(text, calendar) }.also { flush() }
+        client.io { writable(calendar); local().import(text, calendar).also { repo?.refresh() } }.also { flush() }
 
     /** The events with [hexes] (every stored event when null) as one iCalendar file. */
     fun exportIcs(hexes: List<String>? = null): String = local().export(hexes)
