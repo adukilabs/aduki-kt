@@ -4,11 +4,13 @@ import io.objectbox.BoxStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import pro.aduki.core.calendar.Events
 import pro.aduki.core.calendar.Recurrence
 import pro.aduki.store.entities.Appointment as AppointmentEntity
@@ -50,33 +52,46 @@ class Appointment(
         scope = scope
     )
 
-    private val appointmentsFlow: StateFlow<List<AppointmentEntity>> by lazy {
-        source.appointments()
-            .map { list -> list.sortedBy { it.start } }
-            .stateIn(
-                scope = scope,
-                started = SharingStarted.Eagerly,
-                initialValue = emptyList()
-            )
+    private val _appointments = MutableStateFlow(source.list().sortedBy { it.start })
+    private var observing = false
+
+    private fun ensureObserving() {
+        if (observing) return
+        observing = true
+        scope.launch {
+            source.appointments().collect { list ->
+                _appointments.value = list.sortedBy { it.start }
+            }
+        }
     }
 
     /**
      * Observable stream of all appointments ordered chronologically.
      */
     val all: StateFlow<List<AppointmentEntity>>
-        get() = appointmentsFlow
+        get() {
+            ensureObserving()
+            return _appointments
+        }
+
+    /**
+     * Refreshes the in-memory stream synchronously from [AppointmentSource.list].
+     */
+    fun refresh() {
+        _appointments.value = source.list().sortedBy { it.start }
+    }
 
     /**
      * Synchronous snapshot of all appointments.
      */
     fun list(): List<AppointmentEntity> =
-        appointmentsFlow.value.ifEmpty { source.list().sortedBy { it.start } }
+        source.list().ifEmpty { all.value }.sortedBy { it.start }
 
     /**
      * Observable stream of upcoming appointments (start >= current time).
      */
     val upcoming: Flow<List<AppointmentEntity>>
-        get() = appointmentsFlow.map { list ->
+        get() = all.map { list ->
             val now = System.currentTimeMillis()
             list.filter { it.start >= now && it.status != "cancelled" }
         }
@@ -87,9 +102,9 @@ class Appointment(
      * start. Cancelled events are left out unless [cancelled].
      */
     fun observe(start: Long, end: Long, cancelled: Boolean = false): StateFlow<List<Occurrence>> =
-        appointmentsFlow
+        all
             .map { list -> expand(list, start, end, cancelled) }
-            .stateIn(scope, SharingStarted.Eagerly, expand(appointmentsFlow.value, start, end, cancelled))
+            .stateIn(scope, SharingStarted.Eagerly, expand(all.value, start, end, cancelled))
 
     /**
      * Resolves appointment entity by hex identifier.

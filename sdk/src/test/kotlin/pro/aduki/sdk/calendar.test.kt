@@ -505,6 +505,33 @@ class CalendarTest {
         assertEquals("Standup 2.0", week4Occurrences[0].appointment.title)
     }
 
+    @Test
+    fun appointmentsFlowReflectsWritesImmediately() = runBlocking<Unit> {
+        val aduki = build()
+        val flow = aduki.scheduling.appointments!!
+        assertEquals(0, flow.value.size)
+
+        val created = aduki.scheduling.create(
+            EventRequest(title = "Immediate", start = nine, end = nine.plusSeconds(1800), timezone = "UTC")
+        )
+        assertTrue(
+            "appointments flow should contain ${created.hex} right after create()",
+            flow.value.any { it.hex == created.hex && it.title == "Immediate" }
+        )
+        val observed = aduki.scheduling.observe(nine.minusSeconds(60), nine.plusSeconds(3600))!!
+        assertTrue(observed.value.any { it.appointment.hex == created.hex })
+
+        val updated = aduki.scheduling.update(created.hex, EventChanges(title = "Renamed"))
+        assertTrue(flow.value.any { it.hex == updated.hex && it.title == "Renamed" })
+
+        val movedStart = nine.plusSeconds(3600)
+        val moved = aduki.scheduling.reschedule(updated.hex, movedStart, movedStart.plusSeconds(1800))
+        assertTrue(flow.value.any { it.hex == moved.hex && it.start == movedStart.toEpochMilli() })
+
+        aduki.scheduling.remove(moved.hex)
+        assertTrue(flow.value.none { it.hex == moved.hex })
+    }
+
     private companion object {
         const val PAGE = """{"hex":"p1","slug":"consult","name":"Consult","about":null,"lengths":[30],"before":0,"after":0,
             "notice":60,"horizon":60,"step":30,"daily":null,"weekly":null,"mode":"solo","seats":1,"visibility":"public",
