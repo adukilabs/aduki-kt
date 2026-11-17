@@ -29,7 +29,7 @@ plugins {
     signing
 }
 
-val release = "1.0.0"
+val release = "1.0.1"
 val domain = "pro.aduki"
 
 // Java 17 bytecode whichever JDK (17 or later) runs Gradle, so apps on Java 17 can use the SDK.
