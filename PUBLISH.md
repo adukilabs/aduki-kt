@@ -52,6 +52,12 @@ The workflow defined in `.github/workflows/publish.yml` triggers automatically o
 - Pushing a version tag: `git push origin v*`
 - Manual invocation via `workflow_dispatch`
 
+### Runner
+
+Every job in `ci.yml`, `book.yml` and `publish.yml` takes its runner from the repository (or organisation) variable `RUNS_ON`, a JSON value: `"self-hosted"` sends the jobs to the organisation's own runner, a label list such as `["self-hosted", "android"]` narrows it, and with the variable unset the jobs run on GitHub's `ubuntu-latest`. A self-hosted runner needs the Android SDK (`ANDROID_HOME`) for the `-Paduki.android=true` builds; Java comes from `setup-java`.
+
+A run uses the workflow file of the ref it is started on. A tag made before this change still names `ubuntu-latest`, so to publish such a version on the self-hosted runner, dispatch the workflow from `main` (`gh workflow run publish.yml --ref main`) while `main` is at the tagged commit's code and version.
+
 ### Pipeline Execution Flow
 
 ```
