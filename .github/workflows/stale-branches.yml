@@ -1,0 +1,85 @@
+name: Delete stale branches
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: Days without commits before a branch is stale
+        default: "60"
+      dry_run:
+        description: List stale branches without deleting them
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: read
+
+env:
+  PROTECTED_BRANCHES: main staging prod master
+  STALE_DAYS: ${{ inputs.days || '60' }}
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+
+jobs:
+  delete-stale-branches:
+    name: Delete stale branches
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure gh and jq are installed
+        env:
+          GH_VERSION: "2.63.2"
+          JQ_VERSION: "1.7.1"
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64) arch=amd64 ;;
+            aarch64|arm64) arch=arm64 ;;
+            *) echo "unsupported architecture: $(uname -m)"; exit 1 ;;
+          esac
+          bin="$RUNNER_TEMP/bin"
+          mkdir -p "$bin"
+          if ! command -v jq >/dev/null 2>&1; then
+            curl -fsSL -o "$bin/jq" "https://github.com/jqlang/jq/releases/download/jq-${JQ_VERSION}/jq-linux-${arch}"
+            chmod +x "$bin/jq"
+          fi
+          if ! command -v gh >/dev/null 2>&1; then
+            curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${arch}.tar.gz" | tar -xz -C "$RUNNER_TEMP"
+            cp "$RUNNER_TEMP/gh_${GH_VERSION}_linux_${arch}/bin/gh" "$bin/gh"
+          fi
+          echo "$bin" >> "$GITHUB_PATH"
+          PATH="$bin:$PATH"
+          gh --version | head -1
+          jq --version
+
+      - name: Delete branches with no recent activity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          default_branch=$(gh api "repos/$REPO" --jq .default_branch)
+          cutoff=$(date -u -d "$STALE_DAYS days ago" +%s)
+          open_heads=$(gh pr list --repo "$REPO" --state open --limit 1000 --json headRefName --jq '.[].headRefName')
+
+          gh api --paginate "repos/$REPO/branches?per_page=100" --jq '.[] | select(.protected | not) | .name' |
+          while read -r branch; do
+            if [ "$branch" = "$default_branch" ] || [[ " $PROTECTED_BRANCHES " == *" $branch "* ]]; then
+              continue
+            fi
+            if grep -qxF -- "$branch" <<< "$open_heads"; then
+              continue
+            fi
+            encoded=$(jq -rn --arg b "$branch" '$b | @uri')
+            committed=$(gh api "repos/$REPO/commits/$encoded" --jq .commit.committer.date)
+            if [ "$(date -u -d "$committed" +%s)" -ge "$cutoff" ]; then
+              continue
+            fi
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "would delete $branch (last commit $committed)"
+            else
+              echo "deleting $branch (last commit $committed)"
+              gh api -X DELETE "repos/$REPO/git/refs/heads/$encoded"
+            fi
+          done
