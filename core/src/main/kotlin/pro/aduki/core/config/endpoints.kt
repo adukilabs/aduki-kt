@@ -27,6 +27,9 @@ object Endpoints {
     /** The audience aduki Calls accepts on Aduki ID tokens (DPoP-bound only). */
     const val CALLS_AUDIENCE = "audio"
 
+    /** The audience Aduki Chats accepts on Aduki ID tokens (DPoP-bound only): its handshakes and HTTP routes. */
+    const val CHATS_AUDIENCE = "chat"
+
     /** The audience of Aduki ID's own account routes (sessions, center, billing). */
     const val ID_AUDIENCE = "id"
 
