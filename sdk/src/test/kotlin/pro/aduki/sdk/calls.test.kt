@@ -108,6 +108,26 @@ class CallsFacadeTest {
     }
 
     @Test
+    fun theChatsSignInGivesChatTokensAndProofsForTheHandshake() {
+        val store = Memory(Tokens("eyJ.mail", "rt_1", "600", "00000000000000ab"))
+        val client = client(store)
+        val token = client.chats.token()
+        assertEquals("eyJ.chat.1", token)
+        assertEquals("cached", "eyJ.chat.1", client.chats.token())
+        assertEquals("renewed", "eyJ.chat.2", client.chats.token(stale = token))
+        assertEquals("rt_3", store.tokens!!.refresh)
+        val proof = client.chats.proof("ae09", "identity.response", token, nonce = "n-1")
+        val claims = JSONObject(String(java.util.Base64.getUrlDecoder().decode(proof.split('.')[1])))
+        assertEquals("AE09", claims.getString("htm"))
+        assertEquals("identity.response", claims.getString("htu"))
+        assertEquals("n-1", claims.getString("nonce"))
+        assertTrue(claims.has("ath"))
+        assertThrows(IllegalStateException::class.java) {
+            client(Memory(Tokens("eyJ.mail", "rt_1", "600", "s")), dpop = false).chats
+        }
+    }
+
+    @Test
     fun withoutADpopKeyOrASessionCallsFailBeforeAnyRequest() = runBlocking {
         val noKey = client(Memory(Tokens("eyJ.mail", "rt_1", "600", "s")), dpop = false)
         assertThrows(IllegalStateException::class.java) { runBlocking { noKey.calls.meeting() } }

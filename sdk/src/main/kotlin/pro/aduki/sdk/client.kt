@@ -469,6 +469,18 @@ class Aduki internal constructor(
     val calls = Calls { callsApi }
 
     /**
+     * This account's sign-in at Aduki Chats for the media SDK's end-to-end keys (`pro.aduki:calls` `ChatsAuth`: a
+     * meeting's keys come from a Chats MLS group): `chat` tokens from this client's Aduki ID session, renewed under the
+     * same lock as the mail token, and DPoP proofs by the client's key.
+     *
+     * @throws IllegalStateException on first use without a DPoP key.
+     */
+    val chats: ChatsSignIn by lazy {
+        val signer = checkNotNull(dpop) { "Aduki Chats needs a DPoP-bound session: build the client with dpop(key)" }
+        ChatsSignIn({ stale -> audience(Endpoints.CHATS_AUDIENCE, stale) }, signer)
+    }
+
+    /**
      * The account's package, add-ons, usage, payments and invoices at Aduki
      * ID, read only (`audience id` tokens from this client's session).
      */
