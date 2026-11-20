@@ -2,6 +2,10 @@
 
 From 1.0.0 the SDK follows semantic versioning: breaking changes only in a major release. Before 1.0.0, breaking changes could land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
+## Unreleased
+
+- `Aduki.chatsApi` (`pro.aduki.net.http.Chats`): the plain HTTP routes of Aduki Chats with the account's DPoP-bound `chat` token: `home`, `space`, `devices`, `renameDevice`, `revokeDevice`, `contacts`, `allContacts`, `threadInfo`, `putThreadInfo`, `calls`, `startCall`, `callGroup`, `upload`, `download`, `delete`, `usage`, `ownMedia`, `deleteOwnMedia`. `Builder.chats(base)` and `Options.chats` point at another server; `Endpoints.CHATS`. It is not a messaging client: conversations and messages need the `ae09` protocol and MLS, which the SDK does not have ([Chats](docs/services/chats.md)). Additive: a minor release (1.1.0).
+
 ## 1.0.2 (2026-11-19)
 
 - `Aduki.chats` (`ChatsSignIn`): the account's sign-in at Aduki Chats for the media SDK's end-to-end keys (`pro.aduki:calls` `ChatsAuth`, a meeting's keys from its Chats MLS group): `token(stale)` gives DPoP-bound access tokens of audience `chat` from the client's Aduki ID session (renewed under the mail token's lock), `proof(method, url, token, nonce)` DPoP proofs, also the Chats handshake's (`htm` `ae09`, `htu` `identity.response`, the challenge as the nonce). `Endpoints.CHATS_AUDIENCE`.
