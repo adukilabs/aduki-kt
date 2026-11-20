@@ -989,6 +989,7 @@ class Aduki internal constructor(
         private var identity: String = Endpoints.ID
         private var drive: String = Endpoints.STORE
         private var calls: String = Endpoints.CALLS
+        private var chats: String = Endpoints.CHATS
         private var secure: Boolean = true
         private var pins: List<Pin> = emptyList()
         private var timeoutSeconds: Long = 15
@@ -1020,6 +1021,9 @@ class Aduki internal constructor(
 
         /** The Aduki Calls base (default `https://calls.aduki.pro/v1`). */
         fun calls(base: String) = apply { this.calls = base }
+
+        /** The Aduki Chats base for its plain HTTP routes (default `https://chat.aduki.pro`). */
+        fun chats(base: String) = apply { this.chats = base }
         /**
          * Binds sign-ins to a device key (DPoP, RFC 9449): Aduki ID and mail
          * calls carry a proof, and tokens bound to the key are sent as
@@ -1129,6 +1133,7 @@ class Aduki internal constructor(
                 identity = identity,
                 drive = drive,
                 calls = calls,
+                chats = chats,
                 timeoutSeconds = timeoutSeconds,
                 secure = secure,
                 pins = pins

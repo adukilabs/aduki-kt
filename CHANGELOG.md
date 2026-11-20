@@ -2,6 +2,10 @@
 
 From 1.0.0 the SDK follows semantic versioning: breaking changes only in a major release. Before 1.0.0, breaking changes could land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
+## Unreleased
+
+- `Aduki.chatsApi` (`pro.aduki.net.http.Chats`): the plain HTTP routes of Aduki Chats with the account's DPoP-bound `chat` token: `home`, `space`, `devices`, `renameDevice`, `revokeDevice`, `contacts`, `allContacts`, `threadInfo`, `putThreadInfo`, `calls`, `startCall`, `callGroup`, `upload`, `download`, `delete`, `usage`, `ownMedia`, `deleteOwnMedia`. `Builder.chats(base)` and `Options.chats` point at another server; `Endpoints.CHATS`. It is not a messaging client: conversations and messages need the `ae09` protocol and MLS, which the SDK does not have ([Chats](docs/services/chats.md)). Additive: a minor release (1.1.0).
+
 ## 1.0.3 (unreleased)
 
 - First-class partner apps (`pro.aduki.android.account.Partners`, default `com.lavernai.triviaconnect`): `Accounts.share` and new `AccountDirectory` entries also make the `pro.aduki.account` entries visible to the partner packages. A partner (another signing key) sees who is signed in, never a token.
