@@ -353,12 +353,18 @@ class Accounts(
 
     /**
      * Grants account visibility to companion [packages] (e.g. apps by the same publisher)
-     * using [AccountManager.setAccountVisibility] on Android 8+ (API 26+).
+     * and to the first-class [Partners] using [AccountManager.setAccountVisibility] on
+     * Android 8+ (API 26+). Call it on sign-in and whenever the accounts are refreshed.
+     *
+     * A partner (another signature) sees the entry's name and can ask the authenticator
+     * for its public profile only ([PartnerAccounts]): the user data, password and auth
+     * tokens of the entry stay readable only by apps signed like the authenticator,
+     * whatever the [mode].
      *
      * Returns the count of accounts whose visibility was updated.
      */
     fun share(packages: List<String>): Int {
-        if (packages.isEmpty()) return 0
+        if (Partners.with(packages).isEmpty()) return 0
         var count = 0
         for (entry in list()) {
             if (share(entry.account, packages)) count++
@@ -372,10 +378,10 @@ class Accounts(
         return share(entry.account, packages)
     }
 
-    /** Grants visibility of [account] to companion [packages]. No tokens are handed over. */
+    /** Grants visibility of [account] to companion [packages] and the [Partners]. No tokens are handed over. */
     fun share(account: Account, packages: List<String>): Boolean {
         var ok = true
-        for (pkg in packages) {
+        for (pkg in Partners.with(packages)) {
             if (!visibility.set(account, pkg, AccountManager.VISIBILITY_VISIBLE)) ok = false
         }
         return ok
