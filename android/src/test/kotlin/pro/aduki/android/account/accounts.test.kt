@@ -262,7 +262,7 @@ class AccountsTest {
         put(ada)
         testAccounts.share("a1b2", listOf("pro.aduki.calendar"))
 
-        assertEquals(1, recorded.size)
+        assertEquals("the sibling, then the first-class partners", listOf("pro.aduki.calendar") + Partners.packages, recorded.map { it.second })
         assertEquals("ada@aduki.me", recorded[0].first)
         assertEquals("pro.aduki.calendar", recorded[0].second)
         assertEquals(AccountManager.VISIBILITY_VISIBLE, recorded[0].third)

@@ -2,6 +2,12 @@
 
 From 1.0.0 the SDK follows semantic versioning: breaking changes only in a major release. Before 1.0.0, breaking changes could land in a minor release. The version is set by `release` in the root `build.gradle.kts` when a release is cut (see `CONTRIBUTING.md`).
 
+## 1.0.3 (unreleased)
+
+- First-class partner apps (`pro.aduki.android.account.Partners`, default `com.lavernai.triviaconnect`): `Accounts.share` and new `AccountDirectory` entries also make the `pro.aduki.account` entries visible to the partner packages. A partner (another signing key) sees who is signed in, never a token.
+- `PartnerAccounts.list(context)`: the read API for partner apps that do not ship the authenticator. It returns `PartnerAccount` (hex, handle, name, personal, organisation name, photo tag) for a "Continue as …" list; call it off the main thread. Apps signed like the authenticator read the entry directly; partners ask the authenticator for the `pro.aduki.profile` token type, a JSON of those fields only.
+- The authenticator is declared with `customTokens` and answers by caller: the access token only to apps signed with the same key, the public profile also to `Partners`, nothing to anyone else. Android therefore no longer offers another app a cached access token after a "grant access" prompt.
+
 ## 1.0.2 (2026-11-19)
 
 - `Aduki.chats` (`ChatsSignIn`): the account's sign-in at Aduki Chats for the media SDK's end-to-end keys (`pro.aduki:calls` `ChatsAuth`, a meeting's keys from its Chats MLS group): `token(stale)` gives DPoP-bound access tokens of audience `chat` from the client's Aduki ID session (renewed under the mail token's lock), `proof(method, url, token, nonce)` DPoP proofs, also the Chats handshake's (`htm` `ae09`, `htu` `identity.response`, the challenge as the nonce). `Endpoints.CHATS_AUDIENCE`.

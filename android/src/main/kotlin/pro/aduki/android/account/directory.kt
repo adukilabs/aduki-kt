@@ -67,7 +67,8 @@ data class DeviceAccount(
  * plus `personal` for [Accounts.list]. Entries an older suite wrote (keyed
  * by email, `hex` = the email) are moved to the real hex with [migrate].
  *
- * [packages] are the sibling apps every new entry is made visible to.
+ * [packages] are the sibling apps every new entry is made visible to, with the
+ * first-class [Partners] (public profile only, see [PartnerAccounts]).
  */
 class AccountDirectory(
     context: Context,
@@ -123,7 +124,7 @@ class AccountDirectory(
             if (account != null) manager.removeAccountExplicitly(account)
             val created = Account(profile.handle, Accounts.TYPE)
             if (!manager.addAccountExplicitly(created, null, bundle(merged))) write(created, merged)
-            packages.forEach { visibility.set(created, it, AccountManager.VISIBILITY_VISIBLE) }
+            Partners.with(packages).forEach { visibility.set(created, it, AccountManager.VISIBILITY_VISIBLE) }
         } else {
             write(account, merged)
         }

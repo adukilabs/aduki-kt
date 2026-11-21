@@ -20,6 +20,7 @@
 - [OIDC Client](auth/oidc.md)
 - [Account Center & Unlock](auth/center.md)
 - [Suite sign-in & Accounts Center](auth/suite.md)
+- [Partner apps (accounts on the device)](auth/partners.md)
 - [Passkeys](auth/passkeys.md)
 - [API Keys](auth/keys.md)
 - [Two-Factor TOTP (deprecated)](auth/totp.md)
