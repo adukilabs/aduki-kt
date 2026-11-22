@@ -13,6 +13,8 @@ data class Options(
     /** The Aduki Store base, read for the pooled storage quota. */
     val drive: String = Endpoints.STORE,
     /** The Aduki Calls base: calls, meetings and the call log. */
-    val calls: String = Endpoints.CALLS
+    val calls: String = Endpoints.CALLS,
+    /** The Aduki Chats base: its plain HTTP routes. */
+    val chats: String = Endpoints.CHATS
 )
 

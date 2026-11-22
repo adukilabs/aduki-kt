@@ -51,6 +51,7 @@
 - [Scheduling Service](services/scheduling.md)
 - [Space client (draft)](services/space.md)
 - [Calls and meetings](services/calls.md)
+- [Chats: the HTTP routes](services/chats.md)
 - [Billing](services/billing.md)
 - [Sync Engine](services/sync.md)
 - [Offline Outbox](services/outbox.md)

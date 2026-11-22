@@ -57,6 +57,7 @@ import pro.aduki.net.http.Scheduling as NetScheduling
 import pro.aduki.net.http.Mail as NetMail
 import pro.aduki.net.http.Contacts as NetContacts
 import pro.aduki.net.http.Calls as NetCalls
+import pro.aduki.net.http.Chats as NetChats
 import pro.aduki.net.http.Bearer
 import pro.aduki.net.http.Billing as NetBilling
 import pro.aduki.sync.engine.ContactStorage
@@ -478,6 +479,19 @@ class Aduki internal constructor(
     val chats: ChatsSignIn by lazy {
         val signer = checkNotNull(dpop) { "Aduki Chats needs a DPoP-bound session: build the client with dpop(key)" }
         ChatsSignIn({ stale -> audience(Endpoints.CHATS_AUDIENCE, stale) }, signer)
+    }
+
+    /**
+     * The plain HTTP routes of Aduki Chats for this account (audience `chat`, DPoP-bound): the space to name, devices,
+     * contacts, a group's sealed info, a thread's calls and encrypted media. Not a messaging client: reading and
+     * sending messages need the `ae09` protocol and MLS, which this SDK does not have. Blocking: call it off the main
+     * thread.
+     *
+     * @throws IllegalStateException on first use without a DPoP key.
+     */
+    val chatsApi: NetChats by lazy {
+        checkNotNull(dpop) { "Aduki Chats needs a DPoP-bound session: build the client with dpop(key)" }
+        NetChats(identityClient, Bearer { stale -> audience(Endpoints.CHATS_AUDIENCE, stale) }, options.chats)
     }
 
     /**
@@ -975,6 +989,7 @@ class Aduki internal constructor(
         private var identity: String = Endpoints.ID
         private var drive: String = Endpoints.STORE
         private var calls: String = Endpoints.CALLS
+        private var chats: String = Endpoints.CHATS
         private var secure: Boolean = true
         private var pins: List<Pin> = emptyList()
         private var timeoutSeconds: Long = 15
@@ -1006,6 +1021,9 @@ class Aduki internal constructor(
 
         /** The Aduki Calls base (default `https://calls.aduki.pro/v1`). */
         fun calls(base: String) = apply { this.calls = base }
+
+        /** The Aduki Chats base for its plain HTTP routes (default `https://chat.aduki.pro`). */
+        fun chats(base: String) = apply { this.chats = base }
         /**
          * Binds sign-ins to a device key (DPoP, RFC 9449): Aduki ID and mail
          * calls carry a proof, and tokens bound to the key are sent as
@@ -1115,6 +1133,7 @@ class Aduki internal constructor(
                 identity = identity,
                 drive = drive,
                 calls = calls,
+                chats = chats,
                 timeoutSeconds = timeoutSeconds,
                 secure = secure,
                 pins = pins
